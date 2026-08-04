@@ -1,0 +1,41 @@
+apiVersion: policies.kyverno.io/v1
+kind: NamespacedImageValidatingPolicy
+metadata:
+  name: verify-gochuchamchi-image-signature
+spec:
+  validationActions:
+    - {{ .Values.validationAction | quote }}
+  failurePolicy: {{ .Values.failurePolicy | quote }}
+  webhookConfiguration:
+    timeoutSeconds: 20
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  matchImageReferences:
+    - glob: {{ printf "%s:*" .Values.imageRepository | quote }}
+    - glob: {{ printf "%s@sha256:*" .Values.imageRepository | quote }}
+  attestors:
+    - name: releaseSigner
+      cosign:
+        key:
+          data: |
+{{ .Values.publicKey | indent 12 }}
+  validationConfigurations:
+    mutateDigest: {{ .Values.mutateDigest }}
+    required: true
+    verifyDigest: {{ .Values.verifyDigest }}
+  credentials:
+    allowInsecureRegistry: false
+    providers:
+      - amazon
+  validations:
+    - expression: >-
+        images.containers.map(image,
+        verifyImageSignatures(image, [attestors.releaseSigner])).all(result, result > 0)
+      message: Image must be signed by the protected gochuchamchi release signing job.

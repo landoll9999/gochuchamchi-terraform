@@ -8,6 +8,9 @@ metadata:
     # (semver가 아닌 git commit SHA 태그라서 latest/newest-build 전략을 사용)
     argocd-image-updater.argoproj.io/image-list: "web={{ .Values.appImage }}"
     argocd-image-updater.argoproj.io/web.update-strategy: "latest"
+    # Build jobs publish candidate-* tags. Only the protected signing job may
+    # promote a verified digest to signed-<40-character commit SHA>.
+    argocd-image-updater.argoproj.io/web.allow-tags: "regexp:^signed-[0-9a-f]{40}$"
     argocd-image-updater.argoproj.io/write-back-method: "git"
     argocd-image-updater.argoproj.io/git-branch: "{{ .Values.gitBranch }}"
 spec:

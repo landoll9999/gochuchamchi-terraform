@@ -27,6 +27,7 @@ resource "helm_release" "kyverno" {
   name             = "kyverno"
   repository       = "https://kyverno.github.io/kyverno/"
   chart            = "kyverno"
+  version          = "3.8.2"
   namespace        = "kyverno"
   create_namespace = true
 
@@ -42,6 +43,7 @@ resource "helm_release" "kyverno" {
     aws_route.private_subnet,
     module.vpc,
     helm_release.aws_load_balancer_controller,
+    module.kyverno_ecr_pod_identity,
   ]
 
   values = [
@@ -73,6 +75,7 @@ resource "helm_release" "kyverno_policies" {
   name       = "kyverno-policies"
   repository = "https://kyverno.github.io/kyverno/"
   chart      = "kyverno-policies"
+  version    = "3.8.1"
   namespace  = "kyverno"
 
   cleanup_on_fail = true

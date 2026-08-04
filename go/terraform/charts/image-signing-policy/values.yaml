@@ -1,0 +1,6 @@
+validationAction: Audit
+failurePolicy: Ignore
+imageRepository: ""
+publicKey: ""
+mutateDigest: false
+verifyDigest: false
