@@ -326,6 +326,19 @@ aws elbv2 describe-target-groups --region ap-northeast-2 --profile admin    # �
 
 **Terraform 코드 밖에 있는 상태는 destroy/apply에서 살아남지 못합니다.** apply 성공 후 아래를 순서대로 확인하세요.
 
+- [ ] **ArgoCD PAT 주입** — **가장 먼저.** 안 하면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3). Terraform은 값이 빈 Secret 컨테이너만 만들고 값은 사람이 넣습니다
+  ```
+  aws secretsmanager put-secret-value --secret-id gochuchamchi/argocd/git-pat --secret-string file://pat.txt --region ap-northeast-2 --profile admin
+  del pat.txt
+  ```
+  PAT 스코프는 `Contents: Read/write`(image-updater의 git write-back 때문). **파일 끝에 개행이 있으면 인증이 조용히 실패**합니다. 주입 확인:
+  ```powershell
+  kubectl get externalsecret -n argocd     # STATUS=SecretSynced, READY=True 여야 함
+  ```
+- [ ] **파드에서 DNS가 되는지** — NetworkPolicy가 DNS를 막으면 앱이 전부 500입니다 (2026-08-04 §4.4)
+  ```powershell
+  kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- getent hosts <RDS 엔드포인트>
+  ```
 - [ ] **ECR 이미지 적재** — `aws ecr describe-images`가 비어있으면 §3.1 워크플로 실행 (`force_delete = true`라 destroy가 이미지까지 지웁니다)
 - [ ] **DB 스키마 적용 확인** — `SHOW TABLES`에 4개(`users`/`notices`/`products`/`product_sizes`)가 보여야 합니다 → 없으면 **§5.1**
 - [ ] **사이트 200 확인** — `curl` 5회 (§2.4). 503이면 §2.3의 타겟 수부터
@@ -389,7 +402,9 @@ terraform apply
 | `ERR_CONNECTION_REFUSED` | 로컬 리스너 없음 = port-forward 죽음 | port-forward 재실행, 창 열어두기 |
 | `ERR_SSL_PROTOCOL_ERROR` / `connection reset` | 평문 리스너에 TLS 시도 | `https` → `http` |
 | `HTTP 503` | 백엔드 타겟 없음 | §2.3 타겟 수 → 파드 상태 |
+| `HTTP 503` + 본문 `Backend service does not exist` | **Service 자체가 없음** (ALB 컨트롤러가 넣는 fixed-response) | §6.7 |
 | `HTTP 502` (일시적) | 롤아웃/등록 중 | 1~2분 후 재확인 |
+| `HTTP 500` (특정 페이지만) | 앱은 떴는데 DB/Redis 연결 실패 | §6.8 |
 
 ```powershell
 netstat -ano | findstr :8080      # LISTENING 유무로 REFUSED 확정
@@ -467,6 +482,55 @@ TOK=$(aws eks get-token --cluster-name gochuchamchi-eks --query status.token --o
 curl --ssl-no-revoke -H "Authorization: Bearer $TOK" "$EP/api/v1/nodes"
 ```
 > Windows Git Bash의 curl은 schannel을 써서 폐기목록 확인에 실패하므로 `--ssl-no-revoke` 필요
+
+### 6.7 503 `Backend service does not exist`
+
+**ALB 문제가 아닙니다.** AWS LB Controller가 Ingress 백엔드 Service를 못 찾으면 그 룰의
+액션을 이 문구의 fixed-response 503으로 채웁니다. 즉 **Service가 클러스터에 없다**는 뜻입니다.
+
+```powershell
+# 1) 정말 fixed-response인지 확인 (grafana 등 다른 룰이 정상이면 ALB·DNS·ACM은 무죄)
+$lb = aws elbv2 describe-load-balancers --region ap-northeast-2 --profile admin --query "LoadBalancers[?starts_with(LoadBalancerName,'k8s-gochuchamchiweb')].LoadBalancerArn" --output text
+$ls = aws elbv2 describe-listeners --load-balancer-arn $lb --region ap-northeast-2 --profile admin --query "Listeners[?Port==``443``].ListenerArn" --output text
+aws elbv2 describe-rules --listener-arn $ls --region ap-northeast-2 --profile admin
+
+# 2) Service가 없으면 위로 거슬러 올라감
+kubectl -n gochuchamchi get svc,deploy,pods         # 비어 있으면 GitOps 미배포
+kubectl -n argocd get app gochuchamchi -o wide      # Sync=Unknown이면 저장소 접근 실패
+kubectl -n argocd get app gochuchamchi -o jsonpath="{.status.conditions}"
+kubectl get externalsecret -n argocd                # SecretSyncedError면 PAT 미주입 (§5)
+```
+
+`authentication required: Repository not found` → PAT 문제입니다. §5 체크리스트의 PAT
+주입 항목으로 가세요. 2026-08-04 §4.3이 이 경로였습니다.
+
+### 6.8 앱은 떴는데 특정 페이지만 500
+
+로그의 **예외 종류로 계층이 갈립니다.**
+
+```powershell
+kubectl -n gochuchamchi logs deploy/gochuchamchi-web --tail=200 | Select-String "ERROR|Caused by"
+```
+
+| 예외 | 원인 | 조치 |
+|---|---|---|
+| `UnknownHostException` | **DNS 차단** — NetworkPolicy가 서비스 CIDR을 안 열었을 때 | 아래 DNS 확인 |
+| `NOAUTH` (Redis) | AUTH 비밀번호 미주입 | `envFrom`에 `gochuchamchi-redis-secret` 있는지 |
+| `BadSqlGrammarException: Table ... doesn't exist` | 스키마 미적용 | §5.1 |
+| `Access denied for user` | DB 비밀번호 불일치 | §1.4, `gochuchamchi-db-app` Secret 확인 |
+
+**DNS부터 확인하세요** — 막혀 있으면 DB·Redis 규칙이 아무리 정확해도 전부 실패합니다.
+
+```powershell
+kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- getent hosts <RDS 엔드포인트>
+kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- env | Select-String "REDIS|DB_"
+kubectl -n gochuchamchi get netpol web-allow -o jsonpath="{.spec.egress[0].to}"
+# -> 10.100.0.0/16(서비스 CIDR)이 없으면 DNS가 막힌 상태 (2026-08-04 §4.4)
+```
+
+즉효 롤백은 `kubectl -n gochuchamchi delete netpol --all` (terraform이 다음 apply에서 복원).
+단 **GitOps 관리 리소스를 `kubectl patch`로 고친 건 selfHeal이 몇 분 뒤 원복**하므로
+진단용으로만 쓰고 해결은 gitops 저장소 커밋으로 하세요.
 
 ---
 

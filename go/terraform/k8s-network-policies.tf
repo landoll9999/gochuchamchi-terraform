@@ -15,6 +15,8 @@
 #   `kubectl -n gochuchamchi delete netpol --all` 한 줄 (terraform이 다음 apply에서 복원).
 #
 # 검증 (apply 후):
+#   # DNS부터 볼 것 — 여기서 막히면 나머지 규칙이 맞아도 앱은 전부 500이 난다
+#   kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- getent hosts <RDS 엔드포인트>   # 주소 나오면 성공
 #   kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- curl -sS -m 3 https://checkip.amazonaws.com  # 443 -> 성공
 #   kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- bash -c 'exec 3<>/dev/tcp/1.1.1.1/9999'      # 임의 포트 -> 타임아웃이면 성공
 #   사이트 로그인/상품조회/이미지 업로드 정상 동작 확인 (DB 3306·Redis 6379·S3 443 경로)
@@ -62,8 +64,18 @@ resource "kubernetes_network_policy_v1" "gochuchamchi_web_allow" {
       }
     }
 
-    # 아웃바운드 1: DNS (coredns 파드 IP는 VPC 대역)
+    # 아웃바운드 1: DNS — 목적지를 "서비스 CIDR"로 열어야 한다.
+    #   파드의 resolv.conf nameserver는 kube-dns ClusterIP(10.100.0.10, 서비스 CIDR)이고,
+    #   ClusterIP -> coredns 파드 IP 변환(kube-proxy DNAT)은 패킷이 파드 veth를 "떠난 뒤"
+    #   호스트에서 일어난다. vpc-cni의 정책 엔진(eBPF)은 veth egress 훅에서 평가하므로
+    #   원래 목적지인 ClusterIP를 본다 -> VPC CIDR만 열면 서비스 CIDR이 빠져서 DNS가
+    #   전부 막히고, 앱은 RDS/Redis 호스트명 해석 실패(UnknownHostException)로 500을 낸다.
+    #   (2026-08-04 실제 장애로 확인. VPC 172.30.0.0/16 ∌ 서비스 10.100.0.0/16)
+    #   VPC 대역도 함께 두는 이유: 파드 IP로 직접 가는 DNS 경로와 노드 로컬 캐시 대비.
     egress {
+      to {
+        ip_block { cidr = module.eks.cluster_service_cidr }
+      }
       to {
         ip_block { cidr = module.vpc.vpc_cidr_block }
       }

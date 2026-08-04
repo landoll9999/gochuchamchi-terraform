@@ -79,6 +79,11 @@ Host gochuchamchi-bastion
      DB_PASS=$(echo "$SECRET_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['password'])")
      kubectl -n gochuchamchi create secret generic gochuchamchi-db-secret --from-literal=DB_PASS="$DB_PASS"
      ```
+   > ※ **이 절차는 2026-08-04 제로트러스트 전환으로 폐기됐습니다.** 앱은 더 이상 마스터(admin)
+   > 계정을 쓰지 않고, Secret 이름도 `gochuchamchi-db-app`(앱 전용 계정)으로 바뀌었으며
+   > 생성은 `db-zero-trust.tf`가 배스천에서 자동으로 합니다. 수동 생성 불필요 —
+   > `DB_SECRET_SETUP.md`와 `2026-08-04.md` §1 참고. 지금도 `CreateContainerConfigError`가
+   > 뜬다면 `runbook.md` §6.8로 가세요.
 3. `02-configmap-app.yml`의 `DB_HOST`/`SPRING_DATA_REDIS_HOST` 플레이스홀더를 실제 엔드포인트로 교체 후 재적용 + `kubectl rollout restart`
 4. 로그에서 `HikariPool-1 - Start completed` 확인 → RDS 연결 성공
 
@@ -174,6 +179,13 @@ Host gochuchamchi-bastion
 - `gochuchamchi-db-secret`(K8s Secret)도 Terraform이 배스천을 통해 자동 생성
 
 자세한 코드는 프로젝트의 `k8s-deploy.tf`, `rds-schema-init.tf`, `deploy.ps1`, `k8s/gochuchamchi/schema.sql` 참고.
+
+> **현행 구조와의 차이 (2026-08-04 이후)** — 위는 초기 구축 시점의 기록입니다. 지금은
+> ① K8s Secret이 `gochuchamchi-db-app`(앱 전용 DML 계정)이고 값은 배스천 런타임에서
+> 생성돼 tfstate에 남지 않으며(`db-zero-trust.tf`), ② Deployment/Service/HPA는 Terraform이
+> 아니라 **ArgoCD가 gitops 저장소에서** 배포하고(`kustomization.yaml`의 `resources` 기준),
+> ③ **`terraform apply` 한 번으로 끝나지 않습니다** — ArgoCD PAT를 Secrets Manager에
+> 1회 수동 주입해야 앱이 배포됩니다(`runbook.md` §5). 최신 상태는 `2026-08-04.md` 참고.
 
 ## 6. 자주 쓴 디버깅 명령 모음 (배스천, PATH 설정 후)
 

@@ -5,14 +5,23 @@ SECURITY_AUDIT_REPORT(18개 항목, 대부분 조치완료)와 2026-08-04 제로
 
 ## 우선순위 요약
 
-| # | 항목 | 위험도 | 상태 (2026-08-04 코드 조치, apply 대기) |
+| # | 항목 | 위험도 | 상태 (2026-08-04 **apply 완료 · 사이트 동작 검증 완료**) |
 |---|---|---|---|
-| B1 | 노드 SG가 VPC 전체에 전 포트 개방 | 🔴 높음 | ✅ 코드완료 — `add_node_sg` 인그레스 제거, `add_cluster_sg` 배스천 SG 참조로 축소 |
-| B2 | 노드·NAT에 SSH 키페어 잔존 | 🟠 중간 | ✅ 코드완료 — `key_name` 전면 제거 (**apply 시 노드 롤링**) |
-| B3 | ArgoCD PAT가 tfstate에 평문 → ESO 도입 | 🟠 중간 (파급 큼) | ✅ 코드완료 — `eso.tf` + `charts/eso-config`. **apply 후 PAT 주입 필수** (아래 참고) |
+| B1 | 노드 SG가 VPC 전체에 전 포트 개방 | 🔴 높음 | ✅ 완료 — `add_node_sg` 인그레스 제거, `add_cluster_sg` 배스천 SG 참조로 축소 |
+| B2 | 노드·NAT에 SSH 키페어 잔존 | 🟠 중간 | ✅ 완료 — `key_name` 전면 제거 |
+| B3 | ArgoCD PAT가 tfstate에 평문 → ESO 도입 | 🟠 중간 (파급 큼) | ✅ 완료 — `eso.tf` + `charts/eso-config`, PAT 주입·ESO 동기화 확인(`SecretSynced`). **PAT 미주입 상태로 apply하면 앱이 통째로 안 뜬다**(2026-08-04 §4.3) |
 | B4 | ArgoCD admin 초기 비밀번호가 재구축마다 부활 | 🟠 중간 | ✅ 코드완료 — `TF_VAR_argocd_admin_password_bcrypt` 설정해야 활성화 |
-| B5 | NetworkPolicy 0개 — 클러스터 내부 east-west 무제한 | 🟡 낮음~중간 | ✅ 코드완료 — CNI 정책엔진 + gochuchamchi ns 기본거부/웹앱 허용. **apply 후 사이트 동작 검증 필수** |
+| B5 | NetworkPolicy 0개 — 클러스터 내부 east-west 무제한 | 🟡 낮음~중간 | ✅ 완료 — 단 최초 규칙에 **DNS 결함**이 있어 앱 전체 500. DNS egress를 서비스 CIDR까지 열어 수정(2026-08-04 §4.4) |
 | B6 | 기타 알려진 잔여 | 🟡 낮음 | 🔶 부분 — GuardDuty ✅ / S3 OAC·verify-full·ECR IMMUTABLE·앱 계층 ⬜ (아래 사유) |
+
+> **apply에서 실제로 드러난 결함 2건** (상세: `2026-08-04.md` §4)
+> - **B3** — Terraform이 값 없는 Secret 컨테이너만 만들므로 **PAT 수동 주입이 안 되면
+>   ArgoCD가 저장소에 붙지 못하고 앱이 배포되지 않는다.** apply는 성공하는데 사이트는
+>   503(`Backend service does not exist`)이 된다. 재구축 체크리스트(runbook §5) 맨 앞에 넣었다.
+> - **B5** — DNS egress를 VPC CIDR로만 열어 **DNS가 전면 차단**됐다. 파드는 kube-dns
+>   **ClusterIP**(서비스 CIDR)로 질의하는데 그 대역이 VPC CIDR 밖이다. 3306/6379/443
+>   규칙이 정확해도 호스트명을 못 풀어 전부 무의미해진다. netpol 검증은 반드시
+>   `exec -- getent hosts <RDS 엔드포인트>`부터 할 것.
 
 ### apply 절차 (B1~B6 반영분)
 
@@ -21,11 +30,18 @@ SECURITY_AUDIT_REPORT(18개 항목, 대부분 조치완료)와 2026-08-04 제로
    NAT 인스턴스 **재생성**(key_name 제거), ESO 리소스 4개 create, `kubernetes_secret_v1.gitops_repo_creds` destroy,
    vpc-cni 설정 변경, NetworkPolicy 2개 create, GuardDuty detector create
 3. `terraform apply` — 트래픽 적은 시간대 (노드 롤링 + NAT 재생성으로 수 분 단절 구간 있음)
-4. **PAT 주입 (필수, 1회)** — 기존 PAT는 state에 노출됐던 값이므로 **재발급해서** 넣기:
-   `aws secretsmanager put-secret-value --secret-id gochuchamchi/argocd/git-pat --secret-string '<새 PAT>' --region ap-northeast-2 --profile admin`
-5. 검증: 사이트 로그인/상품조회/이미지 업로드, `kubectl -n argocd get secret gochuchamchi-gitops-repo-creds`,
+4. **PAT 주입 (필수, 1회)** — 기존 PAT는 state에 노출됐던 값이므로 **재발급해서** 넣기.
+   값을 argv에 싣지 않도록 파일 경유(주입 후 삭제, 파일 끝 개행 금지):
+   ```
+   aws secretsmanager put-secret-value --secret-id gochuchamchi/argocd/git-pat --secret-string file://pat.txt --region ap-northeast-2 --profile admin
+   ```
+   스코프는 `Contents: Read/write`(image-updater의 git write-back). 확인:
+   `kubectl get externalsecret -n argocd` → `SecretSynced`/`Ready=True`
+5. **DNS 확인** — netpol 적용 후 가장 먼저. 여기서 막히면 나머지 검증이 전부 무의미:
+   `kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- getent hosts <RDS 엔드포인트>`
+6. 검증: 사이트 로그인/상품조회/이미지 업로드, `kubectl -n argocd get secret gochuchamchi-gitops-repo-creds`,
    ArgoCD UI 저장소 연결 상태, k8s-network-policies.tf 헤더의 검증 명령
-6. 문제 시 롤백: NetworkPolicy만 문제면 `kubectl -n gochuchamchi delete netpol --all` (한 줄, 즉효)
+7. 문제 시 롤백: NetworkPolicy만 문제면 `kubectl -n gochuchamchi delete netpol --all` (한 줄, 즉효)
 
 ---
 

@@ -22,6 +22,29 @@
 | 마스터(admin) 비밀번호 위치 | Secrets Manager만 (`terraform output -raw rds_secret_arn`) — K8s/state에 없음 |
 | 접속 방법 | `docs/runbook.md` §1.4 (앱 계정 ③ / 마스터 ④, `--ssl` 필수) |
 
+## 앱이 이 Secret들을 실제로 받으려면 — gitops 쪽 `envFrom`
+
+Terraform이 Secret을 만들어도 **Deployment가 참조하지 않으면 파드에 안 들어갑니다.**
+Deployment는 이 저장소가 아니라 `gochuchamchi-gitops`의 **`deployment.yml`**이 관리합니다
+(같은 저장소의 `03-deployment-web.yml`은 `kustomization.yaml`의 `resources`에 없어
+적용되지 않으므로 2026-08-04에 삭제됨 — 고칠 파일을 헷갈리지 말 것):
+
+```yaml
+envFrom:
+  - configMapRef:
+      name: gochuchamchi-config
+  - secretRef:
+      name: gochuchamchi-db-app          # DB_PASS
+  - secretRef:
+      name: gochuchamchi-redis-secret    # SPRING_DATA_REDIS_PASSWORD
+```
+
+주입 확인:
+
+```powershell
+kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- env | Select-String "DB_|REDIS"
+```
+
 ## Secret이 없어서 파드가 `CreateContainerConfigError`일 때
 
 ```powershell
@@ -32,6 +55,11 @@ terraform apply
 
 - apply 직후 잠깐의 `CreateContainerConfigError`는 정상 — 프로비저너가 Secret을 만들면 kubelet이 자동 재시도
 - 네임스페이스를 재생성한 경우는 트리거(`namespace_uid`)가 바뀌므로 taint 없이 apply만으로 다시 돕니다
+- **`secret "..." not found`가 계속되면 Secret이 아니라 이름 불일치를 의심**하세요 —
+  위 `envFrom`이 삭제된 옛 이름(`gochuchamchi-db-secret`)을 참조하고 있을 수 있습니다
+  (2026-08-04 §4.5의 실제 사례)
+- 프로비저너가 SSM에서 kubectl을 쓸 때 `localhost:8080 connection refused`가 나면
+  kubeconfig 경로 문제입니다 — `2026-08-04.md` §4.1
 
 ## ESO(External Secrets Operator) 도입 시
 

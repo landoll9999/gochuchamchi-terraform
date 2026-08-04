@@ -1,7 +1,11 @@
+# 별도 저장소(gochuchamchi-gitops)의 클론 - 여기서 추적하지 않음
+gochuchamchi-gitops/
+
 # Terraform state (민감 정보 포함 - 절대 커밋 금지)
 *.tfstate
 *.tfstate.*
 .terraform/
+**/.terraform/
 .terraform.lock.hcl
 
 # 저장된 plan 파일 (변수 값이 들어있음 - 커밋 금지)
@@ -22,3 +26,10 @@ check-status.json
 create-db-secret.json
 *-params.json
 ssm-params.json
+pf-argocd.json
+
+# 에디터/도구 로컬 설정
+.claude/
+.vscode/
+.idea/
+*.swp
