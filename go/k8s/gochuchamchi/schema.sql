@@ -128,3 +128,16 @@ VALUES (
   '$2a$12$0SXiA4XzpKd38IT69PHpjMyj3Um3cIzgaIDQWDJG9/6eZbhjeudE7',
   'superadmin'
 );
+
+-- =============================================================================
+-- 기본 admin 계정 3개 (수동 회원가입 + DB 권한 상승 과정 생략용)
+--
+-- 비밀번호 공통: 1q2w3e4r!  (실제 bcrypt 해싱값, 로그인 가능)
+-- INSERT IGNORE: username UNIQUE라 이미 있으면 건너뜀 -> 재apply해도 안전
+-- =============================================================================
+
+INSERT IGNORE INTO users (username, name, password, role)
+VALUES
+  ('dnjstjr504', 'admin1', '$2b$12$OuUMGePzBJcyTZqJ3agRhufW8lH/ZZsrDD9zL/4lGf2Y0.FEYO/Uy', 'admin'),
+  ('ak121231',   'admin2', '$2b$12$OuUMGePzBJcyTZqJ3agRhufW8lH/ZZsrDD9zL/4lGf2Y0.FEYO/Uy', 'admin'),
+  ('wjdgus429',  'admin3', '$2b$12$OuUMGePzBJcyTZqJ3agRhufW8lH/ZZsrDD9zL/4lGf2Y0.FEYO/Uy', 'admin');
