@@ -320,6 +320,31 @@ aws ec2 describe-addresses --region ap-northeast-2 --profile admin          # �
 aws elbv2 describe-target-groups --region ap-northeast-2 --profile admin    # 고아 타겟그룹
 ```
 
+#### 4.2-1 destroy가 ALB 말고 다른 데서 막힐 때 (2026-08-04 §5)
+
+| 증상 | 원인 | 조치 |
+|---|---|---|
+| `timeout while waiting ... (timeout: 5m0s)` | AWS 비동기 작업이 기본 타임아웃 초과 | **AWS 실물부터 조회.** 이미 끝나 있으면 `terraform state rm`(delete 실패) 또는 `untaint`(create 실패) |
+| 네임스페이스가 `Terminating`에서 안 끝남 | `NotReady` 노드의 파드 | `kubectl get ns <n> -o json`의 condition으로 남은 gvr 확인 → `kubectl delete pod --grace-period=0 --force` |
+| `BucketNotEmpty` | 버전 누적 | `force_destroy = true`. **단, 고친 뒤 apply를 한 번 돌려야 반영됨**(아래) |
+| `BucketNotEmpty`인데 `force_destroy`가 이미 true | **Object Lock COMPLIANCE** | 기한 전엔 못 지움 → `terraform state rm`으로 관리 제외, 기한 후 수동 삭제 |
+
+⚠️ **`terraform destroy`는 config가 아니라 prior state를 읽는다.** `force_destroy`를
+`.tf`에서 고치고 바로 destroy하면 반영되지 않는다. 실제 state 값 확인:
+
+```powershell
+aws s3 cp "s3://gochuchamchi-tfstate-307223751140/eks/terraform.tfstate" state.json --profile admin
+```
+
+⚠️ **Object Lock 확인은 파괴적 작업 전에 실물로** (코드 주석을 믿지 말 것):
+
+```powershell
+aws s3api get-object-lock-configuration --bucket <bucket> --profile admin
+aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> --profile admin
+```
+
+`Mode: COMPLIANCE`는 **루트 계정도 기한 단축·삭제가 불가능하다.**
+
 ---
 
 ## 5. 재구축 후 복구 체크리스트
@@ -338,6 +363,16 @@ aws elbv2 describe-target-groups --region ap-northeast-2 --profile admin    # �
 - [ ] **파드에서 DNS가 되는지** — NetworkPolicy가 DNS를 막으면 앱이 전부 500입니다 (2026-08-04 §4.4)
   ```powershell
   kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- getent hosts <RDS 엔드포인트>
+  ```
+- [ ] **apply 전: 지난 destroy에서 못 지운 리소스를 먼저 import** — AWS에 남아 있는데 state에 없으면 `BucketAlreadyOwnedByYou` / `Limit exceeded`로 apply가 막힙니다 (2026-08-04 §5.1, §5.6). import 후 **반드시 `plan`으로 재생성 계획이 없는지 확인**
+  ```powershell
+  # Object Lock 때문에 남은 로그 아카이브 버킷 (2026-09-02까지 삭제 불가)
+  terraform import aws_s3_bucket.cloudwatch_log_archive gochuchamchi-cloudwatch-log-archive-307223751140
+  terraform plan "-target=aws_s3_bucket.cloudwatch_log_archive"   # "No changes"여야 함
+
+  # 계정당 1개인 리소스 — AWS가 자동 생성해둔 게 있으면 인수
+  aws ce get-anomaly-monitors --profile admin --region us-east-1 --query "AnomalyMonitors[?MonitorType=='DIMENSIONAL'].MonitorArn" --output text
+  terraform import aws_ce_anomaly_monitor.services "<위 ARN>"
   ```
 - [ ] **ECR 이미지 적재** — `aws ecr describe-images`가 비어있으면 §3.1 워크플로 실행 (`force_delete = true`라 destroy가 이미지까지 지웁니다)
 - [ ] **DB 스키마 적용 확인** — `SHOW TABLES`에 4개(`users`/`notices`/`products`/`product_sizes`)가 보여야 합니다 → 없으면 **§5.1**

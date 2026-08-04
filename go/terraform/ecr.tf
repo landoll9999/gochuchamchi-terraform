@@ -50,6 +50,16 @@ resource "aws_ecr_lifecycle_policy" "gochuchamchi" {
 resource "aws_inspector2_enabler" "this" {
   account_ids    = [data.aws_caller_identity.current.account_id]
   resource_types = ["ECR", "EC2"]
+
+  # EC2+ECR 활성화/비활성화가 프로바이더 기본 5분을 넘길 때가 있다. 타임아웃이 나도
+  # AWS 쪽 작업은 계속 진행돼 결국 ENABLED/DISABLED가 되지만 Terraform은 실패로 본다.
+  # (2026-08-04 apply/destroy 양쪽에서 실제로 발생 — apply는 tainted가 남아 다음 실행이
+  #  destroy→재생성을 반복했고, destroy는 state에 남아 재시도가 막혔다.)
+  timeouts {
+    create = "15m"
+    update = "15m"
+    delete = "15m"
+  }
 }
 
 # 레지스트리 스캔을 Inspector 기반 ENHANCED로 승격 (계정 단위 설정)

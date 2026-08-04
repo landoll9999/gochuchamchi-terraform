@@ -66,8 +66,12 @@ resource "aws_ce_anomaly_monitor" "services" {
 }
 
 resource "aws_ce_anomaly_subscription" "email" {
-  name      = "gochuchamchi-anomaly-email"
-  frequency = "IMMEDIATE" # 감지 즉시 (DAILY/WEEKLY 요약도 가능)
+  name = "gochuchamchi-anomaly-email"
+  # AWS 제약: IMMEDIATE는 SNSTopic 구독자만 지원한다. EMAIL 구독자는 DAILY/WEEKLY만
+  # 가능하며, IMMEDIATE + EMAIL 조합은 CreateAnomalySubscription이 400으로 거부한다
+  # ("Immediate frequencies only support SNSTopic subscriptions", 2026-08-04 확인).
+  # 즉시 알림이 필요해지면 SNS 토픽을 만들어 subscriber를 SNS로 바꿀 것.
+  frequency = "DAILY"
 
   monitor_arn_list = [aws_ce_anomaly_monitor.services.arn]
 
