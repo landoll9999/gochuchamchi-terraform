@@ -1,35 +1,5 @@
-# 별도 저장소(gochuchamchi-gitops)의 클론 - 여기서 추적하지 않음
-gochuchamchi-gitops/
-
-# Terraform state (민감 정보 포함 - 절대 커밋 금지)
-*.tfstate
-*.tfstate.*
 .terraform/
-**/.terraform/
-.terraform.lock.hcl
-
-# 저장된 plan 파일 (변수 값이 들어있음 - 커밋 금지)
-tfplan
-tfplan*
-*.tfplan
-
-# 접속 인증 파일
+*.tfstate
+.tfstate.
+crash.log
 *.pem
-*.key
-
-# 디버깅용 임시 SSM 파라미터 파일
-apply-and-restart.json
-check-all-ns.json
-check-ingress.json
-check-ingress2.json
-check-status.json
-create-db-secret.json
-*-params.json
-ssm-params.json
-pf-argocd.json
-
-# 에디터/도구 로컬 설정 (.claude/skills/는 공유 대상이라 파일 단위로 제외)
-**/.claude/settings.local.json
-.vscode/
-.idea/
-*.swp
