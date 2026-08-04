@@ -28,8 +28,8 @@ create-db-secret.json
 ssm-params.json
 pf-argocd.json
 
-# 에디터/도구 로컬 설정
-.claude/
+# 에디터/도구 로컬 설정 (.claude/skills/는 공유 대상이라 파일 단위로 제외)
+**/.claude/settings.local.json
 .vscode/
 .idea/
 *.swp

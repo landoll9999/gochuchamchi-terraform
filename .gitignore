@@ -1,2 +1,3 @@
-# Claude Code 로컬 설정 (도구 권한 등 — 작업자마다 다르고 공유할 값이 아님)
-.claude/
+# Claude Code 로컬 설정 (도구 권한 등 — 작업자마다 다르고 공유할 값이 아님).
+# .claude/ 를 통째로 막으면 공유해야 할 .claude/skills/ 까지 빠지므로 파일 단위로 제외한다.
+**/.claude/settings.local.json
