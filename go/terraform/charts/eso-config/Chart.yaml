@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gochuchamchi-eso-config
+description: >
+  External Secrets Operator 설정 CR(ClusterSecretStore + ExternalSecret).
+  helm_release로 감싼 이유는 charts/gochuchamchi-application과 동일 — 첫 apply
+  시점에 클러스터 접속 정보가 "known after apply"라 CR 전용 프로바이더는
+  plan 단계에서 깨지기 때문. (2026-08-04 백로그 B3)
+type: application
+version: 0.1.0

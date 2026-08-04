@@ -1,0 +1,5 @@
+{
+  "host": ["internal-k8s-argocd-argocdse-cebcbce90d-1739659220.ap-northeast-2.elb.amazonaws.com"],
+  "portNumber": ["443"],
+  "localPortNumber": ["8443"]
+}

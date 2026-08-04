@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gochuchamchi
+  namespace: argocd
+  annotations:
+    # ECR(gochuchamchi 저장소)에 새로 올라온 이미지 중 "가장 최근에 빌드된" 태그를 자동 추적
+    # (semver가 아닌 git commit SHA 태그라서 latest/newest-build 전략을 사용)
+    argocd-image-updater.argoproj.io/image-list: "web={{ .Values.appImage }}"
+    argocd-image-updater.argoproj.io/web.update-strategy: "latest"
+    argocd-image-updater.argoproj.io/write-back-method: "git"
+    argocd-image-updater.argoproj.io/git-branch: "{{ .Values.gitBranch }}"
+spec:
+  project: default
+  source:
+    repoURL: "{{ .Values.repoURL }}"
+    targetRevision: "{{ .Values.gitBranch }}"
+    path: "."
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: "{{ .Values.destinationNamespace }}"
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

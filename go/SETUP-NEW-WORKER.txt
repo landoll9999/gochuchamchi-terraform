@@ -1,0 +1,90 @@
+================================================================
+ 새 작업자 세팅 가이드 - 다른 AWS 계정 기준 (2026-07-29)
+================================================================
+
+■ 1. 준비
+
+  (1) AWS 자격증명 등록 (액세스키 CSV 값)
+        aws configure --profile myprofile
+          region: ap-northeast-2 / output: json
+
+  (2) 삭제할 것  ★ 안 지우면 남의 계정 리소스를 갱신하려다 대량 에러
+        terraform/.terraform/                  (원 PC 경로가 박혀 있음)
+        terraform/terraform.tfstate*
+        discord-notifications/terraform.tfstate*
+        terraform.tfstate                      (루트, 빈 파일)
+
+  (3) GitHub PAT 주입 (2026-08-04 변경: 환경변수 -> Secrets Manager)
+      TF_VAR_argocd_git_pat는 더 이상 안 씁니다. apply가 만든 Secrets Manager
+      컨테이너에 값을 1회 넣으면 클러스터의 ESO가 알아서 동기화합니다:
+        aws secretsmanager put-secret-value \
+          --secret-id gochuchamchi/argocd/git-pat \
+          --secret-string "<GitHub PAT>" \
+          --region ap-northeast-2 --profile myprofile
+      (apply 이후 실행. 넣기 전까지 ArgoCD 저장소 연결만 안 될 뿐 무해)
+
+  (4) (선택) ArgoCD admin 비밀번호 고정 — 재구축해도 유지하려면
+        해시 생성(배스천 등 리눅스): htpasswd -nbBC 10 "" '<비밀번호>' | tr -d ':\n'
+        $env:TF_VAR_argocd_admin_password_bcrypt = "<해시>"
+
+
+■ 2. 선행 조건 - 이게 없으면 plan 자체가 안 됨
+
+  (1) Route53 호스팅 영역  ★가장 흔한 실패 지점
+      dns.tf가 resource가 아니라 data 소스라, 해당 계정에 존이 미리
+      없으면 plan에서 "no matching Route53Zone found" 로 바로 실패.
+
+      gochuchamchi.shop은 원 계정이 서비스 중이라 그대로 못 씁니다.
+      둘 중 하나를 택하세요:
+        - 본인 도메인 사용 -> Route53에 존 생성 + 등록기관 NS를 그쪽으로 지정
+        - dev.gochuchamchi.shop 서브도메인을 원 계정에서 위임받기
+
+  (2) EC2 키페어 — 불필요 (2026-08-04 변경)
+      key_name 변수와 SSH 키 사용처가 전부 제거됐습니다. 모든 인스턴스
+      (배스천/NAT/노드) 접속은 SSM Session Manager로만 합니다.
+
+
+■ 3. 값 수정 (terraform/variables.tf)
+
+    aws_profile          "admin"                  -> 본인 프로필
+    domain_name          "gochuchamchi.shop"      -> 위 2-(1)에서 정한 도메인
+    key_name             "gochuchamchi-key-v2"    -> 키페어 이름
+    argocd_github_owner  "landoll9999"            -> 본인 GitHub 계정
+    argocd_gitops_repo   "gochuchamchi-gitops"    -> 본인 gitops 저장소
+    bastion_ami/nat_ami  "ami-0f93dc65265863858"  -> 리전 바꿀 때만 변경
+
+  * aws_profile은 코드 수정 대신 실행 시 넘겨도 됨:
+        terraform plan -var="aws_profile=myprofile"
+  * .tf 파일에 AWS 계정 ID 하드코딩은 없음 (전부 자동 참조)
+
+
+■ 4. 실행
+
+    cd terraform
+    terraform init
+    terraform plan          <- 여기 통과하면 세팅 성공
+    terraform apply
+
+    aws eks update-kubeconfig --name gochuchamchi-eks \
+      --region ap-northeast-2 --profile myprofile
+
+    cd ../discord-notifications
+    $env:TF_VAR_discord_webhook_url = "<웹훅 URL>"
+    terraform init && terraform plan && terraform apply
+      (클러스터가 떠 있어야 plan이 됨)
+
+
+■ 5. apply 후 마무리
+
+  CI 워크플로의 역할 ARN 교체:
+    apply 결과 output 중 github_actions_ecr_role_arn 값을
+    gochuchamchi-spring 저장소의 .github/workflows/deploy.yml 에 반영
+    (기존 값은 원 계정 ARN이라 그대로 두면 CI가 인증 실패)
+
+
+■ 6. 알아둘 것
+
+  - 로컬 차트(charts/) 수정 시 Chart.yaml의 version도 올려야 반영됨
+  - 막히면 docs/ 폴더 참고 (docs/README.md 가 인덱스)
+    (pitfalls-checklist.md=재발방지 체크리스트, YYYY-MM-DD.md=날짜별 트러블슈팅 사례)
+  - *.pem / PAT / 웹훅 URL은 디렉토리에 넣지 말고 따로 전달

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: gochuchamchi-application
+description: >
+  ArgoCD Application CR for gochuchamchi-web. helm_release로 감싼 이유는,
+  이 CR이 참조하는 EKS 클러스터 접속 정보가 처음 apply 시점에는 아직 "known after apply"
+  상태라 alekc/kubectl 같은 프로바이더는 plan 단계에서 바로 에러가 나기 때문 (실제로 확인됨).
+  hashicorp/helm 프로바이더는 이 프로젝트에서 이미 같은 패턴(ALB Controller/ExternalDNS)으로
+  검증됐으므로 재사용.
+type: application
+version: 0.3.0

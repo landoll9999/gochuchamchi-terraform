@@ -1,0 +1,12 @@
+# argocd-image-updater v1.x부터는 Application의 argocd-image-updater.argoproj.io/*
+# annotation을 자동으로 스캔하지 않고, 이 ImageUpdater CR로 명시적으로 지정한
+# Application만 처리한다. useAnnotations: true로 기존 annotation 설정을 그대로 재사용.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gochuchamchi
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: gochuchamchi
+      useAnnotations: true

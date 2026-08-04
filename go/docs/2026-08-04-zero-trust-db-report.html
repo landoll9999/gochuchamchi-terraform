@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>제로트러스트 DB 하드닝 보고서 — 2026-08-04</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  p { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>제로트러스트 DB 하드닝 보고서</h1>
+  <div class="meta">작성일 2026-08-04 · gochuchamchi EKS · 대상: RDS MariaDB + ElastiCache Redis · 코드 완료 / apply 전 상태</div>
+</header>
+
+<h2>1. 개요 — 무엇을, 왜</h2>
+<p>데이터 계층에 남아 있던 마지막 신뢰 가정을 제거했다. 지금까지는 <strong>"VPC 안이면, SG를 통과했으면 믿는다"</strong>가 전제였다.
+네트워크(SG 참조 좁히기, 감사보고서 #5)는 이미 조치됐지만, <strong>접속 계정·전송 암호화·접근 기록</strong>은 비어 있었다.
+이번 작업으로 제로트러스트 3원칙을 DB 계층에 적용했다: <strong>최소권한</strong>(앱 전용 DML 계정),
+<strong>명시적 검증</strong>(TLS 이중 강제 + AUTH), <strong>침해 가정</strong>(자격증명의 state 격리 + 감사 로그).</p>
+
+<div class="callout danger"><strong>작업 중 발견한 기존 리스크:</strong> <code>k8s-deploy.tf</code>가 RDS <strong>마스터 비밀번호</strong>를
+data 소스로 읽어 K8s Secret을 만들면서 <strong>tfstate에 평문으로 저장</strong>하고 있었다.
+감사보고서 #1이 "state에 secret_string이 다시 들어가는 시점 = ESO 도입 트리거"로 정의해 둔 바로 그 상태가 이미 발동돼 있었던 것.
+이번 구조 변경으로 마스터/앱 DB 비밀번호 모두 state에서 완전히 제거됐다.</p></div>
+
+<h2>2. Before → After</h2>
+<div class="flow">
+  <div class="lane-title">BEFORE — 네트워크 위치만 믿는 구조</div>
+  <div class="lane">
+    <span class="node">앱 파드</span><span class="arrow">→</span>
+    <span class="node bad">admin (마스터)<br><small>DDL/DCL 전부 가능</small></span><span class="arrow">→</span>
+    <span class="node bad">평문 3306</span><span class="arrow">→</span>
+    <span class="node">RDS<br><small>접속 기록 없음</small></span>
+  </div>
+  <div class="lane">
+    <span class="node neutral">Terraform</span><span class="arrow">→</span>
+    <span class="node bad">마스터 비번 조회<br><small>tfstate 평문 저장</small></span>
+    <span class="arrow" style="margin-left:24px">·</span>
+    <span class="node">앱 파드</span><span class="arrow">→</span>
+    <span class="node bad">평문 · 무인증 6379</span><span class="arrow">→</span>
+    <span class="node">Redis</span>
+  </div>
+  <div class="lane-title" style="margin-top:16px">AFTER — 매 접속을 검증하는 구조</div>
+  <div class="lane">
+    <span class="node">앱 파드</span><span class="arrow">→</span>
+    <span class="node good">gochuchamchi_app<br><small>DML만 · REQUIRE SSL</small></span><span class="arrow">→</span>
+    <span class="node good">TLS 강제<br><small>require_secure_transport=1</small></span><span class="arrow">→</span>
+    <span class="node">RDS<br><small>감사 플러그인 → CloudWatch</small></span>
+  </div>
+  <div class="lane">
+    <span class="node good">배스천(SSM)</span><span class="arrow">→</span>
+    <span class="node good">비번 생성 · Secrets Manager 저장<br><small>DB 계정 생성 · K8s Secret 주입</small></span>
+    <span class="arrow" style="margin-left:24px">·</span>
+    <span class="node">앱 파드</span><span class="arrow">→</span>
+    <span class="node good">TLS + AUTH 토큰</span><span class="arrow">→</span>
+    <span class="node">Redis (replication_group)</span>
+  </div>
+</div>
+<p style="font-size:14px; color:var(--sub)">핵심: Terraform은 이제 비밀 "컨테이너"만 만들고 값은 모른다.
+값의 생성·저장·주입은 전부 배스천 런타임에서 일어나므로 tfstate·SSM 커맨드 로그 어디에도 비밀번호가 남지 않는다.
+(예외 1건: Redis auth_token은 리소스 인자라 state 경유 불가피 — §6 트레이드오프)</p>
+
+<h2>3. 기존 상태의 갭 4개</h2>
+<table>
+  <tr><th style="width:6%">#</th><th style="width:34%">갭</th><th>리스크 (침해 시나리오)</th></tr>
+  <tr><td>1</td><td>앱이 DB <strong>마스터(admin)</strong>로 접속 (<code>DB_USER=admin</code>)</td>
+      <td>SQL 인젝션·의존성 취약점 하나로 즉시 DBA 권한 — <code>DROP TABLE</code>, <code>GRANT</code>, 타 DB 생성까지 전부 가능</td></tr>
+  <tr><td>2</td><td>마스터 비밀번호가 <strong>tfstate에 평문 저장</strong></td>
+      <td>state 파일 접근 = DB 전체 장악. 감사보고서 #1의 ESO 트리거가 이미 발동된 상태였음</td></tr>
+  <tr><td>3</td><td>전송 암호화 미강제 (앱·배스천 모두 평문 3306)</td>
+      <td>"같은 VPC = 안전" 가정. VPC 내 다른 자원(NAT 등) 침해 시 트래픽 스니핑 가능</td></tr>
+  <tr><td>4</td><td>DB 접속 기록 없음 + Redis 평문·무인증 (#14 잔여)</td>
+      <td>무단 접속 시도를 볼 수단이 없음. 세션 스토어는 SG 하나 넘으면 로그인 세션 탈취</td></tr>
+</table>
+
+<h2>4. 변경 상세 (파일별)</h2>
+<table>
+  <tr><th style="width:26%">파일</th><th style="width:12%">구분</th><th>변경 내용</th></tr>
+  <tr><td><code>db-zero-trust.tf</code></td><td><span class="badge new">신규</span></td>
+      <td><strong>이번 작업의 핵심.</strong> ① 앱 전용 계정 <code>gochuchamchi_app</code> — <code>gochuchamchi.*</code>에
+      SELECT/INSERT/UPDATE/DELETE만, <code>REQUIRE SSL</code>이라 TLS 없이는 로그인 불가.
+      ② 비번 생성 → Secrets Manager(<code>gochuchamchi/app/db-credentials</code>) → DB 계정 생성 →
+      K8s Secret(<code>gochuchamchi-db-app</code>) 주입을 전부 배스천 SSM에서 실행.
+      ③ 멱등(재실행 시 비번 재사용) + Status 검사로 실패를 삼키지 않음(8/3 교훈 반영).
+      재시도: <code>terraform taint null_resource.provision_app_db_user</code></td></tr>
+  <tr><td><code>rds.tf</code></td><td><span class="badge done">수정</span></td>
+      <td>① <code>require_secure_transport=1</code> — 평문 접속은 핸드셰이크에서 거부.
+      ② <code>MARIADB_AUDIT_PLUGIN</code> — 접속(실패 포함)/DDL/DCL 기록, CloudWatch
+      <code>/aws/rds/instance/gochuchamchi-db/audit</code>로 export.
+      ③ SG egress 전면 제거(DB는 아웃바운드를 시작할 일 없음).
+      ④ <code>storage_encrypted=true</code> 명시. ⑤ IAM DB 인증은 <strong>MariaDB 미지원이라 제외</strong>(주석 기록)</td></tr>
+  <tr><td><code>redis.tf</code></td><td><span class="badge done">수정</span></td>
+      <td><code>aws_elasticache_cluster</code>(암호화/AUTH 미지원) → <code>aws_elasticache_replication_group</code>
+      단일 노드 교체. 전송/저장 암호화 + AUTH 토큰. 1노드 유지라 비용 동일. SG egress 제거.
+      감사보고서 <strong>#14 잔여과제 이행</strong></td></tr>
+  <tr><td><code>k8s-deploy.tf</code></td><td><span class="badge done">수정</span></td>
+      <td>① ConfigMap: <code>DB_USER=gochuchamchi_app</code>,
+      <code>SPRING_DATASOURCE_URL=...?sslMode=trust</code>(env가 application.yml보다 우선 — <strong>앱 리빌드 불필요</strong>),
+      Redis 엔드포인트를 <code>primary_endpoint_address</code>로, <code>SPRING_DATA_REDIS_SSL_ENABLED=true</code>.
+      ② <strong>마스터 비번을 읽던 data 소스 + K8s Secret <code>gochuchamchi-db-secret</code> 삭제</strong> → state에서 마스터 비번 제거.
+      ③ Redis AUTH용 <code>gochuchamchi-redis-secret</code> 추가(키 = <code>SPRING_DATA_REDIS_PASSWORD</code>)</td></tr>
+  <tr><td><code>iamRole.tf</code> / <code>eks-pod-identity.tf</code></td><td><span class="badge done">수정</span></td>
+      <td><code>rds!*</code> 와일드카드("리전 내 모든 RDS 마스터 시크릿" 조회 가능) 2곳 제거 →
+      배스천: 마스터 1개(Get) + 앱 시크릿 1개(Get/Put/Describe), 앱 Pod Identity: 앱 시크릿 1개만.
+      배스천·앱이 털려도 폭발 반경이 시크릿 단위로 제한됨</td></tr>
+  <tr><td><code>rds-schema-init.tf</code></td><td><span class="badge done">수정</span></td>
+      <td>배스천 mysql <code>[client]</code>에 <code>ssl</code> 추가 — TLS 강제 후에도 스키마 초기화 동작</td></tr>
+  <tr><td><code>main.tf</code></td><td><span class="badge done">수정</span></td>
+      <td><code>random</code> 프로바이더 추가(Redis AUTH 토큰) → <strong><code>terraform init</code> 1회 필요</strong></td></tr>
+  <tr><td><code>cloudwatch-managed-metrics.tf</code></td><td><span class="badge done">수정</span></td>
+      <td>Redis 알람 디멘션을 RG 멤버 클러스터 ID(<code>gochuchamchi-redis-001</code>)로 변경 — 참조 깨짐 방지</td></tr>
+  <tr><td><code>docs/</code> 3건</td><td><span class="badge done">문서</span></td>
+      <td><code>2026-08-04.md</code>(상세 기록) 신규 · <code>README.md</code> 인덱스 갱신 ·
+      <code>SECURITY_AUDIT_REPORT.md</code> #14 조치완료 처리</td></tr>
+</table>
+
+<h2>5. 적용 절차 (다음 apply 체크리스트)</h2>
+<div class="callout warn"><strong>미적용 주의:</strong> 위 변경은 코드·문서 완료 상태다. 아래 순서대로 실행해야 AWS에 반영된다.
+특히 <strong>1번(gitops)을 apply보다 먼저</strong> 해야 파드가 새 Secret 이름을 찾는다.</div>
+<table>
+  <tr><th style="width:8%">순서</th><th>작업</th></tr>
+  <tr><td>1</td><td><strong>gitops 저장소 <code>03-deployment-web.yml</code></strong> — secret 이름
+      <code>gochuchamchi-db-secret</code> → <code>gochuchamchi-db-app</code> 교체(키 <code>DB_PASS</code> 동일) +
+      <code>gochuchamchi-redis-secret</code> envFrom 한 줄 추가</td></tr>
+  <tr><td>2</td><td>MTU 1492 적용(8/3 잔여 — 안 하면 <code>Error locating chart</code> 재발 가능):
+      관리자 PowerShell에서 <code>netsh interface ipv4 set subinterface "이더넷" mtu=1492 store=persistent</code></td></tr>
+  <tr><td>3</td><td><code>terraform init</code>(random 프로바이더) → <code>terraform validate</code> → <code>terraform plan</code></td></tr>
+  <tr><td>4</td><td>plan 확인: <strong>destroy</strong> = elasticache_cluster, 구 K8s Secret ·
+      <strong>create</strong> = replication_group, random_password, app 시크릿, null_resource, redis 시크릿 ·
+      <strong>update</strong> = RDS(파라미터/옵션/로그), SG, ConfigMap, IAM 2건.
+      <span class="badge risk">중단 조건</span> RDS가 <strong>replace</strong>로 뜨면 진행 금지(기존 인스턴스가 비암호화였다는 뜻 — 스냅샷 경유 전환 필요)</td></tr>
+  <tr><td>5</td><td><code>terraform apply</code> — 앱 파드가 잠깐 <code>CreateContainerConfigError</code>여도 정상
+      (프로비저너가 Secret을 만들면 kubelet이 자동 재시도)</td></tr>
+  <tr><td>6</td><td>ConfigMap/Secret은 파드 시작 시 주입되므로 마지막에
+      <code>kubectl -n gochuchamchi delete pod -l app=gochuchamchi-web</code> (GitOps 드리프트 없는 재기동)</td></tr>
+</table>
+<p style="font-size:13.5px; color:var(--sub)">이미 떠 있는 인스턴스에 적용하는 경우: RDS 파라미터가 <code>pending-reboot</code>로 남으면
+<code>aws rds reboot-db-instance</code> 1회(1~2분) · ElastiCache 교체 중 5~10분 세션 공백(재로그인) ·
+admin 계정은 전환 기간에도 유효하므로 순서만 지키면 서비스 다운타임 없음.</p>
+
+<h2>6. 검증 방법 (apply 후)</h2>
+<pre><code><span class="cmt"># 1) TLS 강제 — 평문이 "거부"되면 성공</span>
+mysql -h &lt;RDS엔드포인트&gt; -u admin -p --skip-ssl -e "SELECT 1"    <span class="cmt"># -> ERROR (secure transport required)</span>
+mysql -h &lt;RDS엔드포인트&gt; -u admin -p --ssl -e "SHOW STATUS LIKE 'Ssl_cipher';"
+
+<span class="cmt"># 2) 앱 계정 최소권한 — DML만 보이고, DROP은 거부돼야 함</span>
+mysql -h &lt;RDS&gt; -u gochuchamchi_app -p --ssl -e "SHOW GRANTS FOR CURRENT_USER;"
+mysql -h &lt;RDS&gt; -u gochuchamchi_app -p --ssl -e "DROP TABLE gochuchamchi.users;"   <span class="cmt"># -> DENIED</span>
+
+<span class="cmt"># 3) 감사 로그 스트림 확인</span>
+aws logs describe-log-streams --log-group-name /aws/rds/instance/gochuchamchi-db/audit --region ap-northeast-2
+
+<span class="cmt"># 4) Redis AUTH+TLS — 무인증이 거부되면 성공</span>
+redis6-cli -h &lt;Redis&gt; -p 6379 --tls ping             <span class="cmt"># -> NOAUTH Authentication required</span>
+redis6-cli -h &lt;Redis&gt; -p 6379 --tls -a '&lt;토큰&gt;' ping  <span class="cmt"># -> PONG</span>
+
+<span class="cmt"># 5) (로컬) 마스터 비번이 state에서 사라졌는지</span>
+terraform state pull | Select-String "password"</code></pre>
+<p style="font-size:13.5px; color:var(--sub)">이번 세션에서 완료된 사전 검증: HCL 파서로 13개 파일 구문 통과 · 구(舊) 리소스 참조 0건 ·
+배스천 스크립트의 SQL/JSON 생성 로직 시뮬레이션(600 권한, 인용부호 안전성) 통과.
+<code>terraform validate</code>는 로컬에서 실행할 것.</p>
+
+<h2>7. 트레이드오프 · 설계 판단</h2>
+<div class="grid2">
+  <div class="card"><h4>채택한 것</h4>
+    <ul>
+      <li><strong>배스천 런타임 프로비저닝</strong> — ESO 없이도 "비밀이 state에 없는" 목표를 지금 달성. 기존 rds-schema-init 패턴 재사용이라 학습 비용 최소</li>
+      <li><strong>sslMode=trust (1단계)</strong> — 암호화 즉시 확보, 앱 리빌드 불필요. 인증서 검증(verify-full)은 CA 번들 배포가 필요해 2단계로</li>
+      <li><strong>감사 이벤트 CONNECT+DDL/DCL만</strong> — 전체 쿼리 로깅은 비용·성능 부담. 접속 추적 + 구조 변경 감사가 우선</li>
+      <li><strong>Redis 1노드 유지</strong> — 보안(TLS+AUTH)과 가용성(다중화)을 분리, 비용 동일 유지</li>
+    </ul>
+  </div>
+  <div class="card"><h4>남긴 한계 (사유 문서화)</h4>
+    <ul>
+      <li><strong>IAM DB 인증 미적용</strong> — MariaDB 엔진 미지원. MySQL/PG였다면 15분 IAM 토큰 인증까지 가능</li>
+      <li><strong>Redis auth_token은 state에 남음</strong> — 리소스 인자라 불가피. S3 암호화+잠금 뒤라 등급은 낮고, ESO 도입 시 최우선 이관</li>
+      <li><strong>앱 비번 자동 로테이션 없음</strong> — 운영 기준은 rotation Lambda/ESO. 현재는 taint 재실행으로 수동 로테이션 가능 구조까지만</li>
+      <li><strong>비용 증가 ≈ $0</strong> — 감사 로그 CloudWatch 수집만 소액(트래픽 소량 기준 $1 미만)</li>
+    </ul>
+  </div>
+</div>
+
+<h2>8. 면접 핵심 스토리 (한 문단)</h2>
+<div class="callout info">
+"DB 계층을 제로트러스트로 재구성했습니다. 앱은 마스터가 아니라 DML 전용 계정으로 접속하고, 그 계정은
+REQUIRE SSL과 서버측 require_secure_transport로 TLS를 이중 강제했습니다. 자격증명은 배스천 런타임에서
+생성해 Secrets Manager와 K8s Secret으로 직접 주입하므로 Terraform state에 비밀번호가 남지 않고 — 실제로
+기존 구조에서 마스터 비밀번호가 state에 평문으로 들어가 있던 것을 발견해 제거했습니다. 접근 기록은 MariaDB
+감사 플러그인을 CloudWatch로 내보내 확보했고, 세션 스토어(Redis)도 전송 암호화와 AUTH로 전환해 'VPC 내부라서
+신뢰한다'는 가정을 데이터 계층 전체에서 제거했습니다. IAM DB 인증은 MariaDB 엔진 제약으로 제외했다는 것,
+남은 state 내 시크릿(Redis 토큰)은 ESO 도입 시 이관한다는 것까지 한계와 다음 단계를 함께 관리하고 있습니다."
+</div>
+
+<h2>9. 남은 작업</h2>
+<table>
+  <tr><th style="width:40%">작업</th><th>내용</th></tr>
+  <tr><td>gitops secret 교체 + apply <span class="badge todo">최우선</span></td><td>§5 순서대로. apply가 끝나야 이 보고서의 구조가 실제로 반영됨</td></tr>
+  <tr><td>검증 시나리오 실행</td><td>§6 명령 — 평문 거부/권한 거부/NOAUTH 스크린샷은 그대로 포트폴리오 증적이 됨</td></tr>
+  <tr><td>docs/DB_SECRET_SETUP.md 갱신</td><td>수동 생성 절차 → 자동 주입 구조로 재작성 (8/3에 이미 "낡은 문서" 판정)</td></tr>
+  <tr><td>ESO 도입 (다음 스프린트)</td><td>Redis auth_token · ArgoCD PAT를 state 밖으로 — 감사보고서 잔여과제 중 마지막 시크릿 항목</td></tr>
+  <tr><td>TLS 2단계 (운영 기준)</td><td>RDS CA 번들 파드 배포 + <code>sslMode=verify-full</code> — 서버 신원 검증까지</td></tr>
+</table>
+
+<footer>
+  gochuchamchi EKS 프로젝트 · 제로트러스트 DB 하드닝 보고서 2026-08-04 ·
+  근거 파일: terraform/db-zero-trust.tf 외 8개, docs/2026-08-04.md · 상태: 코드 완료, apply 대기
+</footer>
+
+</div>
+</body>
+</html>

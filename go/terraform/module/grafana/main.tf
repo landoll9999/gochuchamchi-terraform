@@ -1,0 +1,458 @@
+# =============================================================================
+# 공통 설정
+# =============================================================================
+
+locals {
+  grafana_https_enabled = try(trimspace(var.certificate_arn), "") != ""
+
+  grafana_root_url = (
+    local.grafana_https_enabled
+    ? "https://${var.grafana_hostname}"
+    : "http://${var.grafana_hostname}"
+  )
+
+  grafana_tags = merge(
+    {
+      Project   = "gochuchamchi"
+      ManagedBy = "Terraform"
+      Component = "grafana"
+    },
+    var.tags
+  )
+
+  grafana_ingress_annotations = merge(
+    tomap({
+      "alb.ingress.kubernetes.io/group.name"       = var.alb_group_name
+      "alb.ingress.kubernetes.io/group.order"      = "30"
+      "alb.ingress.kubernetes.io/scheme"           = "internet-facing"
+      "alb.ingress.kubernetes.io/target-type"      = "ip"
+      "alb.ingress.kubernetes.io/backend-protocol" = "HTTP"
+
+      "alb.ingress.kubernetes.io/healthcheck-path"     = "/api/health"
+      "alb.ingress.kubernetes.io/healthcheck-protocol" = "HTTP"
+      "alb.ingress.kubernetes.io/success-codes"        = "200"
+
+      "external-dns.alpha.kubernetes.io/hostname" = var.grafana_hostname
+    }),
+
+    local.grafana_https_enabled
+    ? tomap({
+      "alb.ingress.kubernetes.io/listen-ports" = jsonencode([
+        {
+          HTTP = 80
+        },
+        {
+          HTTPS = 443
+        }
+      ])
+
+      "alb.ingress.kubernetes.io/certificate-arn" = var.certificate_arn
+      "alb.ingress.kubernetes.io/ssl-redirect"    = "443"
+    })
+    : tomap({
+      "alb.ingress.kubernetes.io/listen-ports" = jsonencode([
+        {
+          HTTP = 80
+        }
+      ])
+    })
+  )
+}
+
+
+# =============================================================================
+# monitoring Namespace
+# =============================================================================
+
+resource "kubernetes_namespace_v1" "monitoring" {
+  metadata {
+    name = var.namespace
+
+    labels = {
+      name       = var.namespace
+      monitoring = "enabled"
+    }
+  }
+}
+
+
+# =============================================================================
+# Grafana ServiceAccount
+# =============================================================================
+
+resource "kubernetes_service_account_v1" "grafana" {
+  metadata {
+    name      = var.service_account_name
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+
+    labels = {
+      app = "grafana"
+    }
+  }
+
+  automount_service_account_token = true
+}
+
+
+# =============================================================================
+# EKS Pod Identity IAM Role 신뢰 정책
+# =============================================================================
+
+data "aws_iam_policy_document" "grafana_pod_identity_assume_role" {
+  statement {
+    sid    = "AllowEksPodIdentity"
+    effect = "Allow"
+
+    principals {
+      type = "Service"
+
+      identifiers = [
+        "pods.eks.amazonaws.com"
+      ]
+    }
+
+    actions = [
+      "sts:AssumeRole",
+      "sts:TagSession"
+    ]
+  }
+}
+
+
+# =============================================================================
+# Grafana IAM Role
+# =============================================================================
+
+resource "aws_iam_role" "grafana" {
+  name = "${var.cluster_name}-grafana-cloudwatch"
+
+  # IAM description은 ASCII + Latin-1( -~, ¡-ÿ)만 허용해서
+  # 한글을 넣으면 CreateRole이 ValidationError로 실패함 -> 영문으로 유지할 것.
+  # (다른 리소스의 description/태그는 유니코드가 되지만 IAM만 예외)
+  description = (
+    "IAM role for Grafana pods to read CloudWatch metrics and logs"
+  )
+
+  assume_role_policy = (
+    data.aws_iam_policy_document
+    .grafana_pod_identity_assume_role
+    .json
+  )
+
+  tags = merge(
+    local.grafana_tags,
+    {
+      Name = "${var.cluster_name}-grafana-cloudwatch"
+    }
+  )
+}
+
+
+# =============================================================================
+# CloudWatch Metrics 및 Logs 조회 권한
+# =============================================================================
+
+data "aws_iam_policy_document" "grafana_cloudwatch" {
+  statement {
+    sid    = "ReadCloudWatchMetrics"
+    effect = "Allow"
+
+    actions = [
+      "cloudwatch:DescribeAlarmsForMetric",
+      "cloudwatch:DescribeAlarmHistory",
+      "cloudwatch:DescribeAlarms",
+      "cloudwatch:ListMetrics",
+      "cloudwatch:GetMetricData",
+      "cloudwatch:GetInsightRuleReport"
+    ]
+
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ReadCloudWatchLogs"
+    effect = "Allow"
+
+    actions = [
+      "logs:DescribeLogGroups",
+      "logs:GetLogGroupFields",
+      "logs:StartQuery",
+      "logs:StopQuery",
+      "logs:GetQueryResults",
+      "logs:GetLogEvents"
+    ]
+
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ReadAwsResourceInformation"
+    effect = "Allow"
+
+    actions = [
+      "ec2:DescribeRegions",
+      "ec2:DescribeInstances",
+      "ec2:DescribeTags",
+      "ec2:DescribeVolumes",
+      "tag:GetResources"
+    ]
+
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ReadRdsPerformanceInsights"
+    effect = "Allow"
+
+    actions = [
+      "pi:GetResourceMetrics"
+    ]
+
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "grafana_cloudwatch" {
+  name = "${var.cluster_name}-grafana-cloudwatch-read"
+  role = aws_iam_role.grafana.id
+
+  policy = data.aws_iam_policy_document.grafana_cloudwatch.json
+}
+
+
+# =============================================================================
+# Grafana ServiceAccount와 IAM Role 연결
+# =============================================================================
+
+resource "aws_eks_pod_identity_association" "grafana" {
+  cluster_name = var.cluster_name
+  namespace    = kubernetes_namespace_v1.monitoring.metadata[0].name
+
+  service_account = (
+    kubernetes_service_account_v1.grafana.metadata[0].name
+  )
+
+  role_arn = aws_iam_role.grafana.arn
+}
+
+
+# =============================================================================
+# Grafana Helm 설치
+# =============================================================================
+
+resource "helm_release" "grafana" {
+  name = "grafana"
+
+  repository = "https://grafana-community.github.io/helm-charts"
+  chart      = "grafana"
+  version    = "12.8.0"
+
+  namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+
+  create_namespace = false
+  atomic           = true
+  cleanup_on_fail  = true
+  wait             = true
+  timeout          = 600
+
+  values = [
+    yamlencode({
+      fullnameOverride = "grafana"
+
+      replicas = 1
+
+      rbac = {
+        create = false
+      }
+
+      serviceAccount = {
+        create = false
+        name   = kubernetes_service_account_v1.grafana.metadata[0].name
+      }
+
+      automountServiceAccountToken = true
+
+      testFramework = {
+        enabled = false
+      }
+
+      service = {
+        type       = "ClusterIP"
+        port       = 80
+        targetPort = 3000
+      }
+
+      # Ingress는 아래 kubernetes_ingress_v1 리소스에서 별도로 생성
+      ingress = {
+        enabled = false
+      }
+
+      persistence = {
+        enabled = false
+        # type             = "pvc"
+        # storageClassName = var.storage_class_name
+
+        # accessModes = [
+        #   "ReadWriteOnce"
+        # ]
+
+        # size = var.storage_size
+      }
+
+      resources = {
+        requests = {
+          cpu    = "250m"
+          memory = "512Mi"
+        }
+
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
+      }
+
+      env = {
+        AWS_REGION         = var.region
+        AWS_DEFAULT_REGION = var.region
+      }
+
+      # CloudWatch 데이터 소스를 Grafana 시작 시 자동 등록
+      datasources = {
+        "datasources.yaml" = {
+          apiVersion = 1
+
+          datasources = [
+            {
+              name      = "CloudWatch"
+              uid       = "cloudwatch"
+              type      = "cloudwatch"
+              access    = "proxy"
+              isDefault = true
+              editable  = false
+
+              jsonData = {
+                authType                = "default"
+                defaultRegion           = var.region
+                customMetricsNamespaces = "ContainerInsights"
+              }
+            }
+          ]
+        }
+      }
+      # Grafana 대시보드 프로비저닝 설정
+      dashboardProviders = {
+        "dashboardproviders.yaml" = {
+          apiVersion = 1
+
+          providers = [
+            {
+              name            = "gochuchamchi"
+              orgId           = 1
+              folder          = "Gochuchamchi"
+              type            = "file"
+              disableDeletion = false
+              editable        = true
+
+              options = {
+                path = "/var/lib/grafana/dashboards/gochuchamchi"
+              }
+            }
+          ]
+        }
+      }
+
+      # Grafana 시작 시 자동으로 등록할 대시보드
+      dashboards = {
+        gochuchamchi = {
+          "eks-logs-overview" = {
+            json = local.eks_logs_dashboard
+          }
+
+          "eks-health-overview" = {
+            json = local.eks_health_dashboard
+          }
+
+          "aws-errors-overview" = {
+            json = local.aws_errors_dashboard
+          }
+        }
+      }
+
+
+      "grafana.ini" = {
+        server = {
+          domain              = var.grafana_hostname
+          root_url            = local.grafana_root_url
+          serve_from_sub_path = false
+        }
+
+        security = {
+          cookie_secure = local.grafana_https_enabled
+        }
+
+        users = {
+          allow_sign_up = false
+        }
+
+        auth_anonymous = {
+          enabled = false
+        }
+
+        aws = {
+          allowed_auth_providers = "default"
+          assume_role_enabled    = true
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    aws_eks_pod_identity_association.grafana,
+    aws_iam_role_policy.grafana_cloudwatch
+  ]
+}
+
+
+# =============================================================================
+# Grafana ALB Ingress
+# =============================================================================
+
+resource "kubernetes_ingress_v1" "grafana" {
+  metadata {
+    name      = "grafana"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+
+    annotations = local.grafana_ingress_annotations
+  }
+
+  spec {
+    ingress_class_name = "alb"
+
+    rule {
+      host = var.grafana_hostname
+
+      http {
+        path {
+          path      = "/"
+          path_type = "Prefix"
+
+          backend {
+            service {
+              name = "grafana"
+
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  wait_for_load_balancer = true
+
+  depends_on = [
+    helm_release.grafana
+  ]
+}
