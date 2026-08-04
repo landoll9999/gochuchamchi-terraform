@@ -14,8 +14,14 @@
 #     - admission/reports 컨트롤러만 켜고 background/cleanup 컨트롤러는 끔
 #       (mutate-existing/generate/cleanup 정책을 안 쓰므로 불필요)
 #     - replicas 1 (프로덕션 기준은 admission 3대 — HA webhook. 여기선 비용 우선)
-#     - webhook failurePolicy는 차트 기본값(Ignore for audit) — Kyverno 파드가
-#       죽어도 파드 배포가 막히지 않는다 (가용성 > 정책 계량의 트레이드오프)
+#     - webhook failurePolicy = Ignore (아래 kyverno_policies values). replicas 1이라
+#       Kyverno가 죽으면 웹훅 응답자가 아예 없어지므로 Fail이면 클러스터가 잠긴다.
+#
+#   ⚠️ validationFailureAction과 failurePolicy는 다른 것이다 (2026-08-04에 혼동으로 사고)
+#     - validationFailureAction=Audit : 정책을 "위반한" 요청을 차단하지 않고 기록만
+#     - failurePolicy=Fail            : "웹훅에 연결 자체가 안 되면" 요청을 거부
+#     Audit으로 뒀다고 안전한 게 아니다. 차트 기본값이 failurePolicy=Fail이라
+#     Kyverno가 사라지면 남은 웹훅이 클러스터의 모든 변경 요청을 막는다.
 #
 #   면접 포인트: "PSA는 3단계 고정 프로파일만 제공한다. 조직 커스텀 정책
 #   (레지스트리 화이트리스트, 라벨 강제, 이미지 서명 검증 등)이 필요해지는
@@ -86,6 +92,21 @@ resource "helm_release" "kyverno_policies" {
       podSecurityStandard     = "restricted"
       validationFailureAction = "Audit" # 준비되면 "Enforce"로 승격 (PSA enforce 승격과 같은 시점에)
       background              = true    # 이미 떠 있는 파드도 리포트 대상에 포함
+
+      # 차트 기본값은 Fail. 그대로 두면 Kyverno가 없을 때 API 서버가 모든 변경을
+      # 거부한다 — Kyverno의 resource webhook은 helm이 만드는 게 아니라 컨트롤러가
+      # 런타임에 등록하므로, helm uninstall 후에도 웹훅만 클러스터에 남기 때문이다.
+      #
+      # 2026-08-04 destroy가 실제로 이것 때문에 막혔다 (docs/2026-08-04.md §6):
+      #   kyverno 서비스 삭제 -> 웹훅만 잔존 -> "failed calling webhook
+      #   validate.kyverno.svc-fail: service kyverno-svc not found"
+      #   -> 파드 삭제 불가 -> 네임스페이스 Terminating 고착 -> helm uninstall 실패
+      #
+      # Ignore면 웹훅이 고아가 돼도 요청이 그냥 통과한다. 트레이드오프는 Kyverno가
+      # 죽어 있는 동안 정책 계량이 비는 것인데, 지금은 Audit(기록 전용)이라 실질
+      # 손실이 없다. 나중에 Enforce로 승격할 때는 admissionController.replicas를
+      # 늘려 HA를 확보한 뒤에 이 값을 재검토할 것.
+      failurePolicy = "Ignore"
     })
   ]
 }

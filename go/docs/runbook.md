@@ -324,10 +324,31 @@ aws elbv2 describe-target-groups --region ap-northeast-2 --profile admin    # �
 
 | 증상 | 원인 | 조치 |
 |---|---|---|
+| **helm uninstall 실패 + 네임스페이스 고착 + `context deadline exceeded`가 동시에** | **Kyverno 고아 웹훅** (아래 최우선 확인) | 웹훅 삭제 |
 | `timeout while waiting ... (timeout: 5m0s)` | AWS 비동기 작업이 기본 타임아웃 초과 | **AWS 실물부터 조회.** 이미 끝나 있으면 `terraform state rm`(delete 실패) 또는 `untaint`(create 실패) |
-| 네임스페이스가 `Terminating`에서 안 끝남 | `NotReady` 노드의 파드 | `kubectl get ns <n> -o json`의 condition으로 남은 gvr 확인 → `kubectl delete pod --grace-period=0 --force` |
+| 네임스페이스가 `Terminating`에서 안 끝남 | `NotReady` 노드의 파드 **또는 Kyverno 웹훅** | `kubectl get ns <n> -o json`의 condition으로 남은 gvr 확인 → `kubectl delete pod --grace-period=0 --force` |
 | `BucketNotEmpty` | 버전 누적 | `force_destroy = true`. **단, 고친 뒤 apply를 한 번 돌려야 반영됨**(아래) |
 | `BucketNotEmpty`인데 `force_destroy`가 이미 true | **Object Lock COMPLIANCE** | 기한 전엔 못 지움 → `terraform state rm`으로 관리 제외, 기한 후 수동 삭제 |
+| `Error locating chart` / `Kubernetes cluster unreachable` | 작업 PC 네트워크(PMTUD) | **인프라 문제 아님.** 재시도로 진행됨 → §6.3 |
+
+**⚠️ 최우선 확인 — `kubectl delete`조차 거부당하면 Kyverno 웹훅이다** (2026-08-04 §6.1)
+
+```
+Error from server (InternalError): failed calling webhook "validate.kyverno.svc-fail":
+service "kyverno-svc" not found
+```
+
+Kyverno의 resource webhook은 helm이 아니라 컨트롤러가 런타임에 등록하므로,
+`helm uninstall` 후에도 웹훅만 남는다. `failurePolicy: Fail`이라 API 서버가 모든
+변경 요청을 거부하고, 그 결과 **위 표의 여러 증상이 한꺼번에** 나타난다.
+
+```powershell
+kubectl get validatingwebhookconfigurations -o name | Select-String kyverno
+kubectl get svc -n kyverno          # 비어 있으면 고아 확정
+kubectl delete validatingwebhookconfiguration <위에서 나온 것들>
+```
+
+코드에는 `kyverno.tf`의 `failurePolicy = "Ignore"`로 예방해두었다.
 
 ⚠️ **`terraform destroy`는 config가 아니라 prior state를 읽는다.** `force_destroy`를
 `.tf`에서 고치고 바로 destroy하면 반영되지 않는다. 실제 state 값 확인:
