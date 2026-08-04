@@ -68,10 +68,21 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudwatch_log_ar
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      # (2026-08-03 full-HA에서 복원) 로그 전용 CMK로 암호화 (kms.tf).
+      # CloudTrail/Firehose/Flow Logs가 이 키를 쓸 수 있는 권한은 키 정책 쪽에 있다.
+      # 기존 객체는 AES256 그대로 남고 신규 객체부터 KMS 적용 — in-place 변경.
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.logs.arn
     }
+    bucket_key_enabled = true # 객체마다 KMS 호출하지 않도록 -> KMS 비용 절감
   }
 }
+
+# (복원 보류) Object Lock — fin 라인은 버킷 생성 시 object_lock_enabled=true +
+# COMPLIANCE 30일 잠금이었으나, Object Lock은 "생성 시점"에만 켤 수 있어 기존
+# 버킷에 적용하면 버킷 교체(로그 소실 또는 이관 필요)가 계획된다.
+# 다음 전체 재구축 사이클에서 반영할 것 (fin의 variables: log_archive_object_lock_*).
+# 그때까지는 아래 버킷 정책의 DenyObjectDeletion이 API 경유 삭제를 차단한다.
 
 resource "aws_s3_bucket_lifecycle_configuration" "cloudwatch_log_archive" {
   bucket = aws_s3_bucket.cloudwatch_log_archive.id
@@ -195,6 +206,112 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
       variable = "aws:SourceArn"
       values   = [local.cloudtrail_arn]
     }
+  }
+
+  # ---------------------------------------------------------------------------
+  # (2026-08-03 full-HA에서 복원) VPC Flow Logs 전달 (flow-logs.tf)
+  # delivery.logs 서비스가 쓴다
+  # ---------------------------------------------------------------------------
+  statement {
+    sid    = "AWSLogDeliveryAclCheck"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+
+    actions = [
+      "s3:GetBucketAcl"
+    ]
+
+    resources = [
+      aws_s3_bucket.cloudwatch_log_archive.arn
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid    = "AWSLogDeliveryWrite"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+
+    actions = [
+      "s3:PutObject"
+    ]
+
+    resources = [
+      "${aws_s3_bucket.cloudwatch_log_archive.arn}/${local.vpc_flow_logs_s3_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # (2026-08-03 full-HA에서 복원) 로그 불변성 보강 — API 경유 삭제와 정책 변조를
+  # 명시적으로 거부. 침해자가 admin 자격증명을 얻어도 증거 로그를 지우거나
+  # 이 정책을 풀 수 없게 하는 목적.
+  #
+  # ⚠️ 복구 경로: 버킷 소유 계정의 "루트 사용자"만은 DeleteBucketPolicy를 항상
+  # 호출할 수 있으므로(S3 명세), 정말 정책을 바꿔야 하면 루트로 정책을 지운 뒤
+  # terraform apply로 다시 만든다. 이 정책이 적용된 후에는 Terraform도 이 버킷
+  # 정책을 "수정"할 수 없다는 뜻이다 — 라이프사이클 만료는 S3 내부 동작이라
+  # 이 Deny의 영향을 받지 않고 계속 정리된다.
+  # ---------------------------------------------------------------------------
+  statement {
+    sid    = "DenyObjectDeletion"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = [
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion"
+    ]
+
+    resources = [
+      "${aws_s3_bucket.cloudwatch_log_archive.arn}/*"
+    ]
+  }
+
+  statement {
+    sid    = "DenyPolicyTampering"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = [
+      "s3:PutBucketPolicy"
+    ]
+
+    resources = [
+      aws_s3_bucket.cloudwatch_log_archive.arn
+    ]
   }
 }
 

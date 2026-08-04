@@ -210,17 +210,33 @@ module "bastion_host" {
 }
 
 # ---------------------------------------------------------------------------
-# 4. NAT 인스턴스 (NAT Gateway 대신 비용 절감용 EC2 NAT)
+# 4. NAT 인스턴스 — AZ별 2대 (2026-08-03 full-HA에서 복원: 1대 SPOF → AZ별 이중화)
+#
+#    기존 1대 구성은 그 인스턴스가 죽으면 프라이빗 서브넷 "전체"가 아웃바운드
+#    불능이었다. AZ마다 1대씩 두고, 각 AZ의 프라이빗 라우트 테이블을 "같은 AZ의
+#    NAT"로 연결하면:
+#      - NAT 1대 장애 → 해당 AZ만 영향 (장애 반경이 AZ 단위로 격리됨)
+#      - AZ 자체 장애 → 어차피 그 AZ 노드도 같이 죽으므로 반대쪽 AZ는 무영향
+#
+#    한계: NAT Gateway와 달리 인스턴스 방식은 "AZ 간 자동 페일오버"는 없다 —
+#    대신 비용이 1/5이고, VPC 엔드포인트(vpc-endpoints.tf)가 ECR/S3/Secrets/SSM
+#    경로를 NAT와 무관하게 보장하므로 이중 안전망이 있다.
+#    프로덕션 기준이면 NAT Gateway 2대가 정답.
+#
+#    라우팅 전제: vpc 모듈은 single_nat_gateway가 아니면 AZ별로 프라이빗 라우트
+#    테이블을 1개씩 만든다(azs 순서 = private_route_table_ids 순서 = public_subnets
+#    순서). 그래서 count.index로 같은 AZ끼리 1:1 매칭이 된다.
 # ---------------------------------------------------------------------------
 module "nat_instance" {
   source = "terraform-aws-modules/ec2-instance/aws"
+  count  = length(var.azs)
 
-  name          = "gochuchamchi-nat"
+  name          = "gochuchamchi-nat-${count.index}"
   ami           = var.nat_ami
   instance_type = "t3.micro"
   # (2026-08-04 백로그 B2) key_name 제거 — NAT 접속은 SSM으로만 (nat_role에 SSM 정책 부착)
 
-  subnet_id              = module.vpc.public_subnets[1]
+  subnet_id              = module.vpc.public_subnets[count.index] # AZ별 배치
   source_dest_check      = false
   create_security_group  = false
   vpc_security_group_ids = [module.nat_sg.id]
@@ -230,17 +246,29 @@ module "nat_instance" {
 
   iam_instance_profile = aws_iam_instance_profile.nat_instance_profile.name
 
+  # 시스템 상태 검사 실패 시 자동 복구 (인스턴스 NAT의 최소한의 자가 치유)
+  maintenance_options = {
+    auto_recovery = "default"
+  }
+
   tags = {
-    Name = "gochuchamchi-nat"
+    Name = "gochuchamchi-nat-${count.index}"
   }
 }
 
-# private 서브넷 라우팅을 NAT 인스턴스 ENI로
+# 기존 단일 NAT(public_subnets[1]에 있었음)를 count 방식의 [1]번으로 인수 —
+# 서브넷이 같아서 재생성 없이 상태 주소만 이동하고, [0]번(AZ-a)만 새로 뜬다.
+moved {
+  from = module.nat_instance
+  to   = module.nat_instance[1]
+}
+
+# 각 AZ의 프라이빗 라우트 테이블 → 같은 AZ의 NAT 인스턴스 ENI
 resource "aws_route" "private_subnet" {
   count                  = length(module.vpc.private_route_table_ids)
   route_table_id         = module.vpc.private_route_table_ids[count.index]
   destination_cidr_block = "0.0.0.0/0"
-  network_interface_id   = module.nat_instance.primary_network_interface_id
+  network_interface_id   = module.nat_instance[count.index].primary_network_interface_id
 }
 
 # ECR 이미지 레이어가 실제로 S3에서 전송되므로, Gateway Endpoint로 그 트래픽을

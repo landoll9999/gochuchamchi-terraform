@@ -63,3 +63,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "kms_key_arn" {
+  description = "대상 버킷의 기본 암호화 CMK ARN. 지정하면 delivery channel에 명시하고 Config 역할에 해당 키 사용 권한을 부여한다 (CMK 강제 암호화 버킷에서 필수 — 2026-08-03 InsufficientDeliveryPolicyException 원인)"
+  type        = string
+  default     = null
+}

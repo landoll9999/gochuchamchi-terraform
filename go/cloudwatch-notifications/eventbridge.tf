@@ -43,31 +43,15 @@ resource "aws_cloudwatch_event_rule" "cloudwatch_alarm_state_change" {
 
 
 # ============================================================
-# EventBridge가 Lambda를 호출할 수 있는 권한
+# EventBridge Rule의 실행 대상을 SNS 허브로 연결
+#   (2026-08-04) 기존 Lambda 직결 -> SNS 경유로 전환. Lambda 호출 권한은
+#   EventBridge가 아니라 SNS가 가짐(sns.tf의 allow_sns). EventBridge -> SNS
+#   발행 권한은 토픽 정책(sns.tf의 aws_sns_topic_policy.alerts)이 담당.
 # ============================================================
 
-resource "aws_lambda_permission" "allow_eventbridge" {
-  statement_id = "AllowExecutionFromEventBridge"
-
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.cloudwatch_discord.function_name
-  principal     = "events.amazonaws.com"
-
-  source_arn = aws_cloudwatch_event_rule.cloudwatch_alarm_state_change.arn
-}
-
-
-# ============================================================
-# EventBridge Rule의 실행 대상을 Lambda로 연결
-# ============================================================
-
-resource "aws_cloudwatch_event_target" "cloudwatch_discord" {
+resource "aws_cloudwatch_event_target" "alerts_sns" {
   rule = aws_cloudwatch_event_rule.cloudwatch_alarm_state_change.name
 
-  target_id = "SendCloudWatchAlarmToDiscord"
-  arn       = aws_lambda_function.cloudwatch_discord.arn
-
-  depends_on = [
-    aws_lambda_permission.allow_eventbridge
-  ]
+  target_id = "SendCloudWatchAlarmToSnsHub"
+  arn       = aws_sns_topic.alerts.arn
 }

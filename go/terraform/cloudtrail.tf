@@ -42,3 +42,17 @@ resource "aws_cloudtrail" "central" {
     aws_s3_bucket_versioning.cloudwatch_log_archive
   ]
 }
+output "cloudtrail_name" {
+  description = "중앙 관리 이벤트 CloudTrail 이름"
+  value       = aws_cloudtrail.central.name
+}
+
+output "cloudtrail_arn" {
+  description = "중앙 관리 이벤트 CloudTrail ARN"
+  value       = aws_cloudtrail.central.arn
+}
+
+output "cloudtrail_s3_location" {
+  description = "Athena 테이블에서 사용할 CloudTrail S3 기본 경로"
+  value       = "s3://${aws_s3_bucket.cloudwatch_log_archive.id}/${local.cloudtrail_s3_key_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/CloudTrail/"
+}

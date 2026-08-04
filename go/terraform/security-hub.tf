@@ -24,3 +24,18 @@ module "security_hub" {
     module.aws_config
   ]
 }
+
+
+# =============================================================================
+# Outputs
+# =============================================================================
+
+output "security_hub_arn" {
+  description = "현재 리전 Security Hub ARN"
+  value       = module.security_hub.security_hub_arn
+}
+
+output "security_hub_enabled_standards" {
+  description = "활성화한 Security Hub 표준 ARN"
+  value       = module.security_hub.enabled_standard_arns
+}

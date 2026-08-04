@@ -175,3 +175,117 @@ variable "athena_cloudtrail_projection_start_date" {
     error_message = "Athena 파티션 시작일은 yyyy/MM/dd 형식이어야 합니다."
   }
 }
+
+# ---------------------------------------------------------------------------
+# (2026-08-04 복원) 이하 변수들은 8/3 full-HA 보안 강화 라인(fin)에서 복원됨.
+# 저장소 재생성 때 13개 파일과 함께 누락됐던 것을 병합 — 경위는
+# docs/2026-08-04-incident-and-review.md §4(복원) 참고.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# L1 경계 방어 — CloudFront + WAF (edge.tf)
+# ---------------------------------------------------------------------------
+
+variable "enable_edge" {
+  description = <<-EOT
+    CloudFront + Route53 전환 활성화 여부.
+
+    ALB는 aws-load-balancer-controller가 비동기로 생성하므로 최초 apply에서는
+    data.aws_lb 조회가 실패한다.
+
+    1차 apply: false (기본값) — us-east-1 인증서 + WAF까지만 생성
+    2차 apply: true — ALB가 뜬 뒤 CloudFront 생성 + gochuchamchi.shop을 CloudFront로 전환
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit_per_5min" {
+  description = "WAF rate-based rule: 단일 IP가 5분 동안 보낼 수 있는 최대 요청 수 (초과분 차단)"
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.waf_rate_limit_per_5min >= 100
+    error_message = "WAFv2 rate-based rule의 최소 한도는 100입니다."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# IAM 보안 (iam-security.tf)
+# ---------------------------------------------------------------------------
+
+# ⚠️ Terraform을 돌리는 계정(현재 admin 프로파일의 IAM 사용자)을 절대 넣지 말 것.
+#    이 그룹에는 MFA 강제 + Region Guard의 explicit Deny가 붙어 있어서,
+#    CLI 액세스 키(MFA 없음)로 도는 Terraform이 통째로 AccessDenied가 된다
+#    (07/29 '3pro' 그룹 사고와 같은 유형 — docs/architecture.md §4.2).
+variable "console_admin_users" {
+  description = "MFA 강제 콘솔 관리자 그룹에 넣을 IAM 사용자 이름 목록 (콘솔 전용 사용자만)"
+  type        = list(string)
+  default     = []
+}
+
+variable "allowed_regions" {
+  description = "Region Guard가 허용하는 리전 (서울 워크로드 + 도쿄 DR). 글로벌 서비스는 정책의 NotAction으로 별도 제외"
+  type        = list(string)
+  default     = ["ap-northeast-2", "ap-northeast-1"]
+}
+
+# ---------------------------------------------------------------------------
+# L8 복원력 — Tokyo DR (dr.tf)
+# ---------------------------------------------------------------------------
+
+variable "enable_dr" {
+  description = "AWS Backup(RDS/EFS -> 도쿄 크로스리전 복사) + S3 CRR 활성화 여부. 끄면 볼트/플랜/복제가 모두 제거됨"
+  type        = bool
+  default     = true
+}
+
+variable "dr_backup_retention_days" {
+  description = "AWS Backup 복구 지점 보존 일수 (서울 원본·도쿄 사본 동일 적용)"
+  type        = number
+  default     = 7
+}
+
+# ---------------------------------------------------------------------------
+# GuardDuty 런타임 모니터링 (guardduty.tf)
+# ---------------------------------------------------------------------------
+
+variable "enable_guardduty_runtime_monitoring" {
+  description = <<-EOT
+    GuardDuty 런타임 모니터링(노드 DaemonSet 에이전트) 활성화 여부.
+    프로세스/시스콜 수준 탐지가 추가되지만 t3.small 2대에는 메모리 부담이 있어
+    기본 OFF. EKS 감사 로그/CloudTrail/FlowLogs 기반 탐지는 이 값과 무관하게 동작.
+  EOT
+  type        = bool
+  default     = false
+}
+
+# ---------------------------------------------------------------------------
+# 애플리케이션 설정 (k8s-deploy.tf)
+# ---------------------------------------------------------------------------
+
+# 앱의 SuperAdminBootstrap이 기동할 때마다 이 아이디를 superadmin으로 승격한다.
+# 계정 생성은 하지 않으므로 해당 아이디로 회원가입이 먼저 되어 있어야 한다.
+# 비워두면 아무 동작도 하지 않으며, 그 경우 superadmin이 한 명도 없어서
+# admin 임명/해임 같은 superadmin 전용 기능을 쓸 수 없다.
+variable "superadmin_username" {
+  description = "superadmin으로 승격할 계정 아이디 (앱 ConfigMap의 APP_SUPERADMIN_USERNAME)"
+  type        = string
+  default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# 컨테이너 보안 — Pod Security Standards (k8s-deploy.tf 네임스페이스 라벨)
+# ---------------------------------------------------------------------------
+
+variable "pss_enforce_level" {
+  description = "gochuchamchi 네임스페이스의 Pod Security Standards enforce 레벨. gitops Deployment에 securityContext 적용 후 restricted 로 올릴 것 (docs/CONTAINER_SECURITY.md 참고)"
+  type        = string
+  default     = "baseline"
+
+  validation {
+    condition     = contains(["privileged", "baseline", "restricted"], var.pss_enforce_level)
+    error_message = "pss_enforce_level 은 privileged / baseline / restricted 중 하나여야 합니다."
+  }
+}

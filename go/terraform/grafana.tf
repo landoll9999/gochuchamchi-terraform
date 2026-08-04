@@ -49,12 +49,10 @@ output "grafana_url" {
   value       = module.grafana.url
 }
 
-# 조회: terraform output -raw grafana_admin_password
-output "grafana_admin_password" {
-  description = "Grafana admin 비밀번호 (차트가 랜덤 생성)"
-  value       = module.grafana.admin_password
-  sensitive   = true
-}
+# (2026-08-04 보안 리뷰 §3-② 조치) grafana_admin_password output 제거 —
+# data source → output 경유로 비밀번호가 tfstate에 평문 저장되던 문제
+# (sensitive=true는 CLI 출력만 가림). 필요 시 클러스터에서 직접 조회:
+#   kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
 
 output "grafana_iam_role_arn" {
   description = "Grafana CloudWatch 조회용 IAM Role ARN"

@@ -339,3 +339,27 @@ resource "aws_athena_named_query" "write_events" {
     LIMIT 100;
   SQL
 }
+
+# =============================================================================
+# Outputs
+# =============================================================================
+
+output "athena_security_database_name" {
+  description = "CloudTrail 조회용 Glue/Athena 데이터베이스"
+  value       = aws_glue_catalog_database.security_logs.name
+}
+
+output "athena_cloudtrail_table_name" {
+  description = "CloudTrail 조회용 Athena 테이블"
+  value       = aws_glue_catalog_table.cloudtrail.name
+}
+
+output "athena_security_workgroup_name" {
+  description = "CloudTrail 조회용 Athena Workgroup"
+  value       = aws_athena_workgroup.security_logs.name
+}
+
+output "athena_query_results_bucket_name" {
+  description = "Athena 쿼리 결과 S3 버킷"
+  value       = aws_s3_bucket.athena_results.id
+}

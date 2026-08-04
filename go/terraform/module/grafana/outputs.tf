@@ -27,9 +27,3 @@ output "helm_release_name" {
   description = "Grafana Helm Release 이름"
   value       = helm_release.grafana.name
 }
-
-output "admin_password" {
-  description = "Grafana admin 비밀번호 (차트가 랜덤 생성)"
-  value       = data.kubernetes_secret_v1.grafana_admin.data["admin-password"]
-  sensitive   = true
-}

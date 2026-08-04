@@ -46,3 +46,8 @@ resource "aws_acm_certificate_validation" "this" {
   certificate_arn         = aws_acm_certificate.this.arn
   validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
 }
+
+output "acm_certificate_arn" {
+  value       = aws_acm_certificate.this.arn
+  description = "서울 리전 ACM 인증서 ARN (ALB TLS 종단용)"
+}
