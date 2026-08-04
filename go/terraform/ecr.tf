@@ -39,6 +39,35 @@ resource "aws_ecr_lifecycle_policy" "gochuchamchi" {
 }
 
 # ---------------------------------------------------------------------------
+# (2026-08-03 full-HA에서 복원) 컨테이너 보안 레이어 3/3 — Amazon Inspector
+#   scan_on_push(BASIC)는 push 시 1회 + OS 패키지 CVE만 본다. ENHANCED로 승격하면
+#   OS + 언어 패키지(Java 라이브러리 등)까지 Inspector 콘솔로 통합 평가된다.
+#   Spring Boot 앱이라 언어 패키지 스캔이 실질적으로 더 중요함 (Log4Shell 류).
+#
+#   💰 비용: Inspector는 계정당 15일 무료 평가판 → 이후 이미지/인스턴스당 과금.
+#      필요 없어지면 aws_inspector2_enabler만 destroy해도 꺼진다.
+# ---------------------------------------------------------------------------
+resource "aws_inspector2_enabler" "this" {
+  account_ids    = [data.aws_caller_identity.current.account_id]
+  resource_types = ["ECR", "EC2"]
+}
+
+# 레지스트리 스캔을 Inspector 기반 ENHANCED로 승격 (계정 단위 설정)
+resource "aws_ecr_registry_scanning_configuration" "this" {
+  scan_type = "ENHANCED"
+
+  rule {
+    scan_frequency = "SCAN_ON_PUSH"
+    repository_filter {
+      filter      = "*"
+      filter_type = "WILDCARD"
+    }
+  }
+
+  depends_on = [aws_inspector2_enabler.this]
+}
+
+# ---------------------------------------------------------------------------
 # GitHub Actions(gochuchamchi-spring 저장소)가 OIDC로 AWS를 assume해서 ECR에
 # push. 액세스키를 GitHub Secret에 저장할 필요가 없어 Docker Hub 방식(계정+토큰)
 # 보다 안전함.

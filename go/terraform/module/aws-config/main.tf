@@ -85,10 +85,37 @@ data "aws_iam_policy_document" "s3_delivery" {
       "${var.s3_bucket_arn}/${local.config_s3_object_prefix}/*"
     ]
 
+    # StringEqualsIfExists인 이유 (2026-08-03 실제 장애로 확인):
+    #   중앙 로그 버킷은 BucketOwnerEnforced(ACL 비활성)라서, AWS Config가
+    #   "ACL 비활성 버킷"을 감지하면 x-amz-acl 헤더를 아예 안 보낸다.
+    #   기존 StringEquals(헤더 필수)로는 헤더 없는 PutObject가 조건 불일치로
+    #   거부되어 InsufficientDeliveryPolicyException이 났다.
+    #   IfExists = 헤더가 있으면 bucket-owner-full-control이어야 하고,
+    #   없으면(ACL 비활성 버킷) 그냥 허용.
     condition {
-      test     = "StringEquals"
+      test     = "StringEqualsIfExists"
       variable = "s3:x-amz-acl"
       values   = ["bucket-owner-full-control"]
+    }
+  }
+
+  # 대상 버킷이 CMK 기본 암호화면, S3가 객체를 암호화할 때 이 역할 자격으로
+  # KMS를 호출한다 → 역할에 키 사용 권한이 없으면 PutObject가 KMS 단계에서
+  # 거부되어 InsufficientDeliveryPolicyException으로 표면화된다 (2026-08-03 확인)
+  dynamic "statement" {
+    for_each = var.kms_key_arn == null ? [] : [var.kms_key_arn]
+
+    content {
+      sid    = "UseBucketCmk"
+      effect = "Allow"
+
+      actions = [
+        "kms:GenerateDataKey*",
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ]
+
+      resources = [statement.value]
     }
   }
 }
@@ -130,6 +157,8 @@ resource "aws_config_delivery_channel" "this" {
   name           = "${var.name_prefix}-delivery-channel"
   s3_bucket_name = var.s3_bucket_name
   s3_key_prefix  = local.normalized_s3_key_prefix == "" ? null : local.normalized_s3_key_prefix
+  # CMK 암호화 버킷이면 키를 명시 — 에러 메시지의 "provided kms key is 'null'" 해소
+  s3_kms_key_arn = var.kms_key_arn
 
   snapshot_delivery_properties {
     delivery_frequency = var.snapshot_delivery_frequency

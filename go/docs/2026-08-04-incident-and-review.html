@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>복구 후 재점검 보고서 — 하드코딩·보안 리뷰 (2026-08-04)</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  p { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>복구 후 재점검 보고서 — 하드코딩 인벤토리 + 보안 리뷰</h1>
+  <div class="meta">작성일 2026-08-04 · gochuchamchi EKS · 장애 5건의 전말·복구는 <code>2026-08-04.md</code> §4 참고 · 이 문서는 복구 후 별도 세션의 저장소 전체 재점검 결과</div>
+</header>
+
+<h2>1. 장애 근본원인 — 한 줄로</h2>
+<p><code>2026-08-04.md</code> §4가 개별 원인 5건을 다루지만, 근본 원인은 하나로 요약된다:
+<strong>terraform apply와 gitops 수정이 한 세트인 작업(제로트러스트 전환)에서 gitops 쪽이 누락된 채 apply만 실행됨.</strong>
+그 결과 클러스터는 이러지도 저러지도 못하는 이중 잠김 상태가 됐다.</p>
+
+<div class="flow">
+  <div class="lane-title">기존 파드 — 돌고는 있지만 DB를 못 붙음</div>
+  <div class="lane">
+    <span class="node">옛 환경변수<br><small>admin + 평문 접속</small></span><span class="arrow">→</span>
+    <span class="node bad">require_secure_transport=1<br><small>평문 핸드셰이크 거부</small></span><span class="arrow">→</span>
+    <span class="node bad">DB 요청 전부 500</span>
+  </div>
+  <div class="lane-title" style="margin-top:16px">새 파드 — 아예 시작을 못 함</div>
+  <div class="lane">
+    <span class="node">gitops deployment<br><small>수정 누락</small></span><span class="arrow">→</span>
+    <span class="node bad">삭제된 gochuchamchi-db-secret 참조</span><span class="arrow">→</span>
+    <span class="node bad">CreateContainerConfigError</span><span class="arrow">→</span>
+    <span class="node neutral">고장난 옛 파드가 계속 서빙</span>
+  </div>
+</div>
+
+<div class="callout warn"><strong>교훈:</strong> "apply 전 체크리스트"가 문서에 있어도 강제 장치가 없으면 누락된다.
+terraform 변경과 gitops 변경이 결합된 작업은 <strong>한 PR / 한 사람이 원자적으로</strong> 처리할 것.</div>
+
+<h3>복구 확인 (별도 세션에서 외부 검증)</h3>
+<p>
+  <span class="badge done">확인</span><code>/api/health</code> 500 → <strong>302</strong>(로그인 리다이렉트, 정상) · 메인 200<br>
+  <span class="badge done">확인</span>terraform 저장소 로컬 클론 == origin/main — 작업 컴퓨터 간 드리프트 없음
+</p>
+
+<h2>2. 하드코딩 인벤토리 (전체 .tf 스캔)</h2>
+
+<h3><span class="badge risk">🔴 실질 리스크</span> 개선 후보 3건</h3>
+<table>
+  <tr><th style="width:22%">항목</th><th style="width:20%">위치</th><th>리스크</th><th style="width:28%">대안</th></tr>
+  <tr>
+    <td>AMI ID<br><code>ami-0f93dc...</code></td>
+    <td><code>variables.tf</code><br>(bastion_ami / nat_ami)</td>
+    <td>서울 리전 전용 + AL2023 이미지는 주기적 deprecated → <strong>수개월 뒤 재구축 시 "AMI not found"로 깨지는 시한부 값</strong></td>
+    <td><code>data "aws_ssm_parameter"</code>로 최신 AL2023 조회. 단 latest 추적 시 AMI 갱신마다 인스턴스 재생성 — 특정 버전 파라미터 핀 고정이 절충안</td>
+  </tr>
+  <tr>
+    <td>tfstate 버킷 + 프로파일</td>
+    <td><code>backend.tf</code> ×3 스택</td>
+    <td>버킷명에 계정 ID 포함 + <code>profile="admin"</code> — 타 계정 재구축 시 3개 파일 수동 수정</td>
+    <td>backend 블록은 변수 불가(TF 제약). <code>terraform init -backend-config=&lt;env&gt;.hcl</code> 주입 방식 전환 가능. 계정 이전 계획 없으면 유지</td>
+  </tr>
+  <tr>
+    <td>Secret 이름 문자열 계약</td>
+    <td><code>gochuchamchi/discord/...</code> 등 3개</td>
+    <td>여러 스택에 문자열로 산재 — 한쪽에서 이름 변경 시 다른 스택이 <strong>조용히</strong> 깨짐</td>
+    <td>현 규모에선 관리 가능. 이름 변경 시 전체 grep 필수라는 점만 인지</td>
+  </tr>
+</table>
+
+<div class="grid2">
+  <div class="card">
+    <h4><span class="badge todo">🟡 의도적</span> 유지하되 관리 필요</h4>
+    <ul>
+      <li><strong>접속 허용 IP /32 목록</strong> (<code>endpoint_public_access_cidrs</code>) — 보안 절충. 유동 IP는 재할당되므로 <strong>안 쓰는 항목 즉시 삭제</strong> 원칙 준수</li>
+      <li><strong>버전 핀</strong> — EKS 1.35 · MariaDB 10.11 · Redis 7.1 · Grafana chart 12.8.0 · python3.12. 하드코딩이 아니라 올바른 버전 고정 관행</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge done">🟢 정답</span> 하드코딩이 맞는 것</h4>
+    <ul>
+      <li>VPC CIDR/서브넷 (<code>172.30.0.0/16</code> 등) — 네트워크 설계 상수</li>
+      <li><code>169.254.170.23/32</code> — Pod Identity Agent link-local, <strong>AWS 고정값</strong> (변수화 금지)</li>
+      <li>NetworkPolicy/SG의 <code>0.0.0.0/0</code> egress — 의미 있는 설계값</li>
+      <li>도메인·GitHub owner — 이미 변수 default로 분리 완료</li>
+      <li>S3 버킷명 — <code>account_id</code> 동적 참조로 모범 처리</li>
+    </ul>
+  </div>
+</div>
+
+<h2>3. 보안 재점검 결과</h2>
+
+<h3><span class="badge done">조치 완료</span> ① .gitignore 부분 보강 — 초기 판정 정정 포함</h3>
+<div class="callout info"><strong>정정:</strong> 최초 리뷰에서 루트 <code>.gitignore</code>(<code>.claude/</code> 한 줄)만 보고
+"사실상 비어 있음"으로 판정했으나, <strong><code>go/.gitignore</code>에 tfstate/.terraform/pem/plan 규칙이
+이미 잘 갖춰져 있었음</strong>을 후속 작업 중 확인. tfstate 유출 위험은 당초 보고보다 낮았다.
+다만 실제 갭 2건은 유효했고 같은 날 조치함:</div>
+<ul style="font-size:14px">
+  <li><strong><code>*.tfvars</code> 규칙 부재</strong> (go/.gitignore에도 없었음) — 주입 변수 파일에 이메일 등 개인정보 포함 가능 → 루트에 추가 <span class="badge done">완료</span></li>
+  <li><strong>Lambda zip이 git 추적 중</strong> (<code>cloudwatch-discord.zip</code>) — 시크릿은 아니나 apply마다 재생성되는 빌드 산출물 → <code>*.zip</code> 규칙 추가 <span class="badge done">완료</span>, 기존 추적분은 <code>git rm --cached</code> 필요 <span class="badge todo">잔여</span></li>
+  <li>루트에도 tfstate/.terraform 규칙 이중 방어 추가 + 깨진 인코딩(CP949) UTF-8 재저장 <span class="badge done">완료</span></li>
+</ul>
+
+<h3><span class="badge risk">🔴 신규 발견</span> ② Grafana admin 비밀번호가 tfstate에 평문 — 2순위, apply 필요</h3>
+<p><code>module/grafana/admin-password.tf</code>의 <code>data "kubernetes_secret_v1"</code> +
+<code>output "admin_password"</code> 조합. <code>sensitive = true</code>는 <strong>CLI 출력만 가릴 뿐
+state에는 평문 저장</strong>된다 — 감사 #1이 정의한 ESO 트리거에 해당하는 값이 잔존
+(PAT·DB 비밀번호는 이관 완료됐는데 이것만 남음).</p>
+<p><strong>조치:</strong> data source·output 제거 → state에서 완전 소멸. 비밀번호가 필요할 때는
+runbook 방식으로 조회:</p>
+<pre><code>kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d</code></pre>
+
+<div class="grid2">
+  <div class="card">
+    <h4><span class="badge todo">🟡 잔존 리스크</span> 문서화된 절충 — 현상 유지</h4>
+    <ul>
+      <li>Redis <code>auth_token</code>이 state에 있음 — 리소스 인자라 구조적 불가피 (redis.tf 주석)</li>
+      <li>S3 이미지 버킷 퍼블릭 읽기 — 감사 #4 의도적 유지. 운영 전환 시 CloudFront+OAC</li>
+      <li>EKS 퍼블릭 엔드포인트 + /32 제한 — 감사 #3 절충. IP 목록 주기 점검</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge done">🟢 문제없음</span> 점검 완료 항목</h4>
+    <ul>
+      <li><strong>IAM <code>Resource="*"</code> 전수 확인</strong> — 모두 정당: <code>ecr:GetAuthorizationToken</code>(리소스 지정 불가), <code>eks:DescribeCluster</code>, Grafana CloudWatch 읽기(리소스 레벨 미지원). <code>Principal="*"</code>는 전부 <strong>Deny</strong>문(DenyInsecureTransport) — 보안 강화 패턴</li>
+      <li><strong>SG 설계</strong> — 전부 SG 참조 기반, 배스천 인바운드 0(SSM 전용), DB/캐시 egress 제거. NAT만 VPC CIDR(기능상 필수)</li>
+      <li><strong>배스천 권한</strong> — EKS는 <code>gochuchamchi</code> 네임스페이스 Edit로, Secrets Manager는 시크릿 2개 ARN 단위로 축소</li>
+      <li><strong>시크릿 전달 규칙</strong> — MYSQL_PWD/env/600 파일 원칙 일관 적용 (argv·SSM 로그 노출 차단)</li>
+    </ul>
+  </div>
+</div>
+
+<h2>4. 알림 자동화 — SNS 허브 도입</h2>
+<div class="flow">
+  <div class="lane-title">개편 후 알림 파이프라인 (cloudwatch-notifications/)</div>
+  <div class="lane">
+    <span class="node">EventBridge<br><small>gochuchamchi-* 알람</small></span><span class="arrow">→</span>
+    <span class="node good">SNS 허브<br><small>gochuchamchi-alerts</small></span><span class="arrow">→</span>
+    <span class="node">Lambda → Discord</span>
+    <span class="arrow">·</span>
+    <span class="node good">이메일 구독<br><small>var.alert_emails</small></span>
+  </div>
+  <div class="lane">
+    <span class="arrow">└ 전달 실패 시 →</span>
+    <span class="node bad">SQS DLQ<br><small>14일 보존</small></span><span class="arrow">→</span>
+    <span class="node good">DLQ 알람<br><small>자기 감시 루프</small></span>
+  </div>
+</div>
+<p style="font-size:14px">팬아웃(채널 추가 = 구독 추가) + 재시도/DLQ(알림 유실 방지). DLQ 알람 이름이
+<code>gochuchamchi-</code> prefix라 기존 EventBridge 룰에 자동 포착 — Discord가 죽어도 이메일로
+"파이프라인 자체의 고장"이 통보된다. apply 후 확인 메일 Confirm 클릭 필요(3일 내).</p>
+
+<h2>5. full-HA 라인(8/3) 복원 + 병합</h2>
+<div class="callout info"><strong>배경:</strong> CloudFront/WAF 부재 확인 과정에서, 8/3 "full HA security upgrade"
+라인의 <strong>13개 파일이 저장소 재생성(8/4 first commit) 때 통째로 누락</strong>된 것을 발견.
+<code>fin</code> 사본에서 복원해 8/4 제로트러스트 작업과 3-way 병합. <code>terraform validate</code> 통과.</div>
+
+<div class="grid2">
+  <div class="card">
+    <h4><span class="badge done">복원 완료 (11 신규 + 공통 이식)</h4>
+    <ul>
+      <li><strong>edge.tf</strong> — CloudFront+WAF+us-east-1 ACM (2단계 apply: 2차에 <code>-var enable_edge=true</code>)</li>
+      <li><strong>iam-security / kms / nacl / vpc-endpoints / flow-logs / cost-monitoring / kyverno / resource-limits / dr</strong></li>
+      <li><strong>aws-config.tf</strong> — Config 전용 버킷 분리(8/3 실장애 교훈)</li>
+      <li>main.tf: <strong>NAT AZ별 2대</strong> (moved로 무중단 인수)</li>
+      <li>k8s-deploy: PSA 라벨 + superadmin + edge 어노테이션</li>
+      <li>guardduty 기능 확장, ECR Inspector ENHANCED, 로그버킷 CMK+불변성 Deny, s3 versioning</li>
+      <li><strong>Grafana 비밀번호 state 평문 제거</strong> (§3-② 해결 — fin 모듈에 data source가 애초 없음)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge todo">복원 제외/보류 (사유)</h4>
+    <ul>
+      <li>network-policies → 8/4 <code>k8s-network-policies.tf</code>가 대체</li>
+      <li>sns-alerts → §4 SNS 허브가 상위 호환</li>
+      <li>github-oidc → repo <code>ecr.tf</code> OIDC와 <strong>중복(fin 자체 버그)</strong></li>
+      <li><strong>RDS/EFS CMK 전환</strong> — 인스턴스 교체 = 데이터 소실 → 재구축 사이클로</li>
+      <li><strong>로그 버킷 Object Lock</strong> — 생성 시에만 가능 → 재구축 사이클로</li>
+      <li>fin의 구식 부분(key_name, PAT 변수, ClusterAdmin, DB 마스터 접속) — 8/4 코드 우선</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn"><strong>apply 시 주의 (옆컴퓨터):</strong> ① <code>terraform init</code> 필요
+② plan에서 신규 리소스 다수 + NAT nat-0 생성은 정상이나 <strong>RDS/EFS/로그 버킷에 replace가 뜨면 중단</strong>
+③ <code>DenyPolicyTampering</code> 적용 후엔 이 버킷 정책을 Terraform으로도 수정 불가(루트의 DeleteBucketPolicy → 재apply가 유일 경로)
+④ CloudFront 전환 확인: <code>curl -sI https://gochuchamchi.shop | grep -i via</code></div>
+
+<h2>6. 남은 작업</h2>
+<table>
+  <tr><th style="width:12%">상태</th><th>작업</th><th style="width:24%">비고</th></tr>
+  <tr><td><span class="badge done">코드 완료</span></td><td>SNS 허브(§4) + full-HA 복원·병합(§5) + Grafana state 제거 + <code>.gitignore</code> 보강</td><td>apply 대기 (admin 프로파일 머신, 2단계)</td></tr>
+  <tr><td><span class="badge todo">잔여</span></td><td><code>git rm --cached go/cloudwatch-notifications/cloudwatch-discord.zip</code></td><td>커밋 시 함께 실행</td></tr>
+  <tr><td><span class="badge todo">잔여</span></td><td>MTU 1492 (8/3 잔여)</td><td>미적용 시 다음 apply에서 <code>Error locating chart</code> 재발 가능</td></tr>
+  <tr><td><span class="badge todo">검토</span></td><td>AMI ID → SSM 파라미터 조회 전환 (§2)</td><td>재구성 대비</td></tr>
+  <tr><td><span class="badge new">재구축 시</span></td><td>RDS/EFS CMK 전환 + 로그 버킷 Object Lock (§5 보류)</td><td>데이터 소실 방지 위해 destroy→apply 사이클에</td></tr>
+  <tr><td><span class="badge new">백로그</span></td><td>이미지 태그 자동화 — CI가 직접 gitops 태그 커밋 검토 / cost-monitoring 이메일 default 정리</td><td>write PAT read-only 강등 가능</td></tr>
+</table>
+
+<footer>
+  gochuchamchi 3차 프로젝트 · 마크다운 원본: <code>2026-08-04-incident-and-review.md</code> ·
+  장애 상세: <code>2026-08-04.md</code> §4 · 관련: <code>SECURITY_AUDIT_REPORT.md</code> #1 #3 #4 #15
+</footer>
+
+</div>
+</body>
+</html>

@@ -12,6 +12,35 @@ resource "aws_s3_bucket" "images" {
   force_destroy = true
 }
 
+# (2026-08-03 full-HA에서 복원) 도쿄 CRR(dr.tf)의 전제 조건 — 복제는 원본/대상
+# 모두 버전관리가 필수. 버전이 쌓이는 비용은 아래 라이프사이클로 통제한다.
+resource "aws_s3_bucket_versioning" "images" {
+  bucket = aws_s3_bucket.images.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "images" {
+  bucket = aws_s3_bucket.images.id
+
+  rule {
+    id     = "expire-noncurrent-versions"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.images]
+}
+
 # 메인 페이지(index.html)가 배경으로 참조하는 텍스처.
 # 버킷은 Terraform이 만들지만 내용물은 관리 대상이 아니라서, 재생성할 때마다
 # 수동 업로드를 잊으면 배경이 403으로 깨졌음 -> 코드로 같이 관리한다.

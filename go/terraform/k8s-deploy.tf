@@ -64,6 +64,19 @@ resource "aws_s3_object" "schema_sql" {
 resource "kubernetes_namespace_v1" "gochuchamchi" {
   metadata {
     name = "gochuchamchi"
+
+    # (2026-08-03 full-HA에서 복원) Pod Security Standards (컨테이너 보안 레이어 1/3)
+    #   enforce — 위반 파드는 생성 자체가 거부됨. 앱 이미지가 root 로 도는지
+    #     검증 전이라 기본값은 baseline(privileged/hostPath/hostNetwork 등
+    #     컨테이너 탈출 벡터 차단)으로 시작하고, gitops Deployment 에
+    #     securityContext 를 넣은 뒤 restricted 로 올린다.
+    #   warn/audit — restricted 위반을 kubectl 경고 + API 감사로그로 남겨서
+    #     enforce 를 올리기 전에 무엇이 걸릴지 미리 보이게 함.
+    labels = {
+      "pod-security.kubernetes.io/enforce" = var.pss_enforce_level
+      "pod-security.kubernetes.io/warn"    = "restricted"
+      "pod-security.kubernetes.io/audit"   = "restricted"
+    }
   }
 
   depends_on = [module.eks]
@@ -115,6 +128,11 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
     SPRING_DATA_REDIS_PORT = "6379"
     # ElastiCache 전송 암호화와 세트 — lettuce가 rediss(TLS)로 접속 (Boot 3.1+ 프로퍼티)
     SPRING_DATA_REDIS_SSL_ENABLED = "true"
+
+    # (2026-08-03 full-HA에서 복원) 기동 시 이 아이디를 superadmin으로 승격
+    # (SuperAdminBootstrap). 이 환경변수가 app.superadmin.username 프로퍼티를
+    # 직접 덮으므로 설정 파일과 무관하게 동작한다.
+    APP_SUPERADMIN_USERNAME = var.superadmin_username
   }
 }
 
@@ -156,24 +174,41 @@ resource "kubernetes_ingress_v1" "gochuchamchi_web" {
   metadata {
     name      = "gochuchamchi-web-ingress"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
-    annotations = {
-      "kubernetes.io/ingress.class"               = "alb"
-      "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
-      "alb.ingress.kubernetes.io/target-type"     = "ip"
-      "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTP\": 80}, {\"HTTPS\": 443}]"
-      "alb.ingress.kubernetes.io/ssl-redirect"    = "443"
-      "alb.ingress.kubernetes.io/certificate-arn" = aws_acm_certificate_validation.this.certificate_arn
-      # 미지정 시 ALB 기본값(ELBSecurityPolicy-2016-08)이 적용되는데, 이 정책은
-      # 이미 deprecated된 TLS 1.0/1.1을 허용하고 TLS 1.3은 지원하지 않음(실제 확인).
-      # TLS 1.2/1.3만 허용하는 정책으로 고정.
-      "alb.ingress.kubernetes.io/ssl-policy" = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-      # 명시적 IngressGroup. Grafana Ingress(module/grafana, group.order=30)가 같은
-      # group.name으로 이 ALB에 합류함 -> ALB 1개만 유지.
-      # 또 cloudwatch-managed-metrics.tf가 ingress.k8s.aws/stack 태그 = 이 group.name
-      # 으로 ALB/Target Group을 조회하므로, 값을 바꾸면 거기도 같이 바꿔야 함.
-      "alb.ingress.kubernetes.io/group.name"  = "gochuchamchi-web"
-      "alb.ingress.kubernetes.io/group.order" = "10"
-    }
+    annotations = merge(
+      {
+        "kubernetes.io/ingress.class"               = "alb"
+        "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
+        "alb.ingress.kubernetes.io/target-type"     = "ip"
+        "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTP\": 80}, {\"HTTPS\": 443}]"
+        "alb.ingress.kubernetes.io/ssl-redirect"    = "443"
+        "alb.ingress.kubernetes.io/certificate-arn" = aws_acm_certificate_validation.this.certificate_arn
+        # 미지정 시 ALB 기본값(ELBSecurityPolicy-2016-08)이 적용되는데, 이 정책은
+        # 이미 deprecated된 TLS 1.0/1.1을 허용하고 TLS 1.3은 지원하지 않음(실제 확인).
+        # TLS 1.2/1.3만 허용하는 정책으로 고정.
+        "alb.ingress.kubernetes.io/ssl-policy" = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+        # 명시적 IngressGroup. Grafana Ingress(module/grafana, group.order=30)가 같은
+        # group.name으로 이 ALB에 합류함 -> ALB 1개만 유지.
+        # 또 cloudwatch-managed-metrics.tf가 ingress.k8s.aws/stack 태그 = 이 group.name
+        # 으로 ALB/Target Group을 조회하므로, 값을 바꾸면 거기도 같이 바꿔야 함.
+        "alb.ingress.kubernetes.io/group.name"  = "gochuchamchi-web"
+        "alb.ingress.kubernetes.io/group.order" = "10"
+      },
+      # (2026-08-03 full-HA에서 복원) CloudFront 전환(edge.tf, enable_edge=true) 시
+      # 이 호스트의 Route53 레코드 소유권을 Terraform으로 넘긴다. ExternalDNS가
+      # spec.rules[].host를 계속 보면 ALB Alias로 되돌리는 upsert가 일어나므로,
+      # annotation-only 모드로 바꿔 이 Ingress의 호스트를 관리 대상에서 뺀다.
+      #
+      # security-groups: ALB 인바운드를 CloudFront origin-facing prefix list +
+      # 관리자 IP로 제한하는 SG(edge.tf §5)를 컨트롤러 자동 생성 SG 대신 사용
+      # -> ALB DNS를 직접 때려 WAF를 우회하는 경로 차단.
+      # manage-backend-security-group-rules: 컨트롤러가 백엔드(노드/파드) SG에
+      # ALB→타겟 허용 규칙을 자동 관리하게 함 (커스텀 SG 사용 시 필수 권장).
+      var.enable_edge ? {
+        "external-dns.alpha.kubernetes.io/ingress-hostname-source"      = "annotation-only"
+        "alb.ingress.kubernetes.io/security-groups"                     = aws_security_group.alb_edge[0].id
+        "alb.ingress.kubernetes.io/manage-backend-security-group-rules" = "true"
+      } : {}
+    )
   }
 
   spec {

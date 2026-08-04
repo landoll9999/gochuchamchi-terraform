@@ -132,16 +132,53 @@ def send_discord_message(
         raise
 
 
+def unwrap_events(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """수신 이벤트에서 EventBridge 원본 이벤트 목록을 꺼냅니다.
+
+    - SNS 경유(현재 구조): Records[].Sns.Message 안에 EventBridge 이벤트가
+      JSON 문자열로 들어 있음 -> 봉투를 벗겨서 반환
+    - 직접 호출(콘솔 테스트/과거 구조): event 자체가 EventBridge 이벤트
+      -> 그대로 반환. 두 형식을 모두 받아 전환·수동 테스트를 안전하게 함
+    """
+    if "Records" not in event:
+        return [event]
+
+    return [
+        json.loads(record["Sns"]["Message"])
+        for record in event["Records"]
+        if record.get("EventSource") == "aws:sns"
+    ]
+
+
 def lambda_handler(
     event: dict[str, Any],
     context: Any,
 ) -> dict[str, Any]:
-    """EventBridge의 CloudWatch Alarm 상태 변경 이벤트를 처리합니다."""
+    """SNS 허브가 전달한 CloudWatch Alarm 상태 변경 이벤트를 처리합니다."""
     logger.info(
         "수신 이벤트: %s",
         json.dumps(event, ensure_ascii=False),
     )
 
+    results = []
+
+    for bridge_event in unwrap_events(event):
+        results.append(handle_alarm_event(bridge_event))
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps(
+            {
+                "message": "Discord notification sent",
+                "alarms": results,
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
+def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
+    """EventBridge 원본 이벤트 1건을 Discord 메시지로 변환·전송합니다."""
     detail = event.get("detail", {})
     current_state = detail.get("state", {})
     previous_state = detail.get("previousState", {})
@@ -194,7 +231,7 @@ def lambda_handler(
                 "footer": {
                     "text": (
                         "AWS CloudWatch → EventBridge "
-                        "→ Lambda → Discord"
+                        "→ SNS → Lambda → Discord"
                     )
                 },
             }
@@ -209,13 +246,6 @@ def lambda_handler(
     )
 
     return {
-        "statusCode": 200,
-        "body": json.dumps(
-            {
-                "message": "Discord notification sent",
-                "alarmName": alarm_name,
-                "state": new_state,
-            },
-            ensure_ascii=False,
-        ),
+        "alarmName": alarm_name,
+        "state": new_state,
     }
