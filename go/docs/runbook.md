@@ -76,6 +76,8 @@ export KUBECONFIG=/home/ec2-user/.kube/config
 
 ### 1.3 ArgoCD UI
 
+> **변경 예정 (2026-08-05, dev 브랜치)** — ALB를 `internet-facing` + `inbound-cidrs`(= `endpoint_public_access_cidrs`)로 바꿔 **`https://argocd.gochuchamchi.shop` 직접 접속**으로 전환합니다. 그 apply가 끝나면 아래 port-forward 절차 대신 브라우저에서 도메인을 바로 열면 됩니다. 접속이 안 되면 먼저 **현재 IP가 `endpoint_public_access_cidrs`에 있는지** 확인하세요 — 목록 밖에서는 TCP 연결 단계에서 끊깁니다(§2026-08-05 §2). 아직 apply 전이라면 아래 절차가 유효합니다.
+
 ArgoCD ALB는 **internal**이라 `https://argocd.gochuchamchi.shop`을 브라우저에서 직접 열면 타임아웃됩니다(정상). port-forward로 붙습니다.
 
 ```powershell
@@ -288,6 +290,18 @@ terraform state list
   terraform apply
   ```
 - 로컬 Helm 차트(`charts/`)의 템플릿만 고치면 반영 안 됨 → `Chart.yaml`의 `version`도 올릴 것
+- **`plan -out`으로 계획을 파일에 박고 그 파일로 apply할 것** — refresh 사이에 상태가 바뀌어도 확인한 계획만 실행됩니다. 인자에 `.`이 있으므로 **따옴표 필수**:
+  ```powershell
+  terraform plan "-out=tfplan.binary"
+  # 출력에서 "N to add, N to change, 0 to destroy" 를 눈으로 확인한 뒤
+  terraform apply "tfplan.binary"
+  ```
+- **`AlreadyExists` 계열 에러(`BucketAlreadyOwnedByYou`, `EntityAlreadyExists`, `Limit exceeded`)는 지우지 말고 `import`** — "실물은 있는데 state가 모른다"는 뜻입니다. 특히 S3 버킷은 이름이 계정 전역 유일이라 우회할 수 없습니다:
+  ```powershell
+  terraform import "aws_s3_bucket.cloudwatch_log_archive" "gochuchamchi-cloudwatch-log-archive-307223751140"
+  terraform plan   # 반드시 "0 to destroy" 확인 후 apply
+  ```
+  import 직후 plan에서 **교체가 계획되지 않는지 반드시 볼 것** — 코드에 없는 설정(Object Lock 등)이 실물에 켜져 있으면 교체가 잡힐 수 있습니다 (2026-08-04 §5.6, 2026-08-05 §1)
 
 ### 4.2 destroy 시 주의
 

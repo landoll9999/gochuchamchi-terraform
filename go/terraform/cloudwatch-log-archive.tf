@@ -36,6 +36,20 @@ resource "aws_s3_bucket" "cloudwatch_log_archive" {
       Name = "gochuchamchi-cloudwatch-log-archive"
     }
   )
+
+  # (2026-08-05) 이 버킷은 destroy 사이클에서 "실제로는 남아 있는데 state에서만 사라지는"
+  # 상태가 됐고, 다음 apply가 CreateBucket을 재시도하다 BucketAlreadyOwnedByYou로 죽었다.
+  # 버킷 이름이 계정 전역 유일이라 이름을 바꿔 우회할 수도 없어서 결국 import로 복구했다.
+  # prevent_destroy는 그 어긋남이 시작되는 지점(destroy) 자체를 plan 단계에서 막는다.
+  #
+  # ⚠️ 트레이드오프: 이게 걸려 있으면 `terraform destroy`가 이 버킷에서 에러로 멈춘다.
+  #    전체 재구축을 할 때는 이 블록을 잠시 주석 처리하거나,
+  #    `terraform state rm aws_s3_bucket.cloudwatch_log_archive`로 관리에서 떼어낸 뒤
+  #    destroy하고, 재구축 후 아래 명령으로 다시 붙인다(따옴표 필수 — PowerShell이 점에서 자름):
+  #      terraform import "aws_s3_bucket.cloudwatch_log_archive" "<버킷이름>"
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_ownership_controls" "cloudwatch_log_archive" {

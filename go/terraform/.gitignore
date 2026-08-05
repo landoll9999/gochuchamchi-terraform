@@ -8,6 +8,10 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 *.tfplan
+# plan -out 산출물 — 확장자를 tfplan으로 안 붙이는 경우가 많아 이름 기준으로도 막는다
+# (바이너리지만 리소스 속성값이 그대로 들어 있어 state와 같은 급으로 취급)
+tfplan
+tfplan.*
 
 # local-exec 프로비저너가 남기는 SSM 파라미터 산출물 — 비밀값은 없지만
 # 계정 ID/시크릿 ARN이 들어 있어 공개 저장소에 올릴 파일은 아님

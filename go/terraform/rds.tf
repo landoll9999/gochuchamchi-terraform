@@ -132,3 +132,5 @@ output "rds_secret_arn" {
   value       = module.rds.db_instance_master_user_secret_arn
   description = "마스터(admin) 자격증명 Secret — 배스천의 스키마 초기화/운영 작업 전용. 앱은 이제 이 시크릿에 접근 권한이 없음 (앱 전용 계정은 db-zero-trust.tf)"
 }
+
+#test

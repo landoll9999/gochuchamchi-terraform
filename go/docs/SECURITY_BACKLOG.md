@@ -10,9 +10,16 @@ SECURITY_AUDIT_REPORT(18개 항목, 대부분 조치완료)와 2026-08-04 제로
 | B1 | 노드 SG가 VPC 전체에 전 포트 개방 | 🔴 높음 | ✅ 완료 — `add_node_sg` 인그레스 제거, `add_cluster_sg` 배스천 SG 참조로 축소 |
 | B2 | 노드·NAT에 SSH 키페어 잔존 | 🟠 중간 | ✅ 완료 — `key_name` 전면 제거 |
 | B3 | ArgoCD PAT가 tfstate에 평문 → ESO 도입 | 🟠 중간 (파급 큼) | ✅ 완료 — `eso.tf` + `charts/eso-config`, PAT 주입·ESO 동기화 확인(`SecretSynced`). **PAT 미주입 상태로 apply하면 앱이 통째로 안 뜬다**(2026-08-04 §4.3) |
-| B4 | ArgoCD admin 초기 비밀번호가 재구축마다 부활 | 🟠 중간 | ✅ 코드완료 — `TF_VAR_argocd_admin_password_bcrypt` 설정해야 활성화 |
+| B4 | ArgoCD admin 초기 비밀번호가 재구축마다 부활 | 🔴 높음 (2026-08-05 상향) | ✅ 코드완료 — `TF_VAR_argocd_admin_password_bcrypt` 설정해야 활성화. **미설정 상태로 두지 말 것** |
 | B5 | NetworkPolicy 0개 — 클러스터 내부 east-west 무제한 | 🟡 낮음~중간 | ✅ 완료 — 단 최초 규칙에 **DNS 결함**이 있어 앱 전체 500. DNS egress를 서비스 CIDR까지 열어 수정(2026-08-04 §4.4) |
 | B6 | 기타 알려진 잔여 | 🟡 낮음 | 🔶 부분 — GuardDuty ✅ / S3 OAC·verify-full·ECR IMMUTABLE·앱 계층 ⬜ (아래 사유) |
+
+> **B4 우선순위 상향 (2026-08-05)** — ArgoCD ALB를 `internal`에서 `internet-facing` +
+> `inbound-cidrs`로 전환했다(2026-08-05 §2). IP 허용목록이 앞을 막아주지만, 허용된
+> 네트워크 안에서는 이제 **인증만이 유일한 방어선**이다. 초기 비밀번호 동작으로 두면
+> 재구축마다 값이 바뀌어 관리가 흐트러지므로 `TF_VAR_argocd_admin_password_bcrypt`를
+> 반드시 설정해서 apply할 것. ArgoCD는 클러스터 admin급 권한과 gitops write-back PAT를
+> 함께 쥐고 있어, 탈취되면 "gitops 커밋 → 자동 배포" 공급망 경로가 열린다.
 
 > **apply에서 실제로 드러난 결함 2건** (상세: `2026-08-04.md` §4)
 > - **B3** — Terraform이 값 없는 Secret 컨테이너만 만들므로 **PAT 수동 주입이 안 되면

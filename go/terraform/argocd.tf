@@ -55,9 +55,21 @@ resource "helm_release" "argocd" {
           annotations = {
             "kubernetes.io/ingress.class" = "alb"
             # ArgoCD는 클러스터 admin급 권한 + gitops write-back PAT를 쥔 최고 가치
-            # 타겟이라 인터넷 노출 대신 internal ALB로 전환. 접근은 SSM 포트포워딩 +
-            # kubectl port-forward로 (private_subnet_tags의 internal-elb 태그로 자동 배치됨)
-            "alb.ingress.kubernetes.io/scheme"          = "internal"
+            # 타겟이다. 그래서 한동안 internal ALB + SSM/kubectl 포트포워딩으로 접근했는데,
+            # 매번 터널을 띄우는 비용이 커서 (2026-08-05) internet-facing으로 전환하고
+            # 노출 범위는 inbound-cidrs로 좁히는 방식으로 바꿨다.
+            #
+            # inbound-cidrs는 컨트롤러가 ALB 보안그룹의 인바운드 규칙을 이 목록으로
+            # 한정하게 만든다 -> 허용 IP 밖에서는 인증 화면조차 못 보고 TCP 연결 단계에서 끊긴다.
+            # EKS 퍼블릭 엔드포인트와 같은 변수를 공유하므로 접근 출발지가 한 곳에서 관리된다.
+            #
+            # ⚠️ 네트워크가 바뀌면 variables.tf의 endpoint_public_access_cidrs에 IP를 추가할 것.
+            #    반대로 안 쓰는 /32를 남겨두면 그 IP를 재할당받은 사람에게 EKS 엔드포인트와
+            #    ArgoCD UI가 동시에 열리므로, 그 변수 주석대로 stale 항목은 반드시 지운다.
+            # ⚠️ 인터넷에 노출되는 만큼 admin 비밀번호를 bcrypt로 고정하는 편이 좋다
+            #    (위 configs.secret 주석의 B4 — TF_VAR_argocd_admin_password_bcrypt).
+            "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
+            "alb.ingress.kubernetes.io/inbound-cidrs"   = join(",", var.endpoint_public_access_cidrs)
             "alb.ingress.kubernetes.io/target-type"     = "ip"
             "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTP\": 80}, {\"HTTPS\": 443}]"
             "alb.ingress.kubernetes.io/ssl-redirect"    = "443"
