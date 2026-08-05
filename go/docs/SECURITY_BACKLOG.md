@@ -12,7 +12,7 @@ SECURITY_AUDIT_REPORT(18개 항목, 대부분 조치완료)와 2026-08-04 제로
 | B3 | ArgoCD PAT가 tfstate에 평문 → ESO 도입 | 🟠 중간 (파급 큼) | ✅ 완료 — `eso.tf` + `charts/eso-config`, PAT 주입·ESO 동기화 확인(`SecretSynced`). **PAT 미주입 상태로 apply하면 앱이 통째로 안 뜬다**(2026-08-04 §4.3) |
 | B4 | ArgoCD admin 초기 비밀번호가 재구축마다 부활 | 🟠 중간 | ✅ 코드완료 — `TF_VAR_argocd_admin_password_bcrypt` 설정해야 활성화 |
 | B5 | NetworkPolicy 0개 — 클러스터 내부 east-west 무제한 | 🟡 낮음~중간 | ✅ 완료 — 단 최초 규칙에 **DNS 결함**이 있어 앱 전체 500. DNS egress를 서비스 CIDR까지 열어 수정(2026-08-04 §4.4) |
-| B6 | 기타 알려진 잔여 | 🟡 낮음 | 🔶 부분 — GuardDuty ✅ / S3 OAC·verify-full·ECR IMMUTABLE·앱 계층 ⬜ (아래 사유) |
+| B6 | 기타 알려진 잔여 | 🟡 낮음 | 🔶 부분 — GuardDuty·ECR 불변 태그 ✅ / S3 OAC·verify-full·앱 계층 ⬜ (아래 사유) |
 
 > **apply에서 실제로 드러난 결함 2건** (상세: `2026-08-04.md` §4)
 > - **B3** — Terraform이 값 없는 Secret 컨테이너만 만들므로 **PAT 수동 주입이 안 되면
@@ -208,7 +208,7 @@ external-dns, image-updater 등 **어떤 파드든** RDS 3306 / Redis 6379에 �
 | GuardDuty 미활성 | 위협 **탐지** 계층 부재 해소 | ✅ `guardduty.tf` — 기본 탐지 활성(30일 무료). 확장 기능(EKS Protection 등)은 운영 전환 시 |
 | S3 이미지 버킷 퍼블릭 read | CloudFront OAC + WAF로 이관 | ⬜ 보류 — 앱이 S3 URL을 직접 생성하는 구조라 **앱 코드 수정 없이는 이미지가 깨짐**. 앱 저장소와 함께 진행해야 함 |
 | JDBC `sslMode=trust` → `verify-full` | RDS CA 번들을 파드에 마운트 필요 | ⬜ 보류 — Deployment가 gitops 저장소 관리라 **이 저장소만으로는 볼륨 마운트 불가**. gitops 수정과 함께 진행 |
-| ECR `MUTABLE` + latest 태그 | digest 고정 / IMMUTABLE 전환 | ⬜ 보류 — 현재 CI(latest 덮어쓰기)·Image Updater(latest 전략)가 깨짐. 워크플로 재설계와 세트 |
+| ECR `MUTABLE` + latest 태그 | digest 고정 / IMMUTABLE 전환 | ✅ 코드완료 — `IMMUTABLE_WITH_EXCLUSION`으로 전환하고 Cosign 참조 아티팩트만 예외. `signed-*` 20개 보존, 실패한 `candidate-*`·untagged는 7일 후 만료. Spring CI도 실행별 candidate 태그로 변경. 실제 plan/apply·동작 검증 대기 |
 | 앱 계층 미점검 | 세션 쿠키 플래그, CSRF, 업로드 검증 등 | ⬜ 별도 — gochuchamchi-spring 저장소 점검 필요 |
 | Redis auth_token state 잔존 | ElastiCache **리소스 인자**라 Terraform이 값을 직접 넣어야 함 — ESO로도 구조적으로 못 뺌 (`eso.tf` 주석 참고) | ⬜ 한계 — 완전 제거는 out-of-band 로테이션(ignore_changes + CLI) 설계 필요. state는 S3 암호화+잠금 뒤 |
 
@@ -224,3 +224,4 @@ external-dns, image-updater 등 **어떤 파드든** RDS 3306 / Redis 6379에 �
 | 2026-08-04 | B4 | `argocd_admin_password_bcrypt` 변수(bcrypt 해시만 허용하는 validation) + 차트 `configs.secret` 조건부 주입. runbook §1.3 동기화 |
 | 2026-08-04 | B5 | vpc-cni `enableNetworkPolicy=true` + `k8s-network-policies.tf` (gochuchamchi ns 기본거부, 웹앱은 VPC→8080 인그레스 / DNS·3306·6379·443·pod-identity-agent 이그레스만) |
 | 2026-08-04 | B6 | `guardduty.tf` 기본 탐지 활성. 나머지 4건은 보류 사유 명시(위 표) — 이 저장소 단독으로 조치 불가한 것들 |
+| 2026-08-05 | B6 | ECR 태그 불변성 코드 구현 — 이미지 태그는 불변, Cosign `.sig/.att/.sbom` 참조 태그만 예외. 서명 릴리스 우선 보존 Lifecycle과 GitHub 실행별 candidate 태그 적용. AWS apply·재실행 검증은 별도 진행 |
