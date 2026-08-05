@@ -1,12 +1,15 @@
 name: Terraform Plan
+
 on:
   pull_request:
     branches: [main]
+
 # id-token: write 가 OIDC 인증에 필수
 permissions:
   id-token: write
   contents: read
   pull-requests: write
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -17,40 +20,56 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::307223751140:role/gochuchamchi-github-actions-terraform-plan
           aws-region: ap-northeast-2
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+
       - name: Terraform Init
         run: terraform init
+
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
         continue-on-error: true
+
       - name: Terraform Plan
         id: plan
         run: terraform plan -no-color -input=false
         continue-on-error: true
+
       - name: Comment plan result on PR
         uses: actions/github-script@v7
+        continue-on-error: true
         env:
           PLAN: "${{ steps.plan.outputs.stdout }}"
         with:
           script: |
-            const output = #### Terraform Plan 결과
-            <details><summary>plan 결과 펼쳐보기</summary>
-            \\\
-            ${process.env.PLAN}
-            \\\
-            </details>;
+            const plan = process.env.PLAN || '(plan 출력 없음)';
+            const maxLength = 60000;
+            const truncated = plan.length > maxLength
+              ? plan.substring(0, maxLength) + '\n\n... (내용이 길어 일부 생략됨)'
+              : plan;
+
+            const fence = String.fromCharCode(96, 96, 96);
+            const body = '#### Terraform Plan 결과\n\n'
+              + '<details><summary>plan 결과 펼쳐보기</summary>\n\n'
+              + fence + '\n'
+              + truncated + '\n'
+              + fence + '\n\n'
+              + '</details>';
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: output
+              body: body
             });
+
       - name: Fail job if plan failed
         if: steps.plan.outcome == 'failure'
         run: exit 1
