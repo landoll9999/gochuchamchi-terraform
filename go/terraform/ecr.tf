@@ -8,7 +8,25 @@
 
 resource "aws_ecr_repository" "gochuchamchi" {
   name                 = "gochuchamchi"
-  image_tag_mutability = "MUTABLE" # CI/Image Updater가 latest 태그를 계속 덮어씀
+  image_tag_mutability = "IMMUTABLE_WITH_EXCLUSION"
+
+  # Release/candidate tags include immutable GitHub run identity and must never
+  # be moved to another digest. Cosign reference artifacts are the exception:
+  # adding or rotating signatures/attestations updates these OCI tag manifests.
+  image_tag_mutability_exclusion_filter {
+    filter      = "sha256-*.sig"
+    filter_type = "WILDCARD"
+  }
+
+  image_tag_mutability_exclusion_filter {
+    filter      = "sha256-*.att"
+    filter_type = "WILDCARD"
+  }
+
+  image_tag_mutability_exclusion_filter {
+    filter      = "sha256-*.sbom"
+    filter_type = "WILDCARD"
+  }
 
   # 이미지가 하나라도 남아있으면 destroy가 거부됨(S3의 BucketNotEmpty와 같은 성격).
   # destroy/apply를 반복하는 구조라 자동 삭제를 켠다.
@@ -25,16 +43,46 @@ resource "aws_ecr_lifecycle_policy" "gochuchamchi" {
   repository = aws_ecr_repository.gochuchamchi.name
 
   policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "최근 10개 이미지만 유지, 나머지는 자동 만료"
-      selection = {
-        tagStatus   = "any"
-        countType   = "imageCountMoreThan"
-        countNumber = 10
+    rules = [
+      {
+        # Highest priority protects the newest signed releases even though the
+        # same digest also retains its candidate tag.
+        rulePriority = 1
+        description  = "최근 서명 릴리스 20개 보존"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["signed-*"]
+          countType      = "imageCountMoreThan"
+          countNumber    = 20
+        }
+        action = { type = "expire" }
+      },
+      {
+        # Candidates left by failed signing jobs have no release value. Signed
+        # digests retained by rule 1 are protected from this lower-priority rule.
+        rulePriority = 2
+        description  = "서명되지 않은 candidate 이미지는 7일 후 만료"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["candidate-*"]
+          countType      = "sinceImagePushed"
+          countUnit      = "days"
+          countNumber    = 7
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 3
+        description  = "태그 없는 중간 이미지는 7일 후 만료"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 7
+        }
+        action = { type = "expire" }
       }
-      action = { type = "expire" }
-    }]
+    ]
   })
 }
 

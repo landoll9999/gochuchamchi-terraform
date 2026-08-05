@@ -12,6 +12,13 @@
 - ArgoCD Image Updater ignores `candidate-*` and follows only `signed-*` tags.
 - Kyverno verifies the Cosign signature before admitting the application Pod.
 
+The ECR repository uses `IMMUTABLE_WITH_EXCLUSION`. Candidate and signed image
+tags cannot be moved to another digest, while Cosign reference artifact tags
+(`sha256-*.sig`, `sha256-*.att`, and `sha256-*.sbom`) remain mutable so that
+signatures, attestations, and SBOMs can be added or rotated. Candidate tags also
+include the GitHub run ID and attempt so that rerunning a workflow never collides
+with an immutable tag from an earlier attempt.
+
 ## 1. Apply the Terraform in Audit mode
 
 Keep the default during the first rollout:
@@ -102,7 +109,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.ECR_REPOSITORY_URL }}:candidate-${{ github.sha }}
+          tags: ${{ env.ECR_REPOSITORY_URL }}:candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   sign:
     needs: build
