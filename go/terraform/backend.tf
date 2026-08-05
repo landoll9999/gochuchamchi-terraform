@@ -4,7 +4,6 @@ terraform {
     bucket       = "gochuchamchi-tfstate-307223751140"
     key          = "eks/terraform.tfstate"
     region       = "ap-northeast-2"
-    profile      = "admin"
     encrypt      = true
     use_lockfile = true
   }
