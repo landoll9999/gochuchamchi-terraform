@@ -1,0 +1,36 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 필요하면 수동으로도 실행 가능
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    # .tf 파일이 저장소 루트가 아니라 go/terraform 폴더 안에 있어서 지정
+    defaults:
+      run:
+        working-directory: go/terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::307223751140:role/gochuchamchi-github-actions-terraform-apply
+          aws-region: ap-northeast-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
