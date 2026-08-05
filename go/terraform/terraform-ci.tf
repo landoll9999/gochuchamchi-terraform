@@ -41,6 +41,28 @@ resource "aws_iam_role_policy_attachment" "github_actions_terraform_plan_readonl
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
+# terraform plan도 내부적으로 S3 state lock 파일을 생성/삭제함 (backend.tf의
+# use_lockfile = true 방식). ReadOnlyAccess에는 s3:PutObject/DeleteObject가
+# 없어서 이것만 예외로, state 버킷 하나에 한정해서 추가.
+resource "aws_iam_role_policy" "github_actions_terraform_plan_state_lock" {
+  name = "state-lock-access"
+  role = aws_iam_role.github_actions_terraform_plan.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "StateLockReadWrite"
+      Effect = "Allow"
+      Action = [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ]
+      Resource = "arn:aws:s3:::gochuchamchi-tfstate-307223751140/*"
+    }]
+  })
+}
+
 # -----------------------------------------------------------------------------
 # Apply용 Role — main 브랜치에 push(=merge)된 경우에만 assume 가능
 # -----------------------------------------------------------------------------
