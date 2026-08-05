@@ -17,6 +17,15 @@ locals {
     ManagedBy   = "Terraform"
     Component   = "central-log-archive"
   }
+
+  # 불변성 Deny에서 예외로 둘 운영 주체. 비워두면 현재 apply를 돌리는 주체가 들어간다.
+  cloudwatch_log_archive_admin_arns = length(var.cloudwatch_log_archive_admin_arns) > 0 ? var.cloudwatch_log_archive_admin_arns : [data.aws_caller_identity.current.arn]
+}
+
+variable "cloudwatch_log_archive_admin_arns" {
+  description = "로그 버킷 불변성 Deny에서 예외로 둘 운영 주체 ARN 목록 (비우면 apply 실행 주체). CI 역할에서도 apply한다면 그 역할 ARN을 함께 넣을 것"
+  type        = list(string)
+  default     = []
 }
 
 
@@ -268,14 +277,25 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
 
   # ---------------------------------------------------------------------------
   # (2026-08-03 full-HA에서 복원) 로그 불변성 보강 — API 경유 삭제와 정책 변조를
-  # 명시적으로 거부. 침해자가 admin 자격증명을 얻어도 증거 로그를 지우거나
+  # 명시적으로 거부. 운영 주체(아래 예외 목록) 외의 누구도 증거 로그를 지우거나
   # 이 정책을 풀 수 없게 하는 목적.
   #
-  # ⚠️ 복구 경로: 버킷 소유 계정의 "루트 사용자"만은 DeleteBucketPolicy를 항상
-  # 호출할 수 있으므로(S3 명세), 정말 정책을 바꿔야 하면 루트로 정책을 지운 뒤
-  # terraform apply로 다시 만든다. 이 정책이 적용된 후에는 Terraform도 이 버킷
-  # 정책을 "수정"할 수 없다는 뜻이다 — 라이프사이클 만료는 S3 내부 동작이라
-  # 이 Deny의 영향을 받지 않고 계속 정리된다.
+  # 2026-08-05 수정 — 이전 버전은 방어가 성립하지 않으면서 운영만 막고 있었다:
+  #   · Deny 대상이 PutBucketPolicy "뿐"이라 DeleteBucketPolicy로 정책을 통째로
+  #     지우면 DenyObjectDeletion까지 함께 사라졌다. 침해자는 한 번의 호출로
+  #     모든 Deny를 걷어낼 수 있었으므로 "admin 자격증명을 얻어도 못 지운다"는
+  #     전제가 실제로는 거짓이었다.
+  #   · 반대로 Terraform은 정책 "수정"이 막혀 apply가 403으로 실패했다
+  #     (2026-08-05 재구축에서 실제 발생).
+  #   · 옛 주석은 "루트만 DeleteBucketPolicy 가능"이라고 적었으나 그건 Delete까지
+  #     Deny했을 때의 이야기고, 당시 정책은 그렇지 않아 admin으로도 삭제됐다.
+  # 그래서 (1) DeleteBucketPolicy를 Deny에 추가해 우회 경로를 막고,
+  #        (2) 운영 주체는 ArnNotLike 조건으로 예외를 둬 apply가 통과되게 한다.
+  #
+  # ⚠️ 남는 한계: 예외 주체(기본값 = apply 실행자)의 자격증명이 탈취되면 이 방어는
+  # 무력하다. 같은 계정의 관리자를 그 계정 리소스로 막는 구조의 본질적 한계이므로,
+  # 운영 전환 시에는 로그 전용 계정 분리나 S3 Object Lock으로 재설계할 것.
+  # 라이프사이클 만료는 S3 내부 동작이라 이 Deny의 영향을 받지 않고 계속 정리된다.
   # ---------------------------------------------------------------------------
   statement {
     sid    = "DenyObjectDeletion"
@@ -294,6 +314,14 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     resources = [
       "${aws_s3_bucket.cloudwatch_log_archive.arn}/*"
     ]
+
+    # 요청에 aws:PrincipalArn이 없는 서비스 주체(CloudTrail 등)에는 부정형 연산자가
+    # true로 평가되어 Deny가 그대로 적용된다 — 의도한 동작이다.
+    condition {
+      test     = "ArnNotLike"
+      variable = "aws:PrincipalArn"
+      values   = local.cloudwatch_log_archive_admin_arns
+    }
   }
 
   statement {
@@ -305,13 +333,21 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
       identifiers = ["*"]
     }
 
+    # Put만 막으면 Delete로 정책 전체를 걷어낼 수 있다 — 둘 다 막아야 의미가 있다.
     actions = [
-      "s3:PutBucketPolicy"
+      "s3:PutBucketPolicy",
+      "s3:DeleteBucketPolicy"
     ]
 
     resources = [
       aws_s3_bucket.cloudwatch_log_archive.arn
     ]
+
+    condition {
+      test     = "ArnNotLike"
+      variable = "aws:PrincipalArn"
+      values   = local.cloudwatch_log_archive_admin_arns
+    }
   }
 }
 

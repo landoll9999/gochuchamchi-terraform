@@ -173,7 +173,17 @@ resource "helm_release" "argocd_image_updater" {
 # data source로 값을 직접 출력하면 그 시점부터 plan이 깨지므로 명령어만 내보낸다.
 # ※ TF_VAR_argocd_admin_password_bcrypt를 설정했다면(백로그 B4) 초기 Secret은 의미가
 #   없고, 해시의 원본 비밀번호로 로그인한다.
+# 명령은 PowerShell 기준이다 — 이 프로젝트의 주 셸이 PowerShell 5.1인데 거기에는
+# `base64`가 없어서 예전 `| base64 -d` 형태는 그대로 붙여넣으면 실패했다 (2026-08-05).
 output "argocd_admin_password_command" {
-  value       = "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
-  description = "ArgoCD 초기 admin 비밀번호 조회 명령 (bcrypt 해시를 코드로 지정한 경우에는 해당 없음 — argocd.tf B4 주석 참고)"
+  value       = "[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}')))"
+  description = "ArgoCD 초기 admin 비밀번호 조회 명령 (PowerShell). bcrypt 해시를 코드로 지정한 경우에는 해당 없음 — argocd.tf B4 주석 참고"
+}
+
+# ArgoCD는 internal ALB라 도메인으로 브라우저 접속이 안 된다(사설 IP로 해석됨 — 의도된 동작).
+# port-forward로 붙되 반드시 80 포트 + http:// 를 쓸 것 — server.insecure=true라
+# 파드가 평문으로 뜨므로 https로 붙으면 connection reset이 난다.
+output "argocd_port_forward_command" {
+  value       = "kubectl port-forward svc/argocd-server -n argocd 8080:80   # 접속: http://localhost:8080 (https 아님)"
+  description = "ArgoCD UI 터널 명령. 실행 창을 닫으면 터널이 죽는다"
 }

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   terraform <-> gochuchamchi-gitops 배포 계약 검증  (2026-08-04 자동화 1/3)
 

@@ -51,8 +51,9 @@ output "grafana_url" {
 
 # (2026-08-04 보안 리뷰 §3-② 조치) grafana_admin_password output 제거 —
 # data source → output 경유로 비밀번호가 tfstate에 평문 저장되던 문제
-# (sensitive=true는 CLI 출력만 가림). 필요 시 클러스터에서 직접 조회:
-#   kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+# (sensitive=true는 CLI 출력만 가림). 필요 시 클러스터에서 직접 조회 (PowerShell —
+# `base64`는 PowerShell에 없어서 bash 형태(`| base64 -d`)는 실패한다):
+#   [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}')))
 
 output "grafana_iam_role_arn" {
   description = "Grafana CloudWatch 조회용 IAM Role ARN"

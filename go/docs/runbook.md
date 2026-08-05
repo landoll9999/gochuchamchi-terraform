@@ -89,7 +89,10 @@ kubectl port-forward -n argocd svc/argocd-server 8080:80
   - `TF_VAR_argocd_admin_password_bcrypt`를 설정해서 apply했다면(백로그 B4) **그 해시의 원본 비밀번호**로 로그인 — 재구축해도 유지됩니다
   - 설정 안 했다면 초기 비밀번호:
   ```powershell
-  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+  # PowerShell에는 base64 명령이 없습니다 — bash 형태(`| base64 -d`)를 붙여넣으면 실패합니다 (2026-08-05 §6.4)
+  # terraform output -raw argocd_admin_password_command 로도 같은 명령을 얻을 수 있습니다
+  $b64 = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}"
+  [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
   ```
 
 ### 1.4 RDS (MariaDB) — 배스천에서만
@@ -372,7 +375,18 @@ aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> 
 
 **Terraform 코드 밖에 있는 상태는 destroy/apply에서 살아남지 못합니다.** apply 성공 후 아래를 순서대로 확인하세요.
 
-- [ ] **ArgoCD PAT 주입** — **가장 먼저.** 안 하면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3). Terraform은 값이 빈 Secret 컨테이너만 만들고 값은 사람이 넣습니다
+- [ ] **ArgoCD PAT 주입** — **가장 먼저.** 안 하면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3, 2026-08-05 §4).
+  `recovery_window_in_days = 0`이라 destroy 때 값이 함께 사라지므로 **재구축마다 필요**합니다.
+
+  **권장 — apply 전에 환경변수만 설정하면 자동 주입됩니다** (2026-08-05 §4.3):
+  ```powershell
+  $env:ARGOCD_GIT_PAT = "<GitHub PAT>"
+  terraform apply
+  ```
+  `null_resource.inject_git_pat`이 ExternalSecret CR보다 먼저 값을 넣으므로 첫 동기화에서 바로 붙습니다.
+  값이 이미 있으면 덮어쓰지 않습니다(로테이션은 아래 수동 명령으로).
+
+  수동 주입 / 로테이션:
   ```
   aws secretsmanager put-secret-value --secret-id gochuchamchi/argocd/git-pat --secret-string file://pat.txt --region ap-northeast-2 --profile admin
   del pat.txt
@@ -381,11 +395,23 @@ aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> 
   ```powershell
   kubectl get externalsecret -n argocd     # STATUS=SecretSynced, READY=True 여야 함
   ```
+  이미 CR이 뜬 뒤에 값을 넣었다면 `refreshInterval: 1h` 때문에 최대 1시간 대기합니다 — 즉시 반영하려면:
+  ```powershell
+  kubectl annotate externalsecret gochuchamchi-gitops-repo-creds -n argocd "force-sync=$([int][double]::Parse((Get-Date -UFormat %s)))" --overwrite
+  kubectl annotate application gochuchamchi -n argocd argocd.argoproj.io/refresh=hard --overwrite
+  ```
 - [ ] **파드에서 DNS가 되는지** — NetworkPolicy가 DNS를 막으면 앱이 전부 500입니다 (2026-08-04 §4.4)
   ```powershell
   kubectl -n gochuchamchi exec deploy/gochuchamchi-web -- getent hosts <RDS 엔드포인트>
   ```
-- [ ] **apply 전: 지난 destroy에서 못 지운 리소스를 먼저 import** — AWS에 남아 있는데 state에 없으면 `BucketAlreadyOwnedByYou` / `Limit exceeded`로 apply가 막힙니다 (2026-08-04 §5.1, §5.6). import 후 **반드시 `plan`으로 재생성 계획이 없는지 확인**
+- [ ] **apply 전: 지난 destroy에서 못 지운 리소스를 먼저 import** — AWS에 남아 있는데 state에 없으면 `BucketAlreadyOwnedByYou` / `Limit exceeded`로 apply가 막힙니다 (2026-08-04 §5.1, §5.6 / 2026-08-05 §2.1). import 후 **반드시 `plan`으로 재생성 계획이 없는지 확인**
+
+  **이 점검은 스크립트로 자동화돼 있습니다** (2026-08-05 §5) — plan이 생성하겠다고 한 것 중
+  AWS에 이미 있는 것을 찾아 import 명령을 출력합니다. 아래 수동 절차보다 이걸 먼저 돌리세요:
+  ```powershell
+  .\scripts\preflight-check.ps1          # 충돌이 있으면 종료코드 1 + import 명령 출력
+  .\scripts\preflight-check.ps1 -Fix     # import까지 자동 실행
+  ```
   ```powershell
   # Object Lock 때문에 남은 로그 아카이브 버킷 (2026-09-02까지 삭제 불가)
   terraform import aws_s3_bucket.cloudwatch_log_archive gochuchamchi-cloudwatch-log-archive-307223751140

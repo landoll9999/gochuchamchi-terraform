@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   apply 후 스모크 테스트  (2026-08-04 자동화 2/3)
 
@@ -156,7 +156,8 @@ if ($hasKubectl) {
           $bad += "$($p.metadata.name): $($p.status.phase) $($waiting -join ',')"
         }
         elseif ($restarts -ge 5) {
-          $bad += "$($p.metadata.name): 재시작 $restarts회"
+          # $restarts회 로 쓰면 "회"까지 변수명으로 먹혀 값이 사라진다 — $() 로 끊을 것
+          $bad += "$($p.metadata.name): 재시작 $($restarts)회"
         }
       }
       if ($bad.Count -eq 0) {
@@ -239,9 +240,28 @@ if ($hasKubectl -and $appPod) {
     if (-not $t.h) { Add-Result "9. TCP $($t.n)" 'SKIP' '엔드포인트 미확인'; continue }
     $probe = "timeout 5 bash -c 'exec 3<>/dev/tcp/$($t.h)/$($t.p)' && echo OPEN"
     $r = Invoke-Cli 'kubectl' @('-n', $ns, 'exec', $appPod, '--', 'sh', '-c', $probe)
-    if ($r.Out -match 'OPEN') { Add-Result "9. TCP $($t.n)" 'PASS' }
-    elseif ($r.Out -match 'not found') { Add-Result "9. TCP $($t.n)" 'SKIP' '컨테이너에 bash/timeout 없음' }
-    else { Add-Result "9. TCP $($t.n)" 'FAIL' 'SG(참조 규칙) 또는 NetworkPolicy egress 확인' }
+    if ($r.Out -match 'OPEN') { Add-Result "9. TCP $($t.n)" 'PASS'; continue }
+
+    # `/dev/tcp`는 bash 전용 기능이라 sh만 있는 이미지(alpine/distroless 계열)에서는
+    # 쓸 수 없다. 이때 나오는 메시지는 'not found'가 아니라
+    # `timeout: failed to run command 'bash': No such file or directory`여서
+    # 예전에는 이게 FAIL로 떨어졌다 — 앱이 멀쩡히 DB에 붙어 있는데도 매번 실패 2건이
+    # 찍혀 경고 피로를 만들었다 (2026-08-05). 도구 부재와 진짜 차단을 구분한다.
+    if ($r.Out -match 'not found|No such file|exit code 127') {
+      # 검사 목적(SG 참조 규칙·NetworkPolicy egress 회귀 감지)은 앱이 실제로 커넥션을
+      # 맺었는지로 대신 확인할 수 있다. RDS는 HikariPool 로그가 확정적인 증거다.
+      if ($t.n -like 'RDS*') {
+        $lg = Invoke-Cli 'kubectl' @('logs', '-n', $ns, $appPod, '--tail=500')
+        if ($lg.Out -match 'HikariPool-\d+ - Added connection') {
+          Add-Result "9. TCP $($t.n)" 'PASS' '컨테이너에 bash 없음 — 앱 로그의 HikariPool 커넥션으로 확인'
+          continue
+        }
+      }
+      Add-Result "9. TCP $($t.n)" 'SKIP' '컨테이너에 bash 없음 (/dev/tcp는 bash 전용) — 도달성 미확인'
+      continue
+    }
+
+    Add-Result "9. TCP $($t.n)" 'FAIL' 'SG(참조 규칙) 또는 NetworkPolicy egress 확인'
   }
 }
 

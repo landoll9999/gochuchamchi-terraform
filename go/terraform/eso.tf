@@ -32,6 +32,64 @@ resource "aws_secretsmanager_secret" "argocd_git_pat" {
   recovery_window_in_days = 0
 }
 
+# ---------------------------------------------------------------------------
+# PAT 자동 주입 (2026-08-05)
+#
+# 왜 만드나 — 위 시크릿은 recovery_window_in_days = 0이라 destroy 때 즉시 삭제되고,
+# 안에 넣어둔 PAT 값도 함께 사라진다. 재구축하면 빈 컨테이너만 생기므로 사람이 값을
+# 다시 넣기 전까지 ESO -> ArgoCD -> 앱 배포가 통째로 멈추고 사이트가 503
+# ("Backend service does not exist")이 된다. 2026-08-05 재구축에서 실제로 이 상태였고,
+# "apply는 성공했는데 서비스는 죽어 있는" 이 프로젝트의 대표적 실패 유형에 해당한다.
+#
+# 값은 여전히 Terraform을 거치지 않는다 — 환경변수를 local-exec 안에서 셸이 직접
+# 읽으므로 terraform 변수에도, state에도, plan 출력에도 PAT가 들어가지 않는다.
+# ESO 도입 취지(백로그 B3: state에 secret_string을 남기지 않는다)를 그대로 지키면서
+# 수동 단계만 없앤다. TF_VAR_로 받으면 state에 평문이 남으므로 그 방식은 쓰지 않는다.
+#
+# 사용법 — apply 전에 셸에서 한 번:
+#   $env:ARGOCD_GIT_PAT = "<GitHub PAT>"
+# 환경변수가 없으면 조용히 건너뛴다(기존처럼 CLI로 직접 주입해도 된다).
+#
+# 이미 값이 있으면 덮어쓰지 않는다 — 로테이션은 "의도한 사람이 명시적으로" 해야 하는
+# 작업이라 자동화 대상에서 뺐다. 낡은 환경변수가 세션에 남아 있다가 운영 중인 PAT를
+# 조용히 옛 값으로 되돌리는 사고를 막기 위함이다.
+# ---------------------------------------------------------------------------
+resource "null_resource" "inject_git_pat" {
+  triggers = {
+    # 시크릿이 재생성되면 ARN 끝의 랜덤 접미사가 바뀐다 -> 재구축마다 다시 주입된다
+    secret_arn = aws_secretsmanager_secret.argocd_git_pat.arn
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-ExecutionPolicy", "Bypass", "-Command"]
+    command     = <<-EOT
+      $secretId = '${aws_secretsmanager_secret.argocd_git_pat.name}'
+      $region   = '${var.region}'
+      $profile  = '${var.aws_profile}'
+
+      if (-not $env:ARGOCD_GIT_PAT) {
+        Write-Host "ARGOCD_GIT_PAT 환경변수가 없습니다 — PAT 자동 주입을 건너뜁니다."
+        Write-Host "  값을 넣기 전까지 ArgoCD가 GitOps 저장소에 붙지 못해 앱이 배포되지 않습니다(503)."
+        Write-Host "  수동 주입: aws secretsmanager put-secret-value --secret-id $secretId --secret-string '<PAT>' --region $region --profile $profile"
+        exit 0
+      }
+
+      # 값(AWSCURRENT 버전)이 이미 있으면 건드리지 않는다.
+      # 컨테이너만 있고 버전이 없으면 ResourceNotFoundException이 난다 — 그게 "빈 상태"의 신호다.
+      $null = aws secretsmanager get-secret-value --secret-id $secretId --region $region --profile $profile 2>$null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "PAT 값이 이미 있습니다 — 자동 주입을 건너뜁니다(로테이션은 수동)."
+        exit 0
+      }
+
+      $null = aws secretsmanager put-secret-value --secret-id $secretId --secret-string "$env:ARGOCD_GIT_PAT" --region $region --profile $profile
+      if ($LASTEXITCODE -ne 0) { Write-Error "PAT 주입 실패 — 자격증명/권한을 확인하세요."; exit 1 }
+      Write-Host "PAT 주입 완료 (길이 $($env:ARGOCD_GIT_PAT.Length)) — ESO가 클러스터로 동기화합니다."
+    EOT
+  }
+}
+
+
 # ESO 컨트롤러가 이 스택의 시크릿"만" 읽도록 정확한 ARN으로 제한
 # (iamRole.tf에서 rds!* 와일드카드를 걷어낸 것과 같은 원칙)
 module "eso_pod_identity" {
@@ -87,8 +145,12 @@ resource "helm_release" "eso_config" {
   chart     = "${path.module}/charts/eso-config"
   namespace = "external-secrets"
 
-  # CRD·webhook은 external_secrets 차트가, 대상 네임스페이스(argocd)는 argocd 차트가 만듦
-  depends_on = [helm_release.external_secrets, helm_release.argocd]
+  # CRD·webhook은 external_secrets 차트가, 대상 네임스페이스(argocd)는 argocd 차트가 만듦.
+  # inject_git_pat을 앞에 두는 이유 — ExternalSecret CR이 배포되는 시점에 값이 이미
+  # 있어야 "첫 동기화"에서 바로 성공한다. 값이 없는 채로 CR이 뜨면 SecretSyncedError로
+  # 떨어지고, refreshInterval이 1h이라 나중에 값을 넣어도 최대 1시간을 기다리게 된다
+  # (2026-08-05에 force-sync 어노테이션으로 수동 재촉해야 했던 이유).
+  depends_on = [helm_release.external_secrets, helm_release.argocd, null_resource.inject_git_pat]
 
   values = [
     yamlencode({
@@ -102,5 +164,5 @@ resource "helm_release" "eso_config" {
 
 output "argocd_git_pat_inject_command" {
   value       = "aws secretsmanager put-secret-value --secret-id ${aws_secretsmanager_secret.argocd_git_pat.name} --secret-string '<GitHub PAT>' --region ${var.region} --profile ${var.aws_profile}"
-  description = "PAT 주입/로테이션 명령 (최초 1회 필수). ESO가 1시간 주기 + 에러 재시도로 동기화함"
+  description = "PAT 수동 주입/로테이션 명령. 재구축 시 자동 주입을 쓰려면 apply 전에 $env:ARGOCD_GIT_PAT를 설정할 것 (null_resource.inject_git_pat)"
 }
