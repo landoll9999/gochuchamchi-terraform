@@ -1,9 +1,0 @@
-# 텍스트 파일은 저장소에 항상 LF로 정규화 (CRLF 워킹트리 노이즈 방지)
-# - core.autocrlf 개인 설정과 무관하게 저장소 기준을 고정한다
-# - 2026-08-05: autocrlf=true + .gitattributes 부재로 전 파일이 항상 M으로
-#   표시되던 문제를 renormalize와 함께 해결
-* text=auto
-
-# 바이너리는 절대 변환하지 않음
-*.png binary
-*.zip binary
