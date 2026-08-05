@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>트러블슈팅 종합 (post-mortem) — 2026-08-04</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 15px; margin: 20px 0 6px; color: var(--accent); }
+  p { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .lesson { background: var(--ok-soft); border-left: 4px solid var(--ok); border-radius: 0 8px 8px 0;
+            padding: 10px 16px; margin: 12px 0 6px; font-size: 14px; }
+  .lesson::before { content: "교훈 — "; font-weight: 700; color: var(--ok); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  a { color: var(--accent); }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>트러블슈팅 종합 — 8/4 post-mortem</h1>
+  <div class="meta">작성일 2026-08-04 · gochuchamchi EKS · 하루치 사고 전체의 색인 + 사후 분석 ·
+  상세: <code>2026-08-04.md</code> §4(장애 5건), <code>2026-08-04-incident-and-review.md</code>(재점검·복원)</div>
+</header>
+
+<h2>빠른 색인 — 증상으로 찾기</h2>
+<table>
+  <tr><th>증상</th><th style="width:14%">섹션</th></tr>
+  <tr><td>사이트 정적 페이지는 뜨는데 DB 기능만 전부 500</td><td><a href="#s1">§1</a></td></tr>
+  <tr><td>파드가 <code>CreateContainerConfigError</code>로 못 뜸</td><td><a href="#s1">§1</a></td></tr>
+  <tr><td>이 컴퓨터에서 terraform/kubectl이 아예 안 됨</td><td><a href="#s2">§2</a></td></tr>
+  <tr><td>예전에 만든 리소스(CloudFront/WAF 등)가 사라짐</td><td><a href="#s3">§3</a></td></tr>
+  <tr><td>plan에 RDS/EFS/로그버킷 replace가 뜸</td><td><a href="#s4">§4</a></td></tr>
+  <tr><td><code>Limit exceeded on dimensional spend monitor creation</code></td><td><a href="#s5">§5</a></td></tr>
+  <tr><td><code>aws_inspector2_enabler</code> 5분 타임아웃</td><td><a href="#s6">§6</a></td></tr>
+  <tr><td>git에 충돌 마커/불필요 파일이 커밋됨</td><td><a href="#s7">§7</a></td></tr>
+</table>
+
+<h2 id="s1">§1. DB 전면 500 — "반쪽 배포"</h2>
+<p><strong>증상:</strong> 정적 페이지 정상, DB를 타는 요청은 전부 500 (<code>/api/health</code> 500).
+새 파드는 <code>CreateContainerConfigError</code>, 고장난 옛 파드가 계속 서빙.</p>
+<p><strong>근본 원인:</strong> 제로트러스트 전환은 terraform apply와 gitops 수정이 <strong>한 세트</strong>인데
+gitops 쪽이 누락된 채 apply만 실행됨 — 이중 잠김 상태.</p>
+<div class="flow">
+  <div class="lane">
+    <span class="node">기존 파드<br><small>admin + 평문</small></span><span class="arrow">→</span>
+    <span class="node bad">require_secure_transport=1<br><small>평문 거부</small></span><span class="arrow">→</span>
+    <span class="node bad">500</span>
+    <span class="arrow" style="margin-left:20px">·</span>
+    <span class="node">새 파드</span><span class="arrow">→</span>
+    <span class="node bad">삭제된 Secret 참조<br><small>시작 불가</small></span>
+  </div>
+</div>
+<p><strong>해결:</strong> gitops secret 이름 교체 + redis secret 추가 + 연쇄 발견 4건(kubectl
+KUBECONFIG, helm 주석 <code>{{ }}</code>, PAT 주입, NetworkPolicy DNS) — 상세 <code>2026-08-04.md</code> §4.1~4.5.
+<strong>검증:</strong> <code>/api/health</code> 500 → 302, 메인 200.</p>
+<div class="lesson">terraform 변경과 gitops 변경이 결합된 작업은 한 PR/한 사람이 원자적으로.
+"고쳤는데 그대로"면 같은 증상의 <strong>다른 원인</strong>을 의심할 것 (500의 원인이 5겹이었다).</div>
+
+<h2 id="s2">§2. 진단 환경 제약 — 컴퓨터별 계정/자격증명 분리</h2>
+<p><strong>증상:</strong> 이 컴퓨터에서 인프라 조회·수정 불가.
+<strong>원인:</strong> 인프라·tfstate는 <code>admin</code> 프로파일 계정(옆컴퓨터에만 있음),
+이 컴퓨터의 <code>terra-user</code>는 <strong>다른 계정</strong> 소속. gitops 저장소도 비공개.</p>
+<p><strong>대응:</strong> 코드·문서 기반 추론 + 외부 검증 신호 — <code>curl</code>(HTTP 상태),
+<code>Resolve-DnsName</code>(CloudFront 경유 여부), git 이력. 실행 조치는 전부 "옆컴퓨터에서 실행할 명령"으로 산출.</p>
+<div class="lesson">권한 없는 환경에서도 진단은 가능하다. 단 결론에 "확인한 것"과 "추정인 것"을 구분해 표기할 것.</div>
+
+<h2 id="s3">§3. full-HA 13개 파일 소실 — 폴더 복사 버전 관리의 대가</h2>
+<p><strong>증상:</strong> CloudFront/WAF가 계정에서 사라짐. 코드에도 없음.</p>
+<div class="flow">
+  <div class="lane-title">타임라인</div>
+  <div class="lane">
+    <span class="node">~8/3 오전<br><small>fin 라인: full-HA 13개 파일</small></span><span class="arrow">→</span>
+    <span class="node bad">8/4 10:53 first commit<br><small>13개 파일 없는 구버전 베이스</small></span><span class="arrow">→</span>
+    <span class="node bad">같은 tfstate에 apply<br><small>= state 잔여 리소스 삭제</small></span><span class="arrow">→</span>
+    <span class="node neutral">CloudFront/WAF 소멸</span>
+  </div>
+</div>
+<p>7/31에도 같은 유형("11개 수정 흔적 복원 불가") — git 없이 <code>fin</code>/<code>찐막</code>/<code>go(final)</code>
+폴더 복사로 버전 관리한 구조적 결과.</p>
+<p><strong>해결:</strong> <code>fin</code> 사본에서 복원 + 8/4 제로트러스트와 3-way 병합
+(<code>terraform validate</code> 통과). 병합 원칙:</p>
+<div class="grid2">
+  <div class="card">
+    <h4>8/4 코드 우선 (복원 안 함)</h4>
+    <ul>
+      <li>key_name (B2로 제거), argocd_git_pat (B3 ESO)</li>
+      <li>배스천 ClusterAdmin → 네임스페이스 Edit 유지</li>
+      <li>DB 마스터 접속·구 elasticache — 제로트러스트 유지</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>대체·버그로 제외</h4>
+    <ul>
+      <li>network-policies → 8/4 <code>k8s-network-policies.tf</code>가 대체</li>
+      <li>sns-alerts → SNS 허브(§8)가 상위 호환</li>
+      <li>github-oidc → <code>ecr.tf</code> OIDC와 중복 (같은 URL provider는 계정당 1개 — fin 자체 버그)</li>
+    </ul>
+  </div>
+</div>
+<div class="callout warn"><strong>후속:</strong> 복원 커밋 이후 <code>waf-cdn.tf</code>(611줄, edge.tf와 역할 중복)가
+추가 커밋됐다가 origin <code>753f4f5</code>에서 삭제되고 <code>edge-logs.tf</code>로 재구성됨 →
+<strong>apply 전 반드시 <code>git pull</code></strong> (중복 CloudFront/WAF 생성 방지).</div>
+<div class="lesson">라인이 여러 갈래면 파일 몇 개의 존재/시각으로 최신을 판단하지 말고 <strong>전 파일 diff로
+각 라인의 고유 변경을 식별</strong>해 병합할 것. tfstate를 공유하는 코드가 두 벌이면,
+뒤처진 쪽의 apply는 곧 <strong>삭제 명령</strong>이 된다.</div>
+
+<h2 id="s4">§4. 병합 시 파괴적 변경 식별 — plan에 replace가 뜨면 중단</h2>
+<table>
+  <tr><th>항목</th><th>적용 시 결과</th><th>처리</th></tr>
+  <tr><td>RDS <code>kms_key_id</code> (CMK 전환)</td><td>인스턴스 교체 → DB 데이터 소실</td><td><span class="badge todo">보류</span> fin 스스로 경고했던 항목</td></tr>
+  <tr><td>EFS <code>kms_key_id</code></td><td>파일시스템 교체 → 파일 소실</td><td><span class="badge todo">보류</span> efs.tf에 주석으로 위치 표시</td></tr>
+  <tr><td>로그 버킷 <code>object_lock_enabled</code></td><td>버킷 교체 (생성 시점에만 설정 가능)</td><td><span class="badge todo">보류</span> 대신 DenyObjectDeletion/DenyPolicyTampering으로 차선 방어</td></tr>
+</table>
+<p><strong>검사법:</strong> apply 전 plan에서 <code>must be replaced</code>를 반드시 훑는다.
+RDS·EFS·로그 버킷에 replace가 보이면 보류 항목이 새어 들어간 것 → 중단.</p>
+<div class="lesson">"보안 강화 설정"이라도 기존 스택에는 파괴적일 수 있다. 재생성 유발 속성(암호화 키,
+object lock, 서브넷)은 <strong>재구축 사이클에 모아서</strong> 반영한다.</div>
+
+<h2 id="s5">§5. Cost Anomaly Monitor 거부 — AWS 선점 리소스와 한도 충돌</h2>
+<p><strong>증상:</strong> <code>Limit exceeded on dimensional spend monitor creation</code> (400).</p>
+<p><strong>원인:</strong> Cost Explorer 최초 활성화 때 AWS가 <code>Default-Services-Monitor</code>
+(DIMENSIONAL/SERVICE)를 <strong>자동 생성</strong>해 두는데, 이 타입은 <strong>계정당 1개 한도</strong> —
+복원된 <code>cost-monitoring.tf</code>가 두 번째를 만들려다 거부.</p>
+<p><strong>해결:</strong> 새로 만들지 않고 기존 것을 import 후 이름만 in-place 변경 (재생성 없음):</p>
+<pre><code>aws ce get-anomaly-monitors --profile admin --region us-east-1 `
+  --query "AnomalyMonitors[?MonitorType=='DIMENSIONAL'].MonitorArn" --output text
+terraform import aws_ce_anomaly_monitor.services "&lt;ARN&gt;"</code></pre>
+<div class="lesson">"계정당 N개" 한도 리소스는 <strong>AWS가 선점해뒀을 가능성</strong>을 list API로 먼저 확인.
+콘솔을 한 번 연 것만으로 생기는 리소스들이 있다.</div>
+
+<h2 id="s6">§6. Inspector2 타임아웃 — 성공이 실패로 기록됨</h2>
+<p><strong>증상:</strong> <code>aws_inspector2_enabler</code> create 5분 타임아웃, 재시도해도 반복.</p>
+<div class="flow">
+  <div class="lane">
+    <span class="node">활성화 요청</span><span class="arrow">→</span>
+    <span class="node bad">5분 타임아웃<br><small>state: tainted</small></span><span class="arrow">→</span>
+    <span class="node good">AWS는 계속 진행<br><small>결국 ENABLED</small></span>
+  </div>
+  <div class="lane">
+    <span class="arrow">다음 apply →</span>
+    <span class="node bad">tainted라 destroy<br><small>= Inspector 비활성화</small></span><span class="arrow">→</span>
+    <span class="node bad">재생성 → 같은 타임아웃</span>
+    <span class="arrow">= 무한 루프</span>
+  </div>
+</div>
+<p><strong>해결:</strong> 실제 상태 조회 → 성공 확인 → untaint + 타임아웃 연장:</p>
+<pre><code>aws inspector2 batch-get-account-status --profile admin   <span class="cmt"># ec2/ecr ENABLED 확인</span>
+terraform untaint aws_inspector2_enabler.this             <span class="cmt"># destroy 루프 차단</span>
+<span class="cmt"># + ecr.tf: timeouts { create = "15m" } (재구축 대비)</span></code></pre>
+<div class="lesson">타임아웃 실패는 "실제 실패"와 "관측 실패"를 구분하라. 8/3 "실패를 삼키는 프로비저너"
+(실패→성공으로 기록)의 정반대 사례(성공→실패로 기록) — 양쪽 다
+<strong>terraform의 기록과 실제 상태는 다를 수 있다</strong>는 같은 교훈.</div>
+
+<h2 id="s7">§7. git 위생 — 커밋되면 안 되는 것들이 커밋됨</h2>
+<ul style="font-size:14px">
+  <li><strong><code>.gitignore</code>에 stash 충돌 마커가 미해결 채 커밋</strong> — 마커 줄은 무의미한
+  패턴으로 취급돼 우연히 동작 중이나 정리 필요. upstream 개선(<code>**/.claude/settings.local.json</code>만
+  제외해 skills 공유 가능)과 terraform 규칙 블록을 병합하면 됨</li>
+  <li><strong><code>cloudwatch-discord.zip</code>(빌드 산출물) 추적 중</strong> — <code>git rm --cached</code> 필요</li>
+  <li><span class="badge done">정정</span> 초기 리뷰의 ".gitignore 사실상 비어 있음" 판정은
+  <code>go/.gitignore</code> 미확인 오판 — 실제 갭은 <code>*.tfvars</code> 부재와 zip 추적뿐, 조치 완료</li>
+</ul>
+<div class="lesson">stash/pull 충돌은 그 자리에서 해결하고 커밋. 점검 시 <strong>중첩 .gitignore</strong>까지 확인.</div>
+
+<h2 id="s8">§8. (개선) 알림 파이프라인 SPOF 제거 — SNS 허브</h2>
+<div class="flow">
+  <div class="lane">
+    <span class="node">EventBridge</span><span class="arrow">→</span>
+    <span class="node good">SNS 허브</span><span class="arrow">→</span>
+    <span class="node">Lambda → Discord</span>
+    <span class="arrow">·</span>
+    <span class="node good">이메일</span>
+    <span class="arrow" style="margin-left:12px">실패 시 →</span>
+    <span class="node bad">SQS DLQ</span><span class="arrow">→</span>
+    <span class="node good">DLQ 알람<br><small>자기 감시</small></span>
+  </div>
+</div>
+<p style="font-size:14px">직결 구조의 유실 위험 제거. DLQ 알람이 <code>gochuchamchi-</code> prefix라 기존 룰에 자동
+포착 — Discord가 죽어도 이메일로 "파이프라인 고장" 통보. apply 후 확인 메일 Confirm(3일 내) 필수.</p>
+
+<h2>남은 작업</h2>
+<table>
+  <tr><th style="width:12%">상태</th><th>작업</th></tr>
+  <tr><td><span class="badge todo">잔여</span></td><td><code>.gitignore</code> 충돌 마커 정리 + zip <code>git rm --cached</code> (§7)</td></tr>
+  <tr><td><span class="badge todo">잔여</span></td><td>apply 전 <code>git pull</code> — waf-cdn.tf 삭제/edge-logs.tf 반영 (§3)</td></tr>
+  <tr><td><span class="badge todo">잔여</span></td><td>CloudFront 2차 apply(<code>-var enable_edge=true</code>) 후 <code>curl -sI https://gochuchamchi.shop | grep -i via</code></td></tr>
+  <tr><td><span class="badge todo">잔여</span></td><td>MTU 1492 (8/3 잔여)</td></tr>
+  <tr><td><span class="badge new">재구축 시</span></td><td>RDS/EFS CMK + 로그 버킷 Object Lock (§4)</td></tr>
+  <tr><td><span class="badge new">백로그</span></td><td>이미지 태그 자동화 — CI가 gitops 태그 직접 커밋 → write PAT read-only 강등</td></tr>
+</table>
+
+<footer>
+  gochuchamchi 3차 프로젝트 · 마크다운 원본: <code>2026-08-04-트러블슈팅-종합.md</code> ·
+  관련: <code>2026-08-04.md</code> §4 · <code>2026-08-04-incident-and-review.md</code> · <code>2026-08-04-automation.md</code>
+</footer>
+
+</div>
+</body>
+</html>

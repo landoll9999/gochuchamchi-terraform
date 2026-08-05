@@ -1,0 +1,135 @@
+# =============================================================================
+# gochuchamchi-spring CI/CD — SHA 태그 빌드 + gitops 태그 커밋  (2026-08-04)
+#
+# ⚠ 이 파일은 gochuchamchi-spring 저장소의 .github/workflows/ 에 넣는 파일이다.
+#   (terraform 저장소가 아님 — docs/CICD_SETUP.md의 전환 절차를 먼저 읽을 것)
+#
+# 무엇이 바뀌나
+#   기존:  CI가 :latest 덮어쓰기 -> ArgoCD Image Updater가 폴링 감지
+#          -> 클러스터가 쥔 "write PAT"로 gitops에 커밋
+#   이후:  CI가 :<git SHA> 푸시 -> CI가 직접 gitops에 태그 커밋 -> ArgoCD sync
+#
+# 왜 바꾸나 (한 번에 풀리는 것들)
+#   1) 롤백 가능      — 어떤 커밋이 어떤 이미지인지 1:1. 롤백 = gitops git revert
+#   2) ECR IMMUTABLE  — 태그를 덮어쓸 일이 없어져 백로그 항목 해소
+#   3) PAT 강등       — write 권한은 GitHub Actions 시크릿으로 이동하고,
+#                       클러스터(ESO가 동기화하는 PAT)는 read-only로 재발급 가능.
+#                       감사보고서의 "최고가치 시크릿"(state 접근 = 배포 권한)이
+#                       "읽기 전용"으로 격하된다
+#   4) Image Updater 제거 — 폴링 컴포넌트/추측 로직이 사라짐
+#
+# 필요한 사전 설정 (CICD_SETUP.md §2)
+#   - 저장소 Secrets에 GITOPS_PAT: gochuchamchi-gitops 한정 fine-grained PAT,
+#     Contents: Read and write. (클러스터에 넣는 PAT와 별개 — 이건 GitHub에만 존재)
+#   - AWS 쪽은 추가 설정 없음: terraform ecr.tf의 OIDC 역할
+#     (gochuchamchi-github-actions-ecr-push)이 main 브랜치 push만 assume 허용하도록
+#     이미 만들어져 있고, 이 워크플로가 그 조건과 정확히 일치한다.
+# =============================================================================
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  # ECR이 비었을 때(재구축 후) 수동으로 다시 채우는 용도 — 8/3 "빈 ECR 503" 대응
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC 토큰 발급 (액세스키 없이 AWS assume)
+  contents: read
+
+concurrency:
+  group: build-and-deploy
+  cancel-in-progress: false # 배포는 중간에 끊지 않는다 (이미지만 푸시되고 gitops 커밋 누락되는 반쪽 상태 방지)
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 307223751140.dkr.ecr.ap-northeast-2.amazonaws.com
+  ECR_REPO: gochuchamchi
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- 테스트 ----------------------------------------------------------
+      # Gradle 기준. Maven이면 아래 두 스텝을 mvn 버전으로 교체:
+      #   run: ./mvnw -B test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17" # 앱의 실제 Java 버전에 맞출 것
+          cache: gradle
+
+      - name: 테스트
+        run: ./gradlew test --no-daemon
+        # 테스트가 아직 없거나 깨져 있으면 임시로 주석 처리하되,
+        # "테스트 없이 배포되는 파이프라인"은 반쪽이므로 빨리 복구할 것
+
+      # ---- 이미지 빌드/푸시 -------------------------------------------------
+      - name: AWS 자격증명 (OIDC — 액세스키 없음)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::307223751140:role/gochuchamchi-github-actions-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR 로그인
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 태그 결정
+        id: meta
+        # SHA 7자리 + 날짜 — 사람이 봐도 언제 빌드인지 보이게.
+        # 예: 20260804-a1b2c3d
+        run: echo "tag=$(date +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: 빌드 & 푸시
+        run: |
+          IMAGE="${ECR_REGISTRY}/${ECR_REPO}"
+          TAG="${{ steps.meta.outputs.tag }}"
+
+          docker build -t "${IMAGE}:${TAG}" .
+
+          # [전환기 한정] latest도 같이 푸시 — 아직 Image Updater가 살아 있는 동안
+          # 기존 경로가 깨지지 않게 하는 안전장치. CICD_SETUP.md §4의 컷오버가
+          # 끝나면(kustomize 전환 + Image Updater 제거) 아래 두 줄을 삭제하고,
+          # 그 다음에 ECR을 IMMUTABLE로 전환한다 (latest 재푸시가 있는 동안은
+          # IMMUTABLE 전환 불가 — 순서 주의).
+          docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
+          docker push "${IMAGE}:latest"
+
+          docker push "${IMAGE}:${TAG}"
+
+  deploy:
+    # 이미지 푸시 성공 후에만 gitops 커밋 — 실패 시 "gitops는 새 태그인데 ECR에
+    # 이미지가 없는" 상태(ImagePullBackOff)를 만들지 않기 위한 순서
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: gitops 저장소 checkout
+        uses: actions/checkout@v4
+        with:
+          repository: landoll9999/gochuchamchi-gitops
+          token: ${{ secrets.GITOPS_PAT }}
+
+      - name: 이미지 태그 갱신 (kustomize)
+        run: |
+          # kustomization.yaml의 images: 항목을 새 태그로 교체.
+          # 매니페스트 YAML 본문은 건드리지 않는다 — 이미지 "무엇을"은 여기(CI)가,
+          # "어떻게 뜨는지"는 매니페스트가 관리한다는 역할 분리.
+          kustomize edit set image \
+            "307223751140.dkr.ecr.ap-northeast-2.amazonaws.com/gochuchamchi=307223751140.dkr.ecr.ap-northeast-2.amazonaws.com/gochuchamchi:${{ needs.build-push.outputs.image_tag }}"
+
+          echo "--- 변경 확인 ---"
+          git diff
+
+      - name: 커밋 & 푸시
+        run: |
+          git config user.name "gochuchamchi-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add kustomization.yaml
+          # 태그가 그대로면(재실행 등) 커밋할 게 없어도 실패하지 않게
+          git diff --cached --quiet && { echo "변경 없음 — 스킵"; exit 0; }
+          git commit -m "deploy: ${{ needs.build-push.outputs.image_tag }} (${{ github.repository }}@${{ github.sha }})"
+          git push

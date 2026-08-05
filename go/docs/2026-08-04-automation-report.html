@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>배포 파이프라인 자동화 보고서 — 계약 검증 · 스모크 테스트 · 드리프트 감지 (2026-08-04)</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  p { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  .stat { text-align: center; }
+  .stat .n { font-size: 30px; font-weight: 800; color: var(--accent); line-height: 1.2; }
+  .stat .l { font-size: 12.5px; color: var(--sub); }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>배포 파이프라인 자동화 — 계약 검증 · 스모크 테스트 · 드리프트 감지</h1>
+  <div class="meta">작성일 2026-08-04 · gochuchamchi EKS · 같은 날 앞선 작업: 제로트러스트 DB 하드닝(<code>2026-08-04.md</code>), 하드코딩·보안 재점검 + full-HA 복원(<code>2026-08-04-incident-and-review.md</code>)</div>
+</header>
+
+<div class="grid3">
+  <div class="card stat"><div class="n">3</div><div class="l">자동화 도입</div></div>
+  <div class="card stat"><div class="n">12</div><div class="l">자동 검사 항목</div></div>
+  <div class="card stat"><div class="n">5</div><div class="l">재발 방지 대상 장애</div></div>
+</div>
+
+<h2>1. 왜 자동화인가 — 장애 5건의 공통점</h2>
+
+<p>지금까지 겪은 장애를 원인별로 세어보면 결론이 하나로 모인다.</p>
+
+<table>
+  <tr><th style="width:70px">날짜</th><th style="width:180px">장애</th><th>진짜 원인</th></tr>
+  <tr><td>8/3</td><td>회원가입 500</td><td><code>schema.sql</code>이 실행되지 않았는데 프로비저너가 Status를 검사하지 않아 <b>terraform이 성공으로 기록</b></td></tr>
+  <tr><td>8/3</td><td>사이트 503</td><td>ECR이 비어 ImagePullBackOff — <b>apply는 성공</b></td></tr>
+  <tr><td>8/4</td><td>사이트 503</td><td>PAT 미주입으로 ArgoCD가 저장소에 못 붙음 — <b>apply는 성공</b></td></tr>
+  <tr><td>8/4</td><td>앱 전체 500</td><td>NetworkPolicy가 서비스 CIDR을 안 열어 DNS 전면 차단 — <b>apply는 성공</b></td></tr>
+  <tr><td>8/4</td><td>이중 잠김</td><td>terraform은 Secret 이름을 바꿨는데 gitops는 옛 이름 참조 — <b>apply는 성공</b></td></tr>
+</table>
+
+<div class="callout danger">
+  <b>공통점.</b> “terraform apply 성공”이 “서비스 정상”을 전혀 보장하지 않는데, 그 간극을 사람이 매번 손으로 메우고 있었다.
+  8/4 회고에 적어둔 교훈 — <i>“체크리스트가 문서에 있어도 강제 장치가 없으면 누락된다”</i> — 을 코드로 옮기는 것이 이번 작업이다.
+</div>
+
+<h3>자동화 이전 / 이후</h3>
+<div class="flow">
+  <div class="lane-title">이전 — 검증이 전부 사람 몫</div>
+  <div class="lane">
+    <span class="node neutral">terraform apply</span><span class="arrow">→</span>
+    <span class="node good">성공</span><span class="arrow">→</span>
+    <span class="node bad">사람이 runbook 보고 수동 확인(누락 가능)</span><span class="arrow">→</span>
+    <span class="node bad">장애를 사용자가 먼저 발견</span>
+  </div>
+  <div class="lane-title">이후 — 계약 + 자동 검증이 파이프라인 안에</div>
+  <div class="lane">
+    <span class="node neutral">terraform apply</span><span class="arrow">→</span>
+    <span class="node">계약 검증(이름·키)</span><span class="arrow">→</span>
+    <span class="node">스모크 테스트 12종</span><span class="arrow">→</span>
+    <span class="node good">PASS</span>
+    <span class="arrow">/</span>
+    <span class="node bad">FAIL + 다음 행동 출력</span>
+  </div>
+  <div class="lane-title">상시 — Terraform 밖의 변경 감지</div>
+  <div class="lane">
+    <span class="node neutral">콘솔 클릭 / IAM 변경 / 루트 사용</span><span class="arrow">→</span>
+    <span class="node">CloudTrail</span><span class="arrow">→</span>
+    <span class="node">EventBridge 룰 3종</span><span class="arrow">→</span>
+    <span class="node">SNS 허브</span><span class="arrow">→</span>
+    <span class="node good">Discord + 이메일</span>
+  </div>
+</div>
+
+<h2>2. 자동화 ① 배포 계약 (Deployment Contract)</h2>
+
+<p><span class="badge new">신규</span><code>terraform/contract.tf</code> · <code>scripts/verify-contract.ps1</code></p>
+
+<p>terraform이 만드는 Secret/ConfigMap 이름과 gitops가 참조하는 이름은 <b>두 저장소 사이의 인터페이스</b>인데,
+지금까지 어디에도 명시돼 있지 않았다. 그래서 한쪽만 바꿔도 아무도 못 막았다.
+이제 <code>output "deployment_contract"</code> 하나가 그 계약서 역할을 한다.</p>
+
+<table>
+  <tr><th style="width:200px">계약 항목</th><th>어긋나면 생기는 일</th></tr>
+  <tr><td>ConfigMap 이름·키</td><td>앱이 DB 호스트/유저를 못 받음 → 기동 실패</td></tr>
+  <tr><td>Secret 이름·키</td><td>새 파드가 <code>CreateContainerConfigError</code>로 못 뜸 (8/4 장애)</td></tr>
+  <tr><td><code>forbidden_refs</code><br>(삭제된 이름)</td><td>옛 문서를 보고 <code>gochuchamchi-db-secret</code>을 되살리는 것을 차단</td></tr>
+  <tr><td>Service 이름/포트</td><td>Ingress 백엔드가 안 잡혀 ALB 타겟 미등록 → 503</td></tr>
+  <tr><td>파드 라벨</td><td>NetworkPolicy가 아무 파드에도 안 걸리고 default-deny만 남아 앱 전체 차단</td></tr>
+</table>
+
+<div class="callout warn">
+  <b>계약에 값(비밀)은 절대 넣지 않는다.</b> 넣는 순간 output이 tfstate·CLI에 그대로 노출되어
+  <code>db-zero-trust.tf</code>/<code>eso.tf</code>로 없앤 경로가 부활한다.
+  실제로 <code>kubernetes_secret_v1.data</code>는 provider가 sensitive로 표시하므로
+  <code>keys()</code>로 뽑으면 output 자체가 거부된다 — 그래서 Secret의 키는 의도적으로 문자열 리터럴로 적었다.
+</div>
+
+<h3>검증 스크립트가 보는 것</h3>
+<div class="grid2">
+  <div class="card">
+    <h4>정적 — gitops YAML</h4>
+    <ul>
+      <li>참조 이름이 계약에 없으면 <b>FAIL</b></li>
+      <li>삭제된 이름을 참조하면 <b>FAIL</b></li>
+      <li>계약에 있는데 아무도 안 쓰면 WARN</li>
+      <li><code>kustomization.yaml</code>에 등재 안 된 잔재 매니페스트 적발 <span class="badge risk">8/4 §4.5</span></li>
+      <li>Service 이름·파드 라벨 일치</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>라이브 — 클러스터 실측</h4>
+    <ul>
+      <li>Secret/ConfigMap이 실제로 존재하고 키까지 맞는가</li>
+      <li>배포된 Deployment의 참조가 전부 해석되는가</li>
+      <li><code>gochuchamchi-db-app</code>은 배스천이 런타임에 만드는 Secret이라
+          <b>“apply 성공”이 존재를 보장하지 않는다</b> → 실측이 필수</li>
+    </ul>
+  </div>
+</div>
+
+<h2>3. 자동화 ② apply 후 스모크 테스트</h2>
+
+<p><span class="badge new">신규</span><code>terraform/smoke-test.tf</code> · <code>scripts/smoke-test.ps1</code></p>
+
+<p>겪은 장애를 하나씩 검사 항목으로 옮겼다. 각 항목은 실패 시 <b>다음 행동</b>을 함께 출력한다.</p>
+
+<table>
+  <tr><th style="width:40px">#</th><th style="width:240px">검사</th><th>대응 사고 / 실패 시 안내</th></tr>
+  <tr><td>2</td><td>kubectl 컨텍스트가 지금 클러스터인가</td><td>8/3 옛 클러스터 kubeconfig(<code>no such host</code>) → <code>aws eks update-kubeconfig</code> 명령 출력</td></tr>
+  <tr><td>3</td><td>노드 Ready 수</td><td>API 접속 실패 시 <code>endpoint_public_access_cidrs</code>에 현재 IP 확인 안내</td></tr>
+  <tr><td>4</td><td>배포 계약 (위 스크립트 위임)</td><td>8/4 CreateContainerConfigError</td></tr>
+  <tr><td>5</td><td>파드 상태 + waiting reason + 재시작 횟수</td><td>8/3 ImagePullBackOff(빈 ECR) → “앱 CI 재실행” 안내</td></tr>
+  <tr><td>6</td><td>ExternalSecret Ready</td><td>8/4 PAT 미주입 → <code>argocd_git_pat_inject_command</code> 안내</td></tr>
+  <tr><td>7</td><td>ArgoCD Application Synced/Healthy</td><td>GitOps 동기화 실패</td></tr>
+  <tr><td>8</td><td>파드에서 DNS 해석 <code>getent hosts &lt;RDS&gt;</code></td><td>8/4 NetworkPolicy DNS 전면 차단 → 서비스 CIDR 확인 + <code>delete netpol --all</code> 롤백</td></tr>
+  <tr><td>9</td><td>파드에서 3306 / 6379 TCP 도달</td><td>SG(참조 규칙)·netpol egress 회귀</td></tr>
+  <tr><td>10</td><td>Ingress ALB 주소 할당</td><td>LB 컨트롤러 실패</td></tr>
+  <tr><td>11</td><td><code>/</code> 200, <code>/api/health</code> 302</td><td>사용자 관점 최종 확인 (302 = 로그인 리다이렉트 = 정상, 8/4 복구 검증 기준)</td></tr>
+  <tr><td>12</td><td>ALB 타겟 헬스</td><td>파드는 Running인데 타겟이 unhealthy인 구간 — 503의 직접 원인</td></tr>
+</table>
+
+<div class="callout info">
+  <b>기본은 경고 모드다.</b> 재구축 직후에는 PAT 수동 주입 전이라 앱이 안 떠 있는 게 정상이고,
+  여기서 apply를 실패시키면 재구축 자체가 막힌다. 정상 가동 중 변경 apply에서는
+  <code>$env:TF_VAR_smoke_test_enforce = "true"</code>로 올려서
+  <b>“서비스를 깨는 apply는 실패로 기록”</b>되게 하는 것이 목표 상태.
+</div>
+
+<div class="callout warn">
+  <b>왜 계약을 인자로 넘기나.</b> apply 도중에는 state가 아직 확정 전이라,
+  스크립트가 <code>terraform output</code>을 호출하면 옛 값을 읽거나 실패한다.
+  그래서 <code>null_resource</code>가 계약 JSON을 명령 인자로 직접 전달한다(단독 실행 시에만 output 조회).
+</div>
+
+<h2>4. 자동화 ③ 수동 변경(드리프트) 감지</h2>
+
+<p><span class="badge new">신규</span><code>cloudwatch-notifications/drift-detection.tf</code> ·
+<span class="badge done">수정</span><code>sns.tf</code>, <code>lambda_function.py</code></p>
+
+<table>
+  <tr><th style="width:230px">룰</th><th>무엇을 잡나 / 노이즈 대책</th></tr>
+  <tr>
+    <td><code>gochuchamchi-console-mutation</code></td>
+    <td>CloudTrail의 <code>sessionCredentialFromConsole=true</code> + <code>readOnly=false</code> —
+      <b>사람이 브라우저에서 클릭한 변경만</b>. Terraform·CLI·클러스터 컨트롤러(ALB controller, ExternalDNS)는
+      이 필드가 없어 자동으로 걸러지므로 제외 목록 없이도 노이즈가 거의 없다.</td>
+  </tr>
+  <tr>
+    <td><code>gochuchamchi-iam-mutation</code></td>
+    <td><code>aws.iam</code> 비읽기 호출 중 <b>Terraform 실행 주체를 제외</b>한 전부
+      (<code>anything-but</code> + <code>data.aws_caller_identity.current.arn</code>).
+      제외하지 않으면 apply마다 수십 건이 울린다.</td>
+  </tr>
+  <tr>
+    <td><code>gochuchamchi-root-activity</code></td>
+    <td>루트 계정 사용(로그인 포함). MFA 강제 그룹으로도 통제 못 하는 유일한 주체라,
+      쓰였다는 사실 자체가 신호.</td>
+  </tr>
+</table>
+
+<h3>왜 <code>terraform plan</code> 방식이 아닌가 — 트레이드오프</h3>
+
+<p>정석은 “하루 1회 <code>plan -detailed-exitcode</code> → 종료코드 2면 알림”이다.
+그런데 이 스택은 <code>kubernetes</code>/<code>helm</code> 프로바이더를 쓰고 EKS 퍼블릭 엔드포인트가
+<code>/32</code> 허용목록으로 잠겨 있어, GitHub 호스티드 러너에서는 <b>plan이 refresh 단계에서 타임아웃</b>난다.
+즉 plan 방식은 self-hosted runner 결정이 선행돼야 한다.</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>plan 기반 (미도입)</h4>
+    <ul>
+      <li>모든 드리프트를 잡음</li>
+      <li>러너 인프라 필요, 사후 감지(최대 1일 지연)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>이벤트 기반 (이번 도입)</h4>
+    <ul>
+      <li>콘솔 변경을 <b>즉시</b> 감지, 비용 0, 러너 불필요</li>
+      <li>CLI/SDK로 낸 수동 변경은 못 잡음</li>
+    </ul>
+  </div>
+</div>
+<p>두 방식은 대체재가 아니라 <b>보완재</b>다. 러너가 생기면 plan 룰을 추가로 붙인다.</p>
+
+<div class="callout warn">
+  <b>함정 2개를 주석으로 남겼다.</b><br>
+  ① SNS 토픽 정책의 <code>ArnEquals</code>에 새 룰 ARN을 등록하지 않으면 발행이 조용히 거부된다 —
+  룰 지표는 정상(TriggeredRules 증가)인데 알림만 안 오는, 원인 찾기 어려운 유형.<br>
+  ② <code>input_transformer</code>로 이메일용 예쁜 문자열을 만들면, 같은 토픽을 구독하는 Lambda가 받는
+  Message가 JSON이 아니게 되어 <code>json.loads</code>에서 터지고 → SNS 재시도 → DLQ로 간다.
+  그래서 원본 JSON을 보내고 <b>사람이 읽는 형태로 바꾸는 일은 Lambda가 담당</b>한다.
+</div>
+
+<h2>5. 검증 결과</h2>
+
+<p>이 세션에서 실제로 실행한 검증:</p>
+
+<table>
+  <tr><th style="width:200px">검증</th><th style="width:70px">결과</th><th>내용</th></tr>
+  <tr><td>HCL 파싱</td><td><span class="badge done">통과</span></td><td>신규·수정 <code>.tf</code> 4개 구문 오류 0건</td></tr>
+  <tr><td>Python 구문</td><td><span class="badge done">통과</span></td><td><code>lambda_function.py</code></td></tr>
+  <tr><td>PowerShell 파서</td><td><span class="badge done">통과</span></td><td>두 스크립트 <code>[Parser]::ParseFile</code> 오류 0건</td></tr>
+  <tr><td>기능 테스트 (정상본)</td><td><span class="badge done">13/13</span></td><td>가짜 gitops + 가짜 <code>kubectl</code>로 end-to-end, 종료코드 0</td></tr>
+  <tr><td>기능 테스트 (8/4 장애 재현)</td><td><span class="badge done">검출</span></td><td>옛 Secret 참조·kustomize 미등재·CreateContainerConfigError·ExternalSecret 미동기 전부 FAIL 검출</td></tr>
+  <tr><td>모드별 종료코드</td><td><span class="badge done">확인</span></td><td>enforce=1 / 경고모드=0 (재구축을 막지 않음)</td></tr>
+</table>
+
+<div class="callout ok">
+  <b>테스트 중 실제 버그 1건 발견·수정.</b> 초기 버전은 <code>&amp; $script @배열</code>(배열 스플래팅)로
+  하위 스크립트를 호출했는데, 요소가 위치 인자로 해석되어 파라미터 바인딩이 깨졌다.
+  해시테이블 스플래팅으로 수정 후 재검증 완료.
+</div>
+
+<h3>로컬에서 해야 할 검증</h3>
+<pre><code><span class="cmt"># 이 세션에선 hashicorp 배포 서버가 막혀 있어 terraform 명령은 로컬에서 실행할 것</span>
+cd go\terraform
+terraform init
+terraform validate
+terraform plan          <span class="cmt"># post_apply_smoke_test가 매번 1개 변경으로 뜨는 게 정상</span>
+
+cd ..\cloudwatch-notifications
+terraform init
+terraform plan          <span class="cmt"># EventBridge 룰 3 + 타겟 3 create, 토픽 정책/Lambda update</span>
+
+<span class="cmt"># apply 후</span>
+go\scripts\verify-contract.ps1 -GitopsPath &lt;gochuchamchi-gitops 경로&gt;
+go\scripts\smoke-test.ps1
+
+<span class="cmt"># 드리프트 감지 실전 테스트: 콘솔에서 SG에 태그 하나 추가 → Discord 알림 확인 → 태그 삭제</span></code></pre>
+
+<h2>6. 알려진 한계</h2>
+
+<table>
+  <tr><th style="width:230px">항목</th><th style="width:280px">한계</th><th>판단</th></tr>
+  <tr><td>스모크 테스트가 매 apply 실행</td><td>plan에 항상 1개 변경으로 뜸</td><td>“코드가 바뀔 때”가 아니라 “인프라를 건드릴 때마다” 돌아야 의미 → 감수</td></tr>
+  <tr><td>경고 모드가 기본</td><td>실패해도 apply 통과</td><td>재구축 시나리오를 막지 않기 위함. 정상 가동 중에는 enforce로 승격</td></tr>
+  <tr><td>수동 변경 감지가 콘솔 한정</td><td>CLI/SDK 수동 변경은 미검출</td><td>완전 커버는 plan 기반 필요 → 러너 결정 선행</td></tr>
+  <tr><td>계약 정적 검증이 정규식 기반</td><td>특이한 YAML 형식은 놓칠 수 있음</td><td>라이브 검증이 2차 방어. Helm 템플릿 gitops로 가면 재설계 필요</td></tr>
+  <tr><td>이메일 구독자는 원본 JSON 수신</td><td>읽기 불편</td><td>Discord = 사람이 읽는 채널, 이메일 = “파이프라인 고장” 백업 경로라는 원래 역할대로</td></tr>
+</table>
+
+<h2>7. 남은 작업 — 러너 결정이 병목</h2>
+
+<div class="callout warn">
+  <b>다음 결정 1개가 아래 3개를 막고 있다.</b> EKS 퍼블릭 엔드포인트가 <code>/32</code> 허용목록이라
+  GitHub 호스티드 러너는 <code>kubernetes</code>/<code>helm</code> 프로바이더 refresh에서 타임아웃 난다.<br>
+  &nbsp;&nbsp;(a) CI는 lint·보안스캔·계약 정적검증까지만 + apply는 로컬 &nbsp;/&nbsp;
+  (b) 배스천에 self-hosted runner
+</div>
+
+<table>
+  <tr><th style="width:120px">상태</th><th>항목</th></tr>
+  <tr><td><span class="badge todo">대기</span></td><td>Terraform CI — PR에 <code>fmt/validate/tflint/checkov</code> + <code>plan</code> 코멘트, main 머지 시 승인 후 apply. OIDC provider는 <code>ecr.tf</code>에 이미 있으므로 plan용(ReadOnly)·apply용 역할 2개만 추가</td></tr>
+  <tr><td><span class="badge todo">대기</span></td><td><code>plan -detailed-exitcode</code> 기반 드리프트(하루 1회) — 이번 이벤트 감지와 보완 관계</td></tr>
+  <tr><td><span class="badge todo">대기</span></td><td>gitops PR에서 계약 검증 실행 — 진짜 “머지 차단”은 여기서 완성됨</td></tr>
+  <tr><td><span class="badge todo">백로그</span></td><td>이미지 태그 자동화 — gitops kustomize화 + CI가 태그 커밋 → ArgoCD PAT를 read-only로 강등 + ECR IMMUTABLE 전환 가능 (백로그 2건 동시 해소)</td></tr>
+  <tr><td><span class="badge todo">백로그</span></td><td>야간·주말 노드그룹 스케일다운(EventBridge Scheduler) — 비용 절감, ArgoCD/ESO 기동 순서 설계 필요</td></tr>
+</table>
+
+<h2>8. 면접 설명</h2>
+
+<div class="callout info">
+  “장애 5건을 사후 분석해보니 전부 <b>‘apply는 성공했는데 서비스는 죽어 있는’</b> 유형이었고,
+  공통 원인은 절차가 문서에만 있고 강제 장치가 없다는 것이었습니다. 그래서 두 저장소 사이의
+  인터페이스를 Terraform output으로 선언해 <b>계약</b>으로 만들고(삭제된 이름까지 금지 목록으로 명시),
+  apply 파이프라인 안에서 계약 일치·DNS·TCP·ALB 타겟·HTTP까지 12개를 자동 검증하게 했습니다.
+  재구축을 막지 않으려고 기본은 경고 모드로 두고 운영 상태에서는 강제 모드로 올리는 구조입니다.
+  드리프트는 CloudTrail의 콘솔 세션 플래그로 ‘사람이 콘솔에서 만진 변경’만 골라 알림을 붙였는데,
+  이건 EKS 엔드포인트를 <code>/32</code>로 잠가둔 탓에 CI 러너에서 <code>terraform plan</code>을 못 돌리는
+  제약을 우회한 선택이고, self-hosted runner를 붙이면 plan 기반 감지를 추가할 계획입니다.”
+</div>
+
+<footer>
+  gochuchamchi EKS · 2026-08-04 자동화 세션 · 관련 문서:
+  <code>2026-08-04-automation.md</code>, <code>2026-08-04-incident-and-review.md</code>,
+  <code>2026-08-04.md</code>, <code>SECURITY_BACKLOG.md</code>
+</footer>
+
+</div>
+</body>
+</html>

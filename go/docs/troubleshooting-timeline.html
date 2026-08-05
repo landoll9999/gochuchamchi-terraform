@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>트러블슈팅 전체 타임라인 — gochuchamchi EKS 프로젝트</title>
+<style>
+  :root {
+    --ink:#1a2332; --sub:#5a6678; --line:#e3e7ee; --bg:#f7f8fa;
+    --accent:#2456a6; --accent-soft:#eaf1fb; --ok:#1e7e4c; --ok-soft:#e8f5ee;
+    --warn:#a05a00; --warn-soft:#fdf3e3; --danger:#b3372f; --danger-soft:#fdecea;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'Segoe UI','Malgun Gothic',-apple-system,sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.6; }
+  .wrap { max-width:940px; margin:0 auto; padding:40px 26px 80px; }
+  header { border-bottom:3px solid var(--accent); padding-bottom:16px; margin-bottom:24px; }
+  header h1 { margin:0 0 6px; font-size:25px; }
+  header .meta { color:var(--sub); font-size:14px; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0 8px; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 16px; text-align:center; }
+  .stat .n { font-size:24px; font-weight:800; color:var(--accent); }
+  .stat .l { font-size:12.5px; color:var(--sub); }
+  h2 { font-size:18px; margin:38px 0 4px; padding:9px 14px; background:var(--accent-soft);
+       border-left:4px solid var(--accent); border-radius:0 6px 6px 0; }
+  h2 .cnt { float:right; font-size:13px; color:var(--sub); font-weight:400; }
+  .theme { color:var(--sub); font-size:13.5px; margin:2px 0 12px 4px; }
+  details { background:#fff; border:1px solid var(--line); border-radius:9px; margin:8px 0; }
+  details[open] { border-color:var(--accent); }
+  summary { cursor:pointer; padding:10px 15px; font-weight:600; font-size:14.5px; list-style-position:inside; }
+  summary:hover { background:var(--accent-soft); border-radius:9px; }
+  .body { padding:2px 18px 13px 30px; font-size:14px; }
+  .r { margin:5px 0; }
+  .r b { display:inline-block; min-width:44px; }
+  .r.sym b { color:var(--danger); } .r.cau b { color:var(--warn); }
+  .r.fix b { color:var(--ok); } .r.les b { color:var(--accent); }
+  code { background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:12.5px;
+         font-family:Consolas,'Courier New',monospace; }
+  .star { color:var(--warn); }
+  .callout { border-radius:8px; padding:12px 16px; margin:16px 0; font-size:14px;
+             background:var(--accent-soft); border-left:4px solid var(--accent); }
+  ol.pit { font-size:13.5px; padding-left:22px; } ol.pit li { margin:7px 0; }
+  .ctl { text-align:right; font-size:13px; margin:14px 0 0; }
+  .ctl a { color:var(--accent); cursor:pointer; margin-left:12px; text-decoration:underline; }
+  footer { margin-top:56px; padding-top:14px; border-top:1px solid var(--line); color:var(--sub); font-size:13px; }
+  @media (max-width:640px){ .stats{grid-template-columns:repeat(2,1fr);} }
+  @media print { body{background:#fff;} details{page-break-inside:avoid;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>트러블슈팅 전체 타임라인</h1>
+  <div class="meta">gochuchamchi EKS 프로젝트 · 초기 구축(2026-07-27경)부터 2026-08-04까지 · 총 56건 · 제목을 클릭하면 상세가 펼쳐집니다</div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="n">56</div><div class="l">해결 사례</div></div>
+  <div class="stat"><div class="n">8일</div><div class="l">작업 기간</div></div>
+  <div class="stat"><div class="n">3회</div><div class="l">destroy 교착 (원인별 상이)</div></div>
+  <div class="stat"><div class="n">13</div><div class="l">소실 파일 복원 (8/4)</div></div>
+</div>
+
+<div class="ctl"><a onclick="document.querySelectorAll('details').forEach(d=>d.open=true)">전체 펼치기</a><a onclick="document.querySelectorAll('details').forEach(d=>d.open=false)">전체 접기</a></div>
+
+<h2>초기 구축기 (~2026-07-28) <span class="cnt">12건</span></h2>
+<p class="theme">테마: EKS 첫 구축 — 배스천/SSM 파이프라인, 앱-데이터 연동, 재구축 가능한 구조 만들기</p>
+
+<details><summary>배스천 SSM 명령 전부 실패 — minimal AMI에 SSM Agent 미포함</summary><div class="body">
+<div class="r sym"><b>증상</b> SSM send-command가 전부 실패</div>
+<div class="r cau"><b>원인</b> <code>al2023-ami-minimal</code> 계열은 SSM Agent 기본 미포함</div>
+<div class="r fix"><b>해결</b> userdata에 <code>dnf install amazon-ssm-agent</code> + enable/start 추가, <code>user_data_replace_on_change=true</code></div>
+</div></details>
+
+<details><summary>SSM 명령이 0.001초 만에 실패 — 루트 볼륨 2GB 고갈</summary><div class="body">
+<div class="r sym"><b>증상</b> 모든 SSM 명령 즉시 <code>ResponseCode 1</code></div>
+<div class="r cau"><b>원인</b> 루트 2GB가 Agent+kubectl 설치 후 꽉 참</div>
+<div class="r fix"><b>해결</b> <code>root_block_device = { size = 20, type = "gp3" }</code> — 이 모듈 버전은 <code>size/type</code> 필드명 (버전마다 스키마 다름)</div>
+</div></details>
+
+<details><summary>SSH Permission denied — 키페어 파일 불일치</summary><div class="body">
+<div class="r cau"><b>원인</b> 로컬 pem 파일이 실제 AWS 키페어와 다른 파일</div>
+<div class="r fix"><b>해결</b> 새 키페어(<code>gochuchamchi-key-v2</code>) 생성 후 교체 <em>(8/4 백로그 B2에서 키페어 접속 자체를 제거 — SSM 전용화)</em></div>
+</div></details>
+
+<details><summary>파드 CreateContainerConfigError — DB Secret 부재</summary><div class="body">
+<div class="r cau"><b>원인</b> Deployment가 참조하는 <code>gochuchamchi-db-secret</code>이 클러스터에 없음</div>
+<div class="r fix"><b>해결</b> Secrets Manager에서 비밀번호 조회 후 K8s Secret 생성 (이후 Terraform으로 자동화) <em>(복선: 8/4 제로트러스트 전환 때 같은 증상이 "반쪽 배포"로 재현됨)</em></div>
+</div></details>
+
+<details><summary>Ingress ADDRESS가 계속 빈 값 — 인증서 ARN 플레이스홀더</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>certificate-arn</code>이 <code>REPLACE_WITH_...</code> 그대로라 컨트롤러가 <code>CertificateNotFound</code>로 리스너 생성 실패</div>
+<div class="r fix"><b>해결</b> 실제 ACM ARN 교체 (이후 Terraform 자동 렌더링으로 재발 차단)</div>
+</div></details>
+
+<details><summary>Route53 존이 destroy마다 재생성 — 네임서버 변경 반복</summary><div class="body">
+<div class="r sym"><b>증상</b> 재구축마다 가비아 NS 재설정 + 전파 대기 + ACM 재검증</div>
+<div class="r fix"><b>해결</b> <code>resource</code> → <code>data "aws_route53_zone"</code> 전환 — 존은 코드 밖에 두고 참조만</div>
+<div class="r les"><b>교훈</b> 수명이 긴 리소스는 재구축 단위에서 분리</div>
+</div></details>
+
+<details><summary><span class="star">★</span> 다수 서비스 AccessDenied — 소속 그룹의 explicit deny ('3pro' 사고)</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>AccessDenied ... explicit deny ... DenySensitiveServices</code>가 s3/rds 등 곳곳에서</div>
+<div class="r cau"><b>원인</b> 사용자가 그날 생성된 <code>3pro</code> 그룹 소속이었고 그룹에 Deny 정책 — explicit deny는 AdministratorAccess보다 우선</div>
+<div class="r fix"><b>해결</b> 그룹에서 사용자 제거 → 즉시 정상화</div>
+<div class="r les"><b>교훈</b> 사용자 정책뿐 아니라 그룹 정책 확인 (<code>aws iam list-groups-for-user</code>). 이후 iam-security.tf 설계에 "실행 계정은 Deny 그룹 금지" 원칙으로 반영</div>
+</div></details>
+
+<details><summary>RDS Too many connections</summary><div class="body">
+<div class="r cau"><b>원인</b> db.t3.micro max_connections 30인데 HikariCP 기본 풀 파드당 10 — 파드 2개+배스천으로 초과</div>
+<div class="r fix"><b>해결</b> RDS 재부팅(응급) + <code>HIKARI_MAXIMUM_POOL_SIZE=5 / MINIMUM_IDLE=2</code>(근본)</div>
+</div></details>
+
+<details><summary>회원가입 Unknown column / 한글 Incorrect string value</summary><div class="body">
+<div class="r cau"><b>원인</b> schema.sql에 앱이 쓰는 컬럼 누락 + 추가 컬럼이 latin1 상속 → 한글 INSERT 실패</div>
+<div class="r fix"><b>해결</b> ALTER로 컬럼 추가 + <code>CONVERT TO utf8mb4</code>, schema.sql 최종본에 반영</div>
+</div></details>
+
+<details><summary><span class="star">★</span> 로그인 세션이 파드마다 다름 — jar에 Redis 의존성 자체가 없었음</summary><div class="body">
+<div class="r sym"><b>증상</b> 로그인 후 ALB가 다른 파드로 보내면 재로그인 요구</div>
+<div class="r cau"><b>원인</b> <code>unzip -l app.jar | grep redis</code> 결과 0건 — 환경변수를 줘도 클래스패스에 spring-session-data-redis가 없어 조용히 무시, 파드별 인메모리 세션</div>
+<div class="r fix"><b>해결</b> pom.xml 의존성 + application.yml 설정 추가 → CI 재빌드 → 파드 전환에도 세션 유지 확인</div>
+<div class="r les"><b>교훈</b> 기능이 "안 먹는" 건 설정이 아니라 jar 내용물부터 — 배포 파이프라인을 신뢰하지 말고 직접 검증</div>
+</div></details>
+
+<details><summary>yaml 수정이 반영 안 됨 — S3 sync 무반응</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>aws s3 sync</code>가 mtime 비교로 "이미 최신" 판단해 스킵</div>
+<div class="r fix"><b>해결</b> <code>--exact-timestamps</code> 옵션 + 필요시 <code>terraform taint null_resource...</code></div>
+</div></details>
+
+<details><summary>PowerShell → SSM 특수문자 지옥</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>Out-File -Encoding utf8</code>이 BOM을 붙여 AWS CLI가 JSON 못 읽음 + bash의 <code>!</code> 히스토리 확장</div>
+<div class="r fix"><b>해결</b> <code>Set-Content -Encoding ascii</code> + ARN은 작은따옴표 — 이후 모든 SSM 명령을 JSON 파일 방식으로 통일</div>
+</div></details>
+
+<h2>2026-07-28 <span class="cnt">2건</span></h2>
+<p class="theme">테마: 프론트엔드/앱 레벨 디버깅 — 브라우저 개발자도구 활용</p>
+
+<details><summary>메인 페이지 텍스처 미노출 — 3중 원인 (URL 404 + 프로퍼티 누락 + CSS 문법 파괴)</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>.bg-texture</code>가 DOM에 있는데 이미지 요청 자체가 없음, Computed <code>height: 0px</code></div>
+<div class="r cau"><b>원인</b> ① 하드코딩 버킷 URL이 실제 버킷명(계정ID 포함)과 불일치(404) ② <code>cloud.aws.s3.bucket</code> 프로퍼티 누락 ③ GitHub 웹 편집 중 <code>.bg-texture{</code> 셀렉터가 지워져 브라우저가 블록 전체를 조용히 무시(근본)</div>
+<div class="r fix"><b>해결</b> CSS 복원 + URL 교정 + 프로퍼티 추가 → CI 재배포</div>
+<div class="r les"><b>교훈</b> Network Initiator 체인 → Computed → Styles 순서로 좁히기. 컨테이너 안 jar를 unzip해서 반영 여부 직접 확인</div>
+</div></details>
+
+<details><summary>이미지 업로드 413 — Spring 기본 1MB 제한</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>MaxUploadSizeExceededException</code> — multipart 미설정 시 Spring 기본 1MB, ALB가 아닌 앱 레벨 차단</div>
+<div class="r fix"><b>해결</b> <code>spring.servlet.multipart</code> max-file/request-size 10MB</div>
+<div class="r les"><b>교훈</b> 413은 어느 레이어가 끊었는지(Spring 예외 vs ALB)부터 구분</div>
+</div></details>
+
+<h2>2026-07-29 <span class="cnt">12건</span></h2>
+<p class="theme">테마: destroy 교착 3부작 시작 + ArgoCD/알림/Image Updater 연쇄 — 이 프로젝트 최다 사건일</p>
+
+<details><summary><span class="star">★</span> destroy 교착 1차 — NAT 인스턴스 선삭제</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>Ingress still exists</code> + Helm uninstall 타임아웃 + <code>DependencyViolation</code>, 컨트롤러 로그 <code>i/o timeout</code></div>
+<div class="r cau"><b>원인</b> NAT를 참조하는 리소스가 없어 먼저 삭제됨 → 프라이빗 서브넷 아웃바운드 소실 → 컨트롤러가 ALB 정리 불가 → finalizer 잔류</div>
+<div class="r fix"><b>해결</b> 컨트롤러/ArgoCD에 <code>depends_on</code>으로 삭제 순서 고정. 꼬인 건 고아 ALB 수동 삭제 + finalizer 강제 제거</div>
+</div></details>
+
+<details><summary><span class="star">★</span> destroy 교착 2차 — public 라우트 테이블 선삭제</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>module.vpc.vpc_id</code> 참조는 VPC 리소스 "하나"에만 순서를 걸고, 모듈 안 라우트 테이블은 그래프 밖이라 먼저 삭제</div>
+<div class="r fix"><b>해결</b> <code>depends_on = [module.vpc]</code> 모듈 전체 명시</div>
+<div class="r les"><b>교훈</b> 컨트롤러 살아있을 때 finalizer를 지우면 재부착됨 — 순서가 전부</div>
+</div></details>
+
+<details><summary>ArgoCD 호스트가 argocd.example.com — 차트 값 이름 불일치</summary><div class="body">
+<div class="r cau"><b>원인</b> 이 차트 버전은 <code>hostname</code>(단수)인데 <code>hosts</code>(list) 지정 — Helm은 모르는 키를 에러 없이 무시</div>
+<div class="r fix"><b>해결</b> 배포된 버전의 실제 values.yaml 확인 후 <code>hostname</code>으로 수정</div>
+</div></details>
+
+<details><summary>argocd-notifications-cm/-secret already exists — 소유권 충돌</summary><div class="body">
+<div class="r cau"><b>원인</b> argo-cd 차트가 기본으로 두 리소스를 생성·소유 — 별도 state에서 만들면 충돌, import해도 upgrade 때 빈 값으로 덮임</div>
+<div class="r fix"><b>해결</b> 차트에서 <code>notifications.cm/secret.create=false</code>로 생성 자체를 끄고 소유권 이전</div>
+</div></details>
+
+<details><summary>Discord 알림 미발송 — service type 'discord' is not supported</summary><div class="body">
+<div class="r cau"><b>원인</b> notifications-engine에 discord 구현이 없음</div>
+<div class="r fix"><b>해결</b> <code>service.webhook.discord</code>로 전환 + template마다 <code>method: POST</code>와 JSON body 명시. 이어진 <code>trigger not configured</code>는 공식 catalog에서 트리거 정의 3종 이식</div>
+</div></details>
+
+<details><summary>Image Updater write-back 미동작 — v1.2.2부터 CRD 필수</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>"No ImageUpdater CRs to process"</code> 반복, gitops 커밋 없음</div>
+<div class="r cau"><b>원인</b> 버전 미고정 설치로 v1.2.2가 들어왔는데 이 버전부터 annotation 자동 인식 제거, <code>ImageUpdater</code> CR 필수. 추가로 로컬 차트 <code>Chart.yaml</code> version을 안 올려 Terraform이 변경 감지 못함</div>
+<div class="r fix"><b>해결</b> CR 템플릿 추가 + 차트 버전 승격</div>
+<div class="r les"><b>교훈</b> write-back 대상은 <code>.argocd-source-&lt;app&gt;.yaml</code>이다</div>
+</div></details>
+
+<details><summary>apex 도메인 NXDOMAIN — ExternalDNS TXT 소유권 불일치</summary><div class="body">
+<div class="r sym"><b>증상</b> apex만 NXDOMAIN, www/argocd는 정상</div>
+<div class="r cau"><b>원인</b> apex가 삭제된 옛 ALB를 가리킴 + TXT 소유권 레코드가 과거 접두사 설정 기준이라 현재 ExternalDNS가 자기 소유로 인식 못함(upsert-only라 갱신 불가)</div>
+<div class="r fix"><b>해결</b> apex 수동 UPSERT(즉시 복구) + 현재 설정 기준 TXT 소유권 레코드 재생성(자동 갱신 재개)</div>
+</div></details>
+
+<details><summary>Image Updater 파드 Init:CreateContainerConfigError</summary><div class="body">
+<div class="r cau"><b>원인</b> ECR 인증용으로 붙인 aws-cli initContainer가 root인데 차트가 <code>runAsNonRoot: true</code></div>
+<div class="r fix"><b>해결</b> 이미지 Dockerfile 확인 결과 aws CLI 내장(UID 1000) — initContainer 자체를 제거</div>
+<div class="r les"><b>교훈</b> 사이드카 추가 전에 이미지 Dockerfile부터</div>
+</div></details>
+
+<details><summary>cleanup_on_fail이 만든 upgrade 교착</summary><div class="body">
+<div class="r cau"><b>원인</b> 실패 롤백이 새로 만든 필수 ConfigMap까지 삭제 → 파드가 못 떠서 다음 upgrade도 타임아웃 (자기강화 실패 루프)</div>
+<div class="r fix"><b>해결</b> broken spec을 kubectl patch로 제거 + ConfigMap을 Helm 소유권 메타데이터 포함해 수동 생성 후 재apply</div>
+</div></details>
+
+<details><summary>registries.conf api_url에 저장소 경로 혼입</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>repository_url</code>은 <code>host/repo</code> 형태인데 그대로 api_url에 사용</div>
+<div class="r fix"><b>해결</b> <code>split("/", ...)[0]</code>으로 호스트만 분리</div>
+</div></details>
+
+<details><summary>gh로 워크플로 push 시 404 — workflow 스코프 부재</summary><div class="body">
+<div class="r cau"><b>원인</b> 토큰에 workflow 스코프가 없으면 GitHub이 403이 아닌 404로 응답(원인 은폐)</div>
+<div class="r fix"><b>해결</b> <code>gh auth refresh -s workflow</code></div>
+</div></details>
+
+<details><summary>local-exec PowerShell 따옴표 이스케이프</summary><div class="body">
+<div class="r cau"><b>원인</b> PowerShell은 <code>\"</code>를 이스케이프로 안 보고 backtick만 인식, <code>$(...)</code>도 로컬 해석됨</div>
+<div class="r fix"><b>해결</b> 작은따옴표 리터럴 문자열로 SSM에 전달</div>
+</div></details>
+
+<h2>2026-07-30 <span class="cnt">9건</span></h2>
+<p class="theme">테마: destroy 교착 완결 + 재구축 후 회귀들 — "코드 밖 상태는 살아남지 못한다"</p>
+
+<details><summary><span class="star">★</span> destroy 교착 3차(완결) — SG "규칙"만 선삭제</summary><div class="body">
+<div class="r sym"><b>증상</b> 네트워크 리소스 전부 정상인데 컨트롤러 <code>DescribeSecurityGroups ... i/o timeout</code></div>
+<div class="r cau"><b>원인</b> SG "그룹"은 인스턴스에 붙어 삭제 거부되지만 "규칙"은 별개 리소스라 먼저 삭제 — NAT SG 규칙 0개로 통신 두절</div>
+<div class="r fix"><b>해결</b> <code>depends_on</code>에 SG 모듈 전체 추가. 현장은 CLI로 규칙 2개 복원 → 컨트롤러가 1분 내 스스로 정리</div>
+<div class="r les"><b>교훈</b> 통신만 살리면 컨트롤러가 정상 절차로 정리 — finalizer 강제 제거는 최후 수단</div>
+</div></details>
+
+<details><summary>k8s/helm 리소스만 TCP 타임아웃 — EKS 엔드포인트 허용목록</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>connectex ... did not properly respond</code>, apply가 절반만 성공</div>
+<div class="r cau"><b>원인</b> <code>endpoint_public_access_cidrs</code>가 집 IP 하나로 하드코딩 — 목록 밖 IP는 Unauthorized가 아니라 블랙홀(타임아웃)</div>
+<div class="r fix"><b>해결</b> 변수 리스트화 + <code>-target=module.eks</code>로 허용목록 먼저 갱신</div>
+<div class="r les"><b>교훈</b> stale /32는 타인에게 재할당될 수 있어 보안 구멍 — 안 쓰면 제거</div>
+</div></details>
+
+<details><summary><span class="star">★</span> 재구축 후 지속 503 — destroy가 ECR 이미지까지 비움</summary><div class="body">
+<div class="r sym"><b>증상</b> 인프라 정상인데 503, 파드 <code>ImagePullBackOff</code>, 타겟 0개</div>
+<div class="r cau"><b>원인</b> <code>force_delete=true</code>로 destroy가 이미지째 삭제 → 빈 저장소를 gitops가 참조. Terraform은 저장소만 관리하고 이미지는 관리 밖</div>
+<div class="r fix"><b>해결</b> CI 수동 실행으로 재적재 + kubelet 백오프 회피용 파드 삭제</div>
+<div class="r les"><b>교훈</b> 타겟그룹은 인덱스가 아니라 이름으로 확인 (처음에 ArgoCD 타겟그룹 보고 오진)</div>
+</div></details>
+
+<details><summary>ArgoCD 접속 불가 + port-forward connection reset</summary><div class="body">
+<div class="r cau"><b>원인</b> 타임아웃은 internal ALB 전환의 정상 동작. reset은 평문(8080)으로 뜨는 서버에 TLS 핸드셰이크를 보낸 것</div>
+<div class="r fix"><b>해결</b> <code>port-forward svc/argocd-server 8080:80</code> + <code>http://</code>로 접속</div>
+<div class="r les"><b>교훈</b> TIMED_OUT=사설IP / SSL_ERROR·reset=평문에TLS / REFUSED=로컬 리스너 없음 — 에러 코드로 즉시 판별</div>
+</div></details>
+
+<details><summary>재구축으로 사라진 수동 보안 조치 (ArgoCD 비밀번호 회귀)</summary><div class="body">
+<div class="r cau"><b>원인</b> 클러스터 안에서 수동으로 바꾼 비밀번호는 Terraform state 밖 — destroy/apply에서 소실</div>
+<div class="r les"><b>교훈</b> 보안 조치는 코드화하거나 재구축 절차서에 명시. 코드 밖의 상태는 살아남지 못한다</div>
+</div></details>
+
+<details><summary>data.aws_lb ↔ IngressGroup 순환 — 단일 apply 불가</summary><div class="body">
+<div class="r cau"><b>원인</b> 알람이 조회할 ALB 태그를 그 apply가 만들 예정 — plan 시점 조회 0건 에러</div>
+<div class="r fix"><b>해결</b> <code>-target</code>으로 Ingress 먼저 → 전체 apply. 이후 <code>enable_alb_alarms</code> 플래그로 정식 2단계화</div>
+<div class="r les"><b>교훈</b> PowerShell 5.1은 따옴표 없는 <code>-target=a.b</code>를 점에서 자름 — 작은따옴표 필수</div>
+</div></details>
+
+<details><summary>IngressGroup 전환 후 옛 ALB 스택 고아화</summary><div class="body">
+<div class="r cau"><b>원인</b> finalizer 이름 체계가 바뀌며 컨트롤러가 옛 스택 삭제 이벤트를 못 받음 — internet-facing ALB 2개 공존</div>
+<div class="r fix"><b>해결</b> 옛 ALB/타겟그룹/Managed SG 수동 삭제 (Shared Backend SG는 새 ALB도 쓰므로 보존!)</div>
+</div></details>
+
+<details><summary>IAM Role description 한글 ValidationError (Grafana)</summary><div class="body">
+<div class="r cau"><b>원인</b> IAM description은 ASCII+Latin-1만 — 태그는 유니코드 되는데 description만 예외</div>
+<div class="r fix"><b>해결</b> 영문 전환. <em>(복선: 8/3 WAF description에서 같은 유형 재발)</em></div>
+</div></details>
+
+<details><summary>Kinesis 계열 SubscriptionRequiredException</summary><div class="body">
+<div class="r cau"><b>원인</b> 계정이 Kinesis 서비스 계열만 미구독 — 리전 변경 무효(계정 단위), 타 서비스 정상으로 3축 판별</div>
+<div class="r fix"><b>해결</b> 유료 플랜 업그레이드 후 즉시 해소</div>
+<div class="r les"><b>교훈</b> LB 컨트롤러의 Shield 구독 예외 로그는 모든 정상 계정에서 나오는 정상 메시지</div>
+</div></details>
+
+<h2>2026-07-31 <span class="cnt">12건</span></h2>
+<p class="theme">테마: 재발과 잠복 버그 + 격차해소 설계에서 사전 회피한 함정 7건</p>
+
+<details><summary><span class="star">★</span> ECR 비움 503 2차 재발 — "문서화했는데 또 터짐"</summary><div class="body">
+<div class="r sym"><b>증상</b> 재구축 32분 후 503 (<code>Server: awselb/2.0</code> = 백엔드 없음)</div>
+<div class="r cau"><b>원인</b> 7/30과 동일 체인. 주석·runbook·체크리스트 세 군데에 적어놨는데도 재발</div>
+<div class="r fix"><b>해결</b> 동일 절차로 6분 복구</div>
+<div class="r les"><b>교훈</b> 사람이 읽어야 성립하는 절차가 두 번 실패하면 문서가 아니라 설계 문제 — 자동화(CI 자동 트리거)하거나 깨지지 않게(force_delete 해제/state 분리) 바꿀 것</div>
+</div></details>
+
+<details><summary>kubectl no such host — kubeconfig가 옛 클러스터 지시</summary><div class="body">
+<div class="r cau"><b>원인</b> 재생성마다 엔드포인트 ID가 바뀜 <em>(8/3에 새 PC에서 동일 증상 재경험)</em></div>
+<div class="r fix"><b>해결</b> <code>aws eks update-kubeconfig</code></div>
+<div class="r les"><b>교훈</b> no such host=옛 클러스터 / 타임아웃=IP 허용목록 밖 / Unauthorized=인증 — 문구로 즉시 감별</div>
+</div></details>
+
+<details><summary>AWS CLI Unable to locate credentials</summary><div class="body">
+<div class="r cau"><b>원인</b> 자격증명 부재가 아니라 <code>[default]</code> 프로필이 없는 것</div>
+<div class="r fix"><b>해결</b> <code>AWS_PROFILE=admin</code> 또는 <code>--profile admin</code></div>
+</div></details>
+
+<details><summary>ZIP 사본에 .git 없음 — 커밋 불가 + CRLF 노이즈</summary><div class="body">
+<div class="r cau"><b>원인</b> GitHub ZIP 해제본 위에서 작업</div>
+<div class="r fix"><b>해결</b> clone의 <code>.git</code> 이식. CRLF만 바뀐 파일은 <code>--ignore-cr-at-eol</code>로 걸러 실제 변경만 커밋</div>
+</div></details>
+
+<details><summary><span class="star">★</span> RDS 스키마가 한 번도 적용된 적 없음 — 비밀번호 속 '#'</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>Table 'users' doesn't exist</code> — 그런데 사이트는 200 (빈 결과 정상 처리)</div>
+<div class="r cau"><b>원인</b> <code>.my.cnf</code>에 비밀번호를 따옴표 없이 기록 — <code>#</code>부터 주석 처리되어 잘림 (Secrets Manager 생성 값에 #가 있을 때만 터지는 간헐 버그). 게다가 SSM 호출 명령이 원격 실패에도 종료코드 0이라 apply가 초록불</div>
+<div class="r fix"><b>해결</b> <code>password="%s"</code> 인용 + ResponseCode 검사로 실패를 apply 실패로 표면화 + IF NOT EXISTS 마이그레이션</div>
+<div class="r les"><b>교훈</b> "apply 성공"≠"스키마 적용됨", "200"≠"DB 정상" — 재구축 후 SHOW TABLES를 절차에 포함</div>
+</div></details>
+
+<details><summary>격차해소 설계에서 사전 회피한 함정 7건 (apply 전 발견)</summary><div class="body">
+<div class="r"><b>①</b> KMS 키 정책 ↔ Config 역할 순환 의존 → <code>aws:PrincipalArn</code> 패턴 조건으로 절단</div>
+<div class="r"><b>②</b> Object Lock은 버킷 생성 시에만 + Deny 과잉 시 Terraform 자기잠금 → Deny는 PutBucketPolicy만</div>
+<div class="r"><b>③</b> Region Guard가 글로벌 서비스(us-east-1 ACM 등) 차단 → NotAction 예외 <em>(이게 없었으면 8/3 CloudFront 전체가 막혔음)</em></div>
+<div class="r"><b>④</b> CloudFront가 참조할 ALB가 1차 apply에 없음 → <code>enable_edge</code> 2단계 apply 설계</div>
+<div class="r"><b>⑤</b> ExternalDNS가 CloudFront 레코드를 ALB로 되돌림 → annotation-only 전환 + allow_overwrite 인수</div>
+<div class="r"><b>⑥</b> S3 CRR 전제(versioning) 누락 → versioning + 비용 통제 추가</div>
+<div class="r"><b>⑦</b> 실행 계정을 Deny 그룹에 넣을 위험(3pro 재발 방지) → 기본 빈 목록 + 경고 주석</div>
+</div></details>
+
+<h2>2026-08-03 <span class="cnt">8건</span></h2>
+<p class="theme">테마: 풀 이중화·보안 강화 일괄 적용일 — 상세는 별도 보고서(2026-08-03-troubleshooting-report.html)</p>
+
+<details><summary>PowerShell 실행 3연타 (실행정책 + UTF-8 BOM + 오타)</summary><div class="body">
+<div class="r fix"><b>요지</b> Bypass 실행 + BOM 재저장. 한글 스크립트는 BOM 필수 <em>(초기 구축기의 "ascii 인코딩" 교훈과 같은 계열)</em></div>
+</div></details>
+
+<details><summary>WAF 미표시 — 생성 실패(description 한글) + Global 스코프 조회법</summary><div class="body">
+<div class="r fix"><b>요지</b> 7/30 Grafana IAM 건과 동일 유형 재발. CLI로 존재부터 확정하는 습관 정착</div>
+</div></details>
+
+<details><summary>Kyverno 설치 실패 2연타 (webhook 순서 → 잔존 릴리스)</summary><div class="body">
+<div class="r fix"><b>요지</b> depends_on 추가 + 네임스페이스 삭제 후 재설치. 7/29 교착에서 배운 "전역 webhook 순서" 교훈의 신규 파일 적용 누락이 원인</div>
+</div></details>
+
+<details><summary>kubectl no such host (7/31 재발 — 새 PC)</summary><div class="body">
+<div class="r fix"><b>요지</b> update-kubeconfig. 감별법이 이미 문서화돼 있어 즉시 해결</div>
+</div></details>
+
+<details><summary>main.tf 덮어쓰기 사고 (duplicate data source)</summary><div class="body">
+<div class="r fix"><b>요지</b> 모듈 파일을 루트에 저장 → 원본 복원 + 파일명 위치 접두사로 재발 방지</div>
+</div></details>
+
+<details><summary><span class="star">★</span> AWS Config InsufficientDeliveryPolicyException — 5라운드 끝 설계 변경</summary><div class="body">
+<div class="r cau"><b>요지</b> IAM 전파 → ACL IfExists → KMS 지정/권한 → 버킷 정책 3문구(+루트 break-glass) 전부 실패 → 중앙 버킷 불변성 통제와의 근본 충돌로 확정</div>
+<div class="r fix"><b>해결</b> Config 전용 버킷 분리 (증적 등급별 통제 분리)</div>
+<div class="r les"><b>교훈</b> CloudTrail KMS 이벤트로 "어디까지 통과했는지" 확정해 수사 범위를 좁힘. 통제를 여는 게 아니라 데이터를 분리하는 게 정답인 경우가 있다</div>
+</div></details>
+
+<details><summary><span class="star">★</span> NetworkPolicy 잠복 버그 — 정책은 있는데 집행이 없음</summary><div class="body">
+<div class="r cau"><b>요지</b> vpc-cni <code>enableNetworkPolicy</code> 누락으로 node agent 미배포 — "정책 존재 ≠ 집행"</div>
+<div class="r fix"><b>해결</b> 애드온 설정 추가, aws-node 컨테이너 2개 확인으로 검증</div>
+</div></details>
+
+<details><summary>시크릿 위생 + 싱글턴 리소스 사전 체크</summary><div class="body">
+<div class="r fix"><b>요지</b> 노출된 PAT 즉시 폐기·재발급. GuardDuty detector 등 계정 싱글턴은 스크립트에 존재 확인 + 자동 import 내장</div>
+</div></details>
+
+<h2>2026-08-04 <span class="cnt">11건</span></h2>
+<p class="theme">테마: 제로트러스트 전환 장애 5연쇄 + 저장소 재생성 사고(13파일 소실)와 복원 — "코드-상태 이원화"의 날</p>
+
+<details><summary><span class="star">★</span> 제로트러스트 apply 후 DB 전면 500 — "반쪽 배포" 이중 잠김</summary><div class="body">
+<div class="r sym"><b>증상</b> 정적 페이지 정상, DB 요청 전부 500. 새 파드는 <code>CreateContainerConfigError</code>, 고장난 옛 파드가 계속 서빙</div>
+<div class="r cau"><b>원인</b> terraform apply와 gitops 수정이 한 세트인 작업에서 gitops 쪽만 누락 — 옛 파드는 평문 접속이 <code>require_secure_transport=1</code>에 거부되고, 새 파드는 삭제된 <code>gochuchamchi-db-secret</code>을 참조해 시작 불가</div>
+<div class="r fix"><b>해결</b> gitops secret 이름 교체(<code>gochuchamchi-db-app</code>) + redis secret 추가 + 파드 재기동. 검증: <code>/api/health</code> 500 → 302</div>
+<div class="r les"><b>교훈</b> terraform·gitops 결합 작업은 한 PR/한 사람이 원자적으로. "고쳤는데 그대로"면 같은 증상의 다른 원인을 의심 (아래 4건이 연쇄로 드러남) → 재발 방지로 배포 계약 검증·스모크 테스트 자동화(2026-08-04-automation.md)</div>
+</div></details>
+
+<details><summary>SSM 안 kubectl이 localhost:8080 접속 — HOME 미설정</summary><div class="body">
+<div class="r cau"><b>원인</b> SSM 셸에는 <code>HOME</code>이 없어 <code>~/.kube/config</code> 기본 경로가 해석 안 됨 → kubectl이 kubeconfig 없이 localhost:8080 폴백, connection refused</div>
+<div class="r fix"><b>해결</b> 쓸 때는 <code>--kubeconfig</code>, 읽을 때는 <code>KUBECONFIG</code> env로 경로 양쪽 명시 (db-zero-trust.tf)</div>
+</div></details>
+
+<details><summary>helm parse error — YAML "주석 안의" 빈 <code>{{ }}</code></summary><div class="body">
+<div class="r cau"><b>원인</b> Helm은 템플릿 렌더링을 YAML 파싱보다 먼저 수행 — 주석 안이라도 <code>{{ }}</code>는 파싱 대상</div>
+<div class="r fix"><b>해결</b> 주석의 이중 중괄호 제거 (charts/eso-config)</div>
+<div class="r les"><b>교훈</b> Helm 차트에서 예시를 주석으로 남길 때 <code>{{"{{"}}</code> 이스케이프 또는 다른 표기 사용</div>
+</div></details>
+
+<details><summary>ArgoCD 503 Backend service does not exist — ESO 전환이 만든 필수 수동 절차 누락</summary><div class="body">
+<div class="r cau"><b>원인</b> PAT를 state에서 빼내 Secrets Manager로 옮긴 결과(B3), "CLI로 1회 주입"이 새 필수 절차가 됐는데 누락 → ArgoCD 저장소 인증 실패 → 앱 미배포</div>
+<div class="r fix"><b>해결</b> <code>aws secretsmanager put-secret-value</code>로 PAT 주입 → ESO 동기화 → ArgoCD 정상화</div>
+<div class="r les"><b>교훈</b> 보안 개선이 "코드 밖 수동 단계"를 만들면 그 단계는 반드시 체크리스트+검증 스크립트에 반영할 것</div>
+</div></details>
+
+<details><summary><span class="star">★</span> NetworkPolicy가 DNS 전면 차단 — UnknownHostException 전체 500</summary><div class="body">
+<div class="r sym"><b>증상</b> secret을 다 고쳤는데도 500 지속 — RDS/Redis "호스트명 해석"부터 실패</div>
+<div class="r cau"><b>원인</b> B5에서 만든 NetworkPolicy의 DNS egress가 kube-dns 파드 IP만 허용하고 <strong>서비스 CIDR(ClusterIP)</strong>을 빠뜨림 — 파드는 서비스 IP로 질의한다</div>
+<div class="r fix"><b>해결</b> DNS egress에 서비스 CIDR 추가 (k8s-network-policies.tf)</div>
+<div class="r les"><b>교훈</b> 8/3 "정책 존재 ≠ 집행"의 다음 단계 — "집행됨 ≠ 규칙이 맞음". NetworkPolicy는 켠 날 반드시 파드 안에서 <code>nslookup</code>/포트 테스트로 실측</div>
+</div></details>
+
+<details><summary>Redis NOAUTH → 로그인 500 + 고친 파일이 kustomize 미등재 잔재본</summary><div class="body">
+<div class="r cau"><b>원인</b> ① gitops deployment에 <code>gochuchamchi-redis-secret</code> envFrom 누락(AUTH 미주입) ② 수정한 매니페스트가 kustomize <code>resources</code> 목록에 없는 잔재 파일이라 반영 자체가 안 됨</div>
+<div class="r fix"><b>해결</b> 실제 렌더링 대상 <code>deployment.yml</code>에 secretRef 추가</div>
+<div class="r les"><b>교훈</b> gitops 수정 전 "이 파일이 렌더링 대상인가"(kustomization resources)부터 확인 — 잔재 파일 적발이 배포 계약 검증 스크립트에 포함됨</div>
+</div></details>
+
+<details><summary><span class="star">★</span> full-HA 13개 파일 소실 — 저장소 재생성이 구버전 베이스로</summary><div class="body">
+<div class="r sym"><b>증상</b> CloudFront/WAF가 계정에서 사라짐. 코드에도 없음 (DNS가 ALB 직결로 회귀)</div>
+<div class="r cau"><b>원인</b> 8/4 10:53 git 저장소 "first commit"이 8/3 full-HA 13개 파일이 없는 구버전 베이스로 생성 → 같은 tfstate에 apply = state 잔여 리소스 삭제. 폴더 복사(fin/찐막/go(final)) 버전 관리의 구조적 결과 (7/31 "복원 불가" 사고와 동일 유형)</div>
+<div class="r fix"><b>해결</b> fin 사본에서 복원 + 8/4 제로트러스트와 3-way 병합(8/4 코드 우선, validate 통과). 파괴적 항목(RDS/EFS CMK, Object Lock)은 재구축 사이클로 보류. 후속: 중복 커밋된 <code>waf-cdn.tf</code>는 origin에서 삭제·<code>edge-logs.tf</code>로 재구성 → apply 전 pull 필수</div>
+<div class="r les"><b>교훈</b> tfstate를 공유하는 코드가 두 벌이면 뒤처진 쪽의 apply는 곧 삭제 명령. 라인이 여러 갈래면 전 파일 diff로 각 라인의 고유 변경을 식별한 뒤 병합</div>
+</div></details>
+
+<details><summary>Grafana admin 비밀번호가 tfstate에 평문 — sensitive의 함정</summary><div class="body">
+<div class="r cau"><b>원인</b> <code>data kubernetes_secret</code> → <code>output(sensitive=true)</code> 경유 — sensitive는 CLI 출력만 가리고 state에는 평문 저장 (감사 #1이 정의한 ESO 트리거에 해당하는 값이 잔존)</div>
+<div class="r fix"><b>해결</b> data source·output 제거 (fin 모듈엔 애초에 없었음 — 복원과 함께 해소). 조회는 <code>kubectl -n monitoring get secret grafana ...</code>로</div>
+<div class="r les"><b>교훈</b> <code>sensitive = true</code>는 표시 억제일 뿐 저장 암호화가 아니다</div>
+</div></details>
+
+<details><summary>Cost Anomaly Monitor 생성 거부 — AWS 선점 리소스와 한도 충돌</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>Limit exceeded on dimensional spend monitor creation</code> (400)</div>
+<div class="r cau"><b>원인</b> Cost Explorer 최초 활성화 때 AWS가 <code>Default-Services-Monitor</code>를 자동 생성 — DIMENSIONAL(SERVICE) 타입은 계정당 1개 한도</div>
+<div class="r fix"><b>해결</b> 기존 것을 <code>terraform import</code> 후 이름만 in-place 변경 (name은 ForceNew 아님 — 재생성 없음)</div>
+<div class="r les"><b>교훈</b> "계정당 N개" 한도 리소스는 AWS가 선점해뒀을 가능성을 list API로 먼저 확인 — 8/3 "계정 싱글턴 사전 체크" 교훈의 확장 (콘솔을 한 번 연 것만으로 생기는 리소스가 있다)</div>
+</div></details>
+
+<details><summary><span class="star">★</span> Inspector2 5분 타임아웃 — "성공이 실패로 기록"된 tainted 루프</summary><div class="body">
+<div class="r sym"><b>증상</b> <code>aws_inspector2_enabler</code> create 타임아웃, 재시도해도 반복</div>
+<div class="r cau"><b>원인</b> EC2+ECR 동시 활성화는 최초 1회에 5분(프로바이더 기본값)을 자주 초과. AWS 쪽은 계속 진행돼 결국 ENABLED가 됐지만 state에 tainted로 남아, 다음 apply가 destroy(=비활성화)→재생성→같은 타임아웃의 무한 루프</div>
+<div class="r fix"><b>해결</b> <code>batch-get-account-status</code>로 실상태 확인(ec2/ecr ENABLED) → <code>terraform untaint</code> → <code>timeouts { create = "15m" }</code> 추가</div>
+<div class="r les"><b>교훈</b> 타임아웃은 "실제 실패"와 "관측 실패"를 구분하라. 7/31 "실패를 삼키는 프로비저너"(실패→성공 기록)의 정반대 사례 — 양쪽 다 terraform의 기록과 실제 상태는 다를 수 있다는 같은 교훈</div>
+</div></details>
+
+<details><summary>git 위생 3건 — 충돌 마커 커밋 · zip 추적 · gitignore 오판 정정</summary><div class="body">
+<div class="r cau"><b>원인</b> ① stash pop 충돌이 미해결 채 <code>.gitignore</code>에 커밋(마커 줄이 무의미한 패턴으로 취급돼 우연히 동작) ② Lambda 빌드 산출물 <code>cloudwatch-discord.zip</code>이 추적 중 ③ 보안 리뷰의 ".gitignore 비어 있음" 판정은 <code>go/.gitignore</code> 미확인 오판(실제 갭은 <code>*.tfvars</code>·zip뿐)</div>
+<div class="r fix"><b>해결</b> tfvars/zip 규칙 추가 + 오판은 문서 내 정정. 잔여: 마커 정리, <code>git rm --cached</code></div>
+<div class="r les"><b>교훈</b> 충돌은 그 자리에서 해결하고 커밋. 점검 땐 중첩 .gitignore까지 확인</div>
+</div></details>
+
+<h2>반복 패턴 — 8일이 가르쳐준 것</h2>
+<div class="callout">
+<p><strong>1. destroy/재구축의 적은 "참조되지 않는 의존"이다.</strong> NAT 경로, 라우트 테이블, SG 규칙, kubeconfig, ECR 이미지, 수동 비밀번호 — 전부 Terraform 그래프나 state 밖에 있어서 깨졌다. 해법도 일관됨: 그래프에 넣거나(depends_on 모듈 전체), 코드화하거나, 절차를 자동화한다.</p>
+<p><strong>2. AWS API의 숨은 제약은 같은 유형이 반복된다.</strong> IAM description 한글 불가(7/30) → WAF description 한글 불가(8/3). Helm이 모르는 키 무시(7/29 hostname) → 조용한 실패는 로그·실물 검증으로만 잡힌다 (jar unzip, SHOW TABLES, aws-node 컨테이너 수).</p>
+<p><strong>3. 에러 문구 감별표가 쌓이면 해결이 빨라진다.</strong> no such host/타임아웃/Unauthorized (EKS), TIMED_OUT/reset/REFUSED (접속), 403 대신 404 (GitHub workflow 스코프) — 7/31 이후 같은 증상은 분 단위로 해결됨.</p>
+<p><strong>4. 두 번 재발하면 문서가 아니라 설계를 고친다.</strong> ECR 비움 503이 대표 사례 — 세 군데 문서화로도 못 막았고, 자동화/구조 변경이 답이었다. 8/4의 "반쪽 배포"도 같은 경로를 밟았다: 체크리스트가 못 막은 것을 배포 계약 검증·스모크 테스트로 강제화.</p>
+<p><strong>5. (8/4 신규) Terraform의 기록과 실제 상태는 다를 수 있다 — 양방향으로.</strong> 7/31엔 실패가 성공으로(실패를 삼키는 프로비저너), 8/4엔 성공이 실패로(Inspector2 tainted) 기록됐다. 판정 전에 항상 실상태를 조회하고(list/describe API), "코드 두 벌 + state 한 벌" 상황(폴더 복사, terraform·gitops 분리)을 만들지 말 것 — 뒤처진 코드의 apply는 삭제 명령이 된다.</p>
+</div>
+
+<h2>부록 — 누적 함정 체크리스트 (요약 12선)</h2>
+<ol class="pit">
+<li>ALB <code>ssl-policy</code> 미지정 시 TLS 1.0/1.1 허용 기본값 — TLS13-1-2 정책으로 고정</li>
+<li>Terraform의 S3 버킷 관리 ≠ 내용물 관리 — 유지 파일은 <code>aws_s3_object</code>로 코드화, <code>force_destroy</code>는 운영 전환 시 해제</li>
+<li><code>module.X.output</code> 참조는 리소스 하나에만 순서를 건다 — destroy 생존이 필요한 의존은 모듈 전체를 depends_on</li>
+<li>GitHub Secret 삭제 ≠ AWS 키 무효화 — IAM에서 별도 비활성화</li>
+<li><code>TF_VAR_</code> 시크릿 없이 더미로 apply하면 실제 Secret이 덮여 연동이 조용히 끊김 — plan 출력 확인, <code>plan -out</code> 파일엔 변수 값이 담기므로 사용 후 삭제</li>
+<li>Security Hub 표준 활성화 = Config 규칙 335개 자동 생성 (Terraform import/삭제 금지, Config 비용의 주범)</li>
+<li>Athena 조사 쿼리에서 파티션 조건 제거 = S3 전체 스캔</li>
+<li>CW Logs→Firehose→S3는 Decompression 프로세서 2개 필수 — 없으면 gzip 덩어리만 쌓임</li>
+<li>배스천 역할은 최소 3권한 — kubectl은 access entry 덕분, AWS API 조회는 로컬 프로필로</li>
+<li>Grafana 루트 302는 정상(로그인 리다이렉트) — 바로 200이면 오히려 익명 접근 사고</li>
+<li>(8/4) <code>sensitive = true</code>는 CLI 표시만 가린다 — state에는 평문. data source로 secret을 읽는 순간 state 유출로 간주할 것</li>
+<li>(8/4) 계정 싱글턴/한도 1개 리소스(GuardDuty detector, Cost Anomaly DIMENSIONAL, OIDC provider, Inspector enabler)는 생성 전 존재 확인 → 있으면 import가 정석</li>
+</ol>
+
+<footer>
+  gochuchamchi EKS 프로젝트 · 트러블슈팅 전체 타임라인 (2026-07-27경~08-04) ·
+  원자료: go/docs/2026-07-28~31*.md, 2026-08-03*.md, 2026-08-04.md §4, 2026-08-04-incident-and-review.md,
+  2026-08-04-트러블슈팅-종합.md, pitfalls-checklist.md
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,117 @@
+# =============================================================================
+# gochuchamchi-gitops PR 검증 CI  (2026-08-04)
+#
+# ⚠ 이 파일은 gochuchamchi-gitops 저장소의 .github/workflows/ 에 넣는 파일이다.
+#
+# 목적 — 2026-08-04 장애("terraform은 Secret 이름을 바꿨는데 gitops는 옛 이름
+#   참조 -> 이중 잠김")를 "머지 차단"으로 승격한다. terraform 저장소의
+#   scripts/verify-contract.ps1이 하던 정적 검증의 핵심을, gitops PR 시점에
+#   클러스터·자격증명 없이 실행한다. 전부 정적 검사라 몇 초면 끝난다.
+#
+# 검사 4종
+#   1) 금지 이름       — 삭제된 gochuchamchi-db-secret 참조 시 실패
+#   2) 계약 이름 대조  — 참조하는 Secret/ConfigMap이 계약 목록에 있는가
+#   3) kustomize build — 등재 누락/문법 오류를 빌드 자체로 검증
+#   4) kubeconform     — 스키마 검증 (오타 필드, 잘못된 apiVersion)
+#
+# 계약 목록은 terraform 저장소 contract.tf의 deployment_contract와 같은 값이다.
+# 두 곳에 중복되는 게 마음에 안 들면: terraform apply 후
+#   terraform output -json deployment_contract > contract.json
+# 을 이 저장소에 커밋하고 아래 env를 파일에서 읽도록 바꾸면 된다(선택).
+# 계약이 바뀌는 빈도가 낮아서 지금은 env 상수로 충분하다고 판단.
+# =============================================================================
+name: gitops-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitops-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ---- 배포 계약 (terraform contract.tf와 동기) -----------------------------
+  FORBIDDEN_NAMES: "gochuchamchi-db-secret" # 공백 구분 목록
+  ALLOWED_REFS: "gochuchamchi-config gochuchamchi-db-app gochuchamchi-redis-secret"
+  REQUIRED_SERVICE: "gochuchamchi-web-svc"
+  REQUIRED_POD_LABEL: "app: gochuchamchi-web"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) 금지 이름 — 주석에 남아 있어도 잡는다 (다음 사람이 보고 되살리는 것 방지)
+      - name: 금지 이름 검사
+        run: |
+          fail=0
+          for name in $FORBIDDEN_NAMES; do
+            if grep -rn --include='*.yml' --include='*.yaml' -F "$name" .; then
+              echo "::error::삭제된 이름 '$name' 이 아직 참조/언급되고 있습니다. gochuchamchi-db-app 으로 교체하세요 (2026-08-04 제로트러스트 전환)."
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # 2) 계약 이름 대조 — secretRef/configMapRef 류가 참조하는 이름 수집 후 대조
+      - name: 계약 이름 대조
+        run: |
+          # ref 바로 다음 줄(블록) 또는 같은 줄(인라인 {name: x})의 name: 값 추출
+          refs=$(grep -rhoP --include='*.yml' --include='*.yaml' \
+            '(secretRef|configMapRef|secretKeyRef|configMapKeyRef)\s*:\s*\{?\s*name\s*:\s*"?\K[A-Za-z0-9._-]+' . || true)
+          refs2=$(grep -rhoPzo --include='*.yml' --include='*.yaml' \
+            '(secretRef|configMapRef|secretKeyRef|configMapKeyRef)\s*:\s*\n\s*name\s*:\s*"?\K[A-Za-z0-9._-]+' . | tr '\0' '\n' || true)
+          all=$(printf '%s\n%s\n' "$refs" "$refs2" | sort -u | sed '/^$/d')
+
+          echo "발견된 참조:"; echo "$all"
+          fail=0
+          for r in $all; do
+            ok=0
+            for a in $ALLOWED_REFS; do [ "$r" = "$a" ] && ok=1; done
+            if [ $ok -eq 0 ]; then
+              echo "::error::계약에 없는 이름을 참조합니다: $r — terraform이 만들지 않는 이름입니다. contract.tf(deployment_contract) 확인."
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # 3) Service 이름 / 파드 라벨 — terraform 쪽(Ingress 백엔드, NetworkPolicy
+      #    pod_selector)이 참조하는 값. 어긋나면 503 또는 앱 전체 차단.
+      - name: Service/라벨 계약
+        run: |
+          fail=0
+          grep -rq --include='*.yml' --include='*.yaml' "name: ${REQUIRED_SERVICE}" . \
+            || { echo "::error::Service '${REQUIRED_SERVICE}' 가 없습니다 — Ingress 백엔드가 끊겨 ALB 타겟 미등록(503)"; fail=1; }
+          grep -rq --include='*.yml' --include='*.yaml' "${REQUIRED_POD_LABEL}" . \
+            || { echo "::error::파드 라벨 '${REQUIRED_POD_LABEL}' 이 없습니다 — NetworkPolicy가 어떤 파드에도 안 걸려 default-deny만 남습니다"; fail=1; }
+          exit $fail
+
+      # 4) kustomize build — 등재 누락·문법 오류가 빌드 실패로 드러난다.
+      #    (kustomization.yaml 도입 전이면 이 스텝은 스킵된다)
+      - name: kustomize build
+        id: kustomize
+        run: |
+          if [ ! -f kustomization.yaml ] && [ ! -f kustomization.yml ]; then
+            echo "::warning::kustomization.yaml이 아직 없습니다 (plain YAML). CICD_SETUP.md §4 전환 후 이 검사가 활성화됩니다."
+            echo "built=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          kubectl kustomize . > /tmp/rendered.yaml
+          echo "built=true" >> "$GITHUB_OUTPUT"
+          echo "--- 렌더링 결과 리소스 목록 ---"
+          grep -E '^kind:|^  name:' /tmp/rendered.yaml | head -40
+
+      # 5) kubeconform — 렌더링 결과 전체를 스키마 검증
+      - name: kubeconform
+        if: steps.kustomize.outputs.built == 'true'
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform
+          # -strict: 스키마에 없는 필드(오타) 거부. EKS 1.35에 맞는 버전 지정.
+          ./kubeconform -strict -summary -kubernetes-version 1.35.0 \
+            -ignore-missing-schemas /tmp/rendered.yaml

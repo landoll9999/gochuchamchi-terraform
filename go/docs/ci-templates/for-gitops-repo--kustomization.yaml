@@ -1,0 +1,41 @@
+# =============================================================================
+# gochuchamchi-gitops kustomization  (2026-08-04 — plain YAML에서 전환)
+#
+# ⚠ 이 파일은 gochuchamchi-gitops 저장소 루트에 넣는 파일이다.
+#
+# 왜 전환하나
+#   1) plain YAML에선 Image Updater의 git write-back이 동작하지 않았다(백로그).
+#      kustomize의 images: 필드가 "이미지 태그"라는 배포 변수를 매니페스트 본문과
+#      분리해주므로, CI가 kustomize edit set image 한 줄로 태그만 갱신할 수 있다.
+#   2) resources에 등재된 파일만 배포된다 = "고쳤는데 반영 안 되는 잔재 파일"
+#      (2026-08-04 §4.5 장애)이 구조적으로 사라진다. 대신 새 매니페스트를 만들면
+#      여기 등재하는 것을 잊지 말 것 — 잊으면 CI(계약 검증)가 잡아준다.
+#
+# ArgoCD 쪽 변경: Application의 spec.source.path가 이 디렉터리를 가리키면
+#   ArgoCD가 kustomization.yaml을 자동 인식한다(설정 변경 불필요).
+#   Image Updater 관련 어노테이션은 컷오버 후 제거(CICD_SETUP.md §4).
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: gochuchamchi
+
+# ⚠ 저장소에 실제로 있는 매니페스트 파일명으로 채울 것 (예시는 알려진 파일 기준).
+#   ls *.yml *.yaml 결과와 대조해서 빠짐없이 등재해야 한다 — 여기 없는 파일은
+#   ArgoCD가 배포하지 않는다.
+resources:
+  - 03-deployment-web.yml
+  # - 01-....yml
+  # - 02-....yml
+
+# CI(build-and-deploy)가 kustomize edit set image로 갱신하는 유일한 지점.
+# name은 Deployment의 image가 참조하는 "레지스트리/저장소" 문자열과 정확히
+# 일치해야 매칭된다.
+#
+# ⚠ newTag 초기값은 반드시 "latest" — 지금 배포돼 있는 상태와 동일하게 시작해야
+#   이 파일을 머지하는 순간 아무 변화가 없다(무중단). placeholder 문자열을 두면
+#   ArgoCD가 그 문자열을 실제 태그로 렌더링해서 ImagePullBackOff가 난다.
+#   spring CI가 처음 돌면 이 값이 SHA 태그로 자동 교체된다.
+images:
+  - name: 307223751140.dkr.ecr.ap-northeast-2.amazonaws.com/gochuchamchi
+    newTag: latest

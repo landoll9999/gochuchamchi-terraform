@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>날짜별 작업 보고서 — gochuchamchi EKS 프로젝트</title>
+<style>
+  :root {
+    --ink:#1a2332; --sub:#5a6678; --line:#e3e7ee; --bg:#f7f8fa;
+    --accent:#2456a6; --accent-soft:#eaf1fb; --ok:#1e7e4c; --ok-soft:#e8f5ee;
+    --warn:#a05a00; --warn-soft:#fdf3e3; --danger:#b3372f; --danger-soft:#fdecea;
+    --purple:#6b4fa0; --purple-soft:#f0ebf9;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'Segoe UI','Malgun Gothic',-apple-system,sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.6; }
+  .wrap { max-width:940px; margin:0 auto; padding:40px 26px 80px; }
+  header { border-bottom:3px solid var(--accent); padding-bottom:16px; margin-bottom:24px; }
+  header h1 { margin:0 0 6px; font-size:25px; }
+  header .meta { color:var(--sub); font-size:14px; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0 8px; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 16px; text-align:center; }
+  .stat .n { font-size:24px; font-weight:800; color:var(--accent); }
+  .stat .l { font-size:12.5px; color:var(--sub); }
+  h2 { font-size:18px; margin:38px 0 4px; padding:9px 14px; background:var(--accent-soft);
+       border-left:4px solid var(--accent); border-radius:0 6px 6px 0; }
+  h2 .cnt { float:right; font-size:13px; color:var(--sub); font-weight:400; }
+  .theme { color:var(--sub); font-size:13.5px; margin:2px 0 12px 4px; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:9px; margin:8px 0; padding:12px 18px; font-size:14px; }
+  .box ul { margin:6px 0; padding-left:20px; }
+  .box li { margin:5px 0; }
+  code { background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:12.5px;
+         font-family:Consolas,'Courier New',monospace; }
+  .tag { display:inline-block; font-size:11.5px; font-weight:700; padding:1px 9px;
+         border-radius:999px; margin-right:6px; vertical-align:1px; }
+  .tag.infra { background:var(--accent-soft); color:var(--accent); }
+  .tag.sec { background:var(--danger-soft); color:var(--danger); }
+  .tag.obs { background:var(--warn-soft); color:var(--warn); }
+  .tag.auto { background:var(--purple-soft); color:var(--purple); }
+  .tag.app { background:var(--ok-soft); color:var(--ok); }
+  .tag.doc { background:#f1f3f7; color:var(--sub); }
+  .flow { background:#fff; border:1px solid var(--line); border-radius:10px;
+          padding:18px; margin:14px 0 22px; overflow-x:auto; }
+  .flow .lane { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:6px 0; }
+  .flow .lane-title { font-size:13px; font-weight:700; color:var(--sub); margin:8px 0 2px; }
+  .node { background:var(--accent-soft); border:1.5px solid var(--accent); color:var(--ink);
+          border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; white-space:nowrap; }
+  .node.good { background:var(--ok-soft); border-color:var(--ok); }
+  .node.warn { background:var(--warn-soft); border-color:var(--warn); }
+  .node.neutral { background:#f1f3f7; border-color:#b8c0cc; }
+  .arrow { color:var(--sub); font-weight:700; }
+  .callout { border-radius:8px; padding:12px 16px; margin:16px 0; font-size:14px;
+             background:var(--accent-soft); border-left:4px solid var(--accent); }
+  .tsref { font-size:12.5px; color:var(--sub); margin:4px 0 0 4px; }
+  .tsref a { color:var(--accent); }
+  footer { margin-top:56px; padding-top:14px; border-top:1px solid var(--line); color:var(--sub); font-size:13px; }
+  @media (max-width:640px){ .stats{grid-template-columns:repeat(2,1fr);} }
+  @media print { body{background:#fff;} .box{page-break-inside:avoid;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>날짜별 작업 보고서</h1>
+  <div class="meta">gochuchamchi EKS 프로젝트 · 초기 구축(2026-07-27경)부터 2026-08-04까지 ·
+  "무엇을 만들었나" 중심 — 사고·해결은 <code>troubleshooting-timeline.html</code> 참고</div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="n">8일</div><div class="l">작업 기간</div></div>
+  <div class="stat"><div class="n">3</div><div class="l">Terraform 스택 (본체·알림 2종)</div></div>
+  <div class="stat"><div class="n">15+6</div><div class="l">보안 감사 항목 + 백로그 B1~B6 이행</div></div>
+  <div class="stat"><div class="n">56</div><div class="l">트러블슈팅 (별도 타임라인)</div></div>
+</div>
+
+<div class="flow">
+  <div class="lane-title">최종 아키텍처 (2026-08-04 기준 · CloudFront는 2차 apply에서 활성화)</div>
+  <div class="lane">
+    <span class="node warn">인터넷</span><span class="arrow">→</span>
+    <span class="node">CloudFront + WAF<br><small>관리형 룰 3종 + Rate limit</small></span><span class="arrow">→</span>
+    <span class="node">ALB<br><small>TLS1.2/1.3 · CF prefix list SG</small></span><span class="arrow">→</span>
+    <span class="node good">EKS 파드<br><small>PSA·NetworkPolicy·Quota</small></span><span class="arrow">→</span>
+    <span class="node good">RDS(TLS강제·감사) · Redis(TLS+AUTH)</span>
+  </div>
+  <div class="lane">
+    <span class="node neutral">GitOps: Actions(OIDC)→ECR→Image Updater→ArgoCD</span>
+    <span class="node neutral">관측: CloudWatch·Grafana·CloudTrail·Athena·FlowLogs</span>
+    <span class="node neutral">탐지: GuardDuty·SecurityHub·Config·Inspector</span>
+  </div>
+  <div class="lane">
+    <span class="node neutral">알림: EventBridge→SNS 허브→{Discord, 이메일}+DLQ</span>
+    <span class="node neutral">DR: AWS Backup→도쿄 + S3 CRR</span>
+    <span class="node neutral">비용: Budgets·Anomaly Detection</span>
+  </div>
+</div>
+
+<h2>초기 구축기 (~2026-07-27) <span class="cnt">기반 인프라</span></h2>
+<p class="theme">테마: 3-tier 쇼핑몰(gochuchamchi.shop)을 EKS 위에 — 재구축 가능한 코드화가 목표</p>
+<div class="box"><ul>
+  <li><span class="tag infra">인프라</span>VPC 2AZ(퍼블릭/프라이빗/DB 서브넷 분리, <code>172.30.0.0/16</code>) + EKS 클러스터 + 관리형 노드그룹(t3.small)</li>
+  <li><span class="tag infra">인프라</span>배스천 호스트 — <strong>SSM 전용 파이프라인</strong> 확립 (send-command JSON 파일 방식, 인코딩/특수문자 규약)</li>
+  <li><span class="tag infra">인프라</span>NAT 인스턴스(비용 절감형) + S3 Gateway 엔드포인트</li>
+  <li><span class="tag app">앱·데이터</span>RDS MariaDB — Secrets Manager 자동 비밀번호 관리(<code>manage_master_user_password</code>), <code>schema.sql</code> 자동 적용 프로비저너</li>
+  <li><span class="tag app">앱·데이터</span>Redis 세션 스토어 — 멀티 파드 로그인 유지 (jar 의존성 검증 포함), S3 이미지 버킷 + 텍스처 코드화</li>
+  <li><span class="tag infra">인프라</span>ALB Ingress + ACM + Route53(<code>data</code> 전환으로 존 보존) — 재구축해도 NS 재설정 불필요</li>
+</ul></div>
+<p class="tsref">관련 사고 12건 → <a href="troubleshooting-timeline.html">타임라인 §초기 구축기</a></p>
+
+<h2>2026-07-28 <span class="cnt">앱 품질</span></h2>
+<p class="theme">테마: 프론트엔드/앱 레벨 마감 — 브라우저 개발자도구 디버깅 방법론 정착</p>
+<div class="box"><ul>
+  <li><span class="tag app">앱</span>메인 페이지 텍스처 배경 복구 (3중 원인 해결) + 이미지 업로드 한도 10MB 상향</li>
+  <li><span class="tag doc">방법론</span>Network Initiator 체인 → Computed → Styles 순서의 CSS 디버깅, 컨테이너 jar unzip 검증 습관</li>
+</ul></div>
+
+<h2>2026-07-29 <span class="cnt">GitOps 전환</span></h2>
+<p class="theme">테마: 수동 배포 → ArgoCD GitOps + 자동 이미지 반영 + 배포 알림</p>
+<div class="box"><ul>
+  <li><span class="tag auto">CD</span><strong>ArgoCD 도입</strong> — gitops 저장소(Deployment/Service/HPA) 감시·자동 동기화, <code>argocd.gochuchamchi.shop</code> UI</li>
+  <li><span class="tag auto">CD</span><strong>Image Updater</strong> — ECR 새 이미지 감지 → gitops git write-back (v1.2.2 CR 방식 대응)</li>
+  <li><span class="tag infra">인프라</span><strong>Docker Hub → ECR 마이그레이션</strong> (같은 리전 pull + OIDC 기반 push 토대)</li>
+  <li><span class="tag obs">알림</span>ArgoCD Notifications → <strong>Discord webhook</strong> (배포 성공/실패/헬스) — 범용 webhook 서비스로 구현</li>
+  <li><span class="tag infra">인프라</span>destroy 순서 체계 시작 — 컨트롤러/ArgoCD에 <code>depends_on</code> (교착 3부작의 1·2차 해결)</li>
+</ul></div>
+<p class="tsref">관련 사고 12건 (최다 사건일) → <a href="troubleshooting-timeline.html">타임라인 §07-29</a></p>
+
+<h2>2026-07-30 <span class="cnt">관측·감사 계층</span></h2>
+<p class="theme">테마: "보이게 만들기" — 로그·메트릭·감사 인프라 일괄 합류 + 운영 체계 정리</p>
+<div class="box"><ul>
+  <li><span class="tag obs">관측</span><strong>CloudWatch 로그 아카이브</strong> — Container Insights/컨트롤플레인 로그 → Firehose → 중앙 S3 (Glacier 라이프사이클)</li>
+  <li><span class="tag obs">관측</span><strong>Grafana</strong> — CloudWatch 데이터소스 + 메트릭/AWS 에러 대시보드, Pod Identity 권한</li>
+  <li><span class="tag sec">감사</span><strong>CloudTrail</strong>(중앙 관리 이벤트) + <strong>Athena</strong>(파티션 프로젝션 조회 테이블·저장 쿼리) + <strong>AWS Config·Security Hub</strong> 모듈 연결</li>
+  <li><span class="tag infra">인프라</span>IngressGroup으로 <strong>ALB 1개 통합</strong>(웹+Grafana), ArgoCD internal ALB 전환(포트포워딩 접속 체계)</li>
+  <li><span class="tag infra">인프라</span>2단계 apply 체계 정식화(<code>enable_alb_alarms</code>) — data 순환 해소 패턴 확립</li>
+  <li><span class="tag doc">문서</span>문서 구조를 날짜별(<code>YYYY-MM-DD.md</code>)로 분할 + 검증 명령 모음(실행 위치 구분)</li>
+</ul></div>
+<p class="tsref">관련 사고 9건 → <a href="troubleshooting-timeline.html">타임라인 §07-30</a></p>
+
+<h2>2026-07-31 <span class="cnt">격차분석·설계</span></h2>
+<p class="theme">테마: 구축에서 설계로 — 보안 격차분석과 "apply 전에 함정을 회피하는" 설계 문서화</p>
+<div class="box"><ul>
+  <li><span class="tag sec">보안</span><strong>격차분석 수행</strong> — L1 경계(CloudFront+WAF)부터 L8 복원력(DR)까지 계층별 갭 식별, 이행 계획(D01~D20) 수립</li>
+  <li><span class="tag sec">설계</span><strong>함정 7건 사전 회피 설계</strong> — KMS↔Config 순환, Object Lock 자기잠금, Region Guard 글로벌 예외, enable_edge 2단계, ExternalDNS 소유권, CRR versioning, Deny 그룹 사고 재발 방지</li>
+  <li><span class="tag doc">문서</span><code>pitfalls-checklist.md</code> 누적 체계, gap-closure 문서. (ECR state 분리는 계획만 수립 — 미실행이 8/3 재발로 이어진 교훈 기록)</li>
+</ul></div>
+<p class="tsref">관련 사고 12건 → <a href="troubleshooting-timeline.html">타임라인 §07-31</a></p>
+
+<h2>2026-08-03 <span class="cnt">full-HA·보안 강화 일괄 적용</span></h2>
+<p class="theme">테마: 격차분석 이행일 — 경계 방어부터 DR까지 13개 파일 일괄 구축</p>
+<div class="box"><ul>
+  <li><span class="tag sec">L1 경계</span><strong>CloudFront + WAFv2</strong>(관리형 룰 3종 + rate limit) + us-east-1 ACM + ALB SG를 CloudFront prefix list로 잠금 (<code>edge.tf</code>, 2단계 apply)</li>
+  <li><span class="tag sec">L2 네트워크</span>DB 서브넷 커스텀 <strong>NACL</strong> + <strong>VPC 인터페이스 엔드포인트 7종</strong>(ECR/SSM/Secrets/Logs — NAT 무관 경로)</li>
+  <li><span class="tag sec">암호화</span><strong>KMS CMK 2종</strong>(로그/데이터) + 키 정책 — 로그 버킷 SSE-KMS</li>
+  <li><span class="tag sec">IAM</span>Access Analyzer + MFA 강제 그룹 + <strong>Region Guard</strong> / <strong>GitHub Actions OIDC</strong>(sub 조건 — 액세스 키 제로)</li>
+  <li><span class="tag obs">탐지</span><strong>GuardDuty 확장</strong>(EKS 감사·S3·EBS 말웨어·15분 주기) + <strong>VPC Flow Logs</strong>→S3+Athena(포트스캔/유출 조사 쿼리 3종)</li>
+  <li><span class="tag sec">K8s</span><strong>Kyverno</strong>(restricted Audit) + <strong>LimitRange/ResourceQuota</strong> + PSA 라벨 — 컨테이너 보안 3레이어</li>
+  <li><span class="tag infra">HA</span><strong>NAT AZ별 2대</strong>(moved 무중단 인수) + <strong>도쿄 DR</strong>(AWS Backup 크로스리전 + S3 CRR)</li>
+  <li><span class="tag obs">비용</span><strong>Budgets + Cost Anomaly Detection</strong> / SNS 이메일 백업 채널</li>
+  <li><span class="tag sec">설계 변경</span>AWS Config <strong>전용 버킷 분리</strong> — 5라운드 수사 끝 "증적 등급별 통제 분리" 결정</li>
+  <li><span class="tag infra">복구</span>재구축 후 사이트 복구 4건 + <code>rds-schema-init.tf</code> 실패 표면화 개선 + runbook 전면 개편</li>
+</ul></div>
+<p class="tsref">관련 사고 8건 → <a href="troubleshooting-timeline.html">타임라인 §08-03</a></p>
+
+<h2>2026-08-04 <span class="cnt">제로트러스트 · 복원 · 자동화</span></h2>
+<p class="theme">테마: 최다 산출일 — DB 제로트러스트 전환, 장애 복구, 소실 복원 병합, 재발 방지 자동화까지</p>
+
+<div class="box">
+<strong>① 제로트러스트 DB 하드닝</strong> (<code>2026-08-04.md</code>)
+<ul>
+  <li><span class="tag sec">최소권한</span>앱 전용 DB 계정 <code>gochuchamchi_app</code>(DML만 + REQUIRE SSL) — 배스천 런타임 생성/주입으로 <strong>앱 DB 비밀번호가 tfstate에 안 남는 구조</strong></li>
+  <li><span class="tag sec">암호화</span>RDS <code>require_secure_transport=1</code>(전송 TLS 강제) + MARIADB_AUDIT_PLUGIN→CloudWatch / Redis replication_group 전환 — <strong>TLS + AUTH</strong></li>
+  <li><span class="tag sec">축소</span>배스천·앱 IAM <code>rds!*</code> 와일드카드 → 정확한 ARN 2개, 배스천 K8s 권한 ClusterAdmin → 네임스페이스 Edit, DB/캐시 SG egress 제거</li>
+  <li><span class="tag sec">백로그</span>B1~B6 이행 — SG 참조 축소·SSH 완전 제거·<strong>ESO 도입(PAT state 이관)</strong>·ArgoCD 비번 코드화·NetworkPolicy·GuardDuty</li>
+</ul>
+</div>
+
+<div class="box">
+<strong>② 장애 복구 + 복구 후 재점검</strong> (<code>2026-08-04-incident-and-review.md</code>)
+<ul>
+  <li><span class="tag infra">복구</span>"반쪽 배포" DB 전면 500 → 장애 5건 연쇄 해결, <code>/api/health</code> 500→302 외부 검증</li>
+  <li><span class="tag doc">점검</span><strong>하드코딩 인벤토리</strong>(🔴 AMI ID·backend 계정 종속 / 🟡 의도적 / 🟢 정답 구분) + <strong>보안 재점검</strong>(IAM <code>"*"</code> 전수 확인, Grafana 비밀번호 state 평문 적발→제거, .gitignore 보강)</li>
+</ul>
+</div>
+
+<div class="box">
+<strong>③ 알림 허브 + full-HA 복원 병합</strong>
+<ul>
+  <li><span class="tag obs">알림</span><strong>SNS 허브</strong> — EventBridge→SNS 팬아웃(Discord+이메일) + SQS DLQ + 자기 감시 알람 (<code>cloudwatch-notifications/sns.tf</code>)</li>
+  <li><span class="tag infra">복원</span><strong>8/3 full-HA 13개 파일 소실 발견 → fin 사본에서 복원 + 제로트러스트와 3-way 병합</strong> (8/4 코드 우선 원칙, validate 통과, 파괴 항목은 재구축 사이클로 보류)</li>
+  <li><span class="tag infra">정리</span>apply 오류 2건 해결(Cost Anomaly import, Inspector2 untaint) + waf-cdn 중복 정리 → <strong>WAF/CloudFront edge 로그</strong>(<code>edge-logs.tf</code>)로 재구성</li>
+</ul>
+</div>
+
+<div class="box">
+<strong>④ 재발 방지 자동화 3종</strong> (<code>2026-08-04-automation.md</code>)
+<ul>
+  <li><span class="tag auto">자동화</span><strong>배포 계약</strong> — <code>contract.tf</code>가 terraform↔gitops 인터페이스 선언, <code>verify-contract.ps1</code>이 정적+라이브 양방향 검증 (잔재 파일 적발 포함)</li>
+  <li><span class="tag auto">자동화</span><strong>스모크 테스트</strong> — apply 후 12개 항목 자동 점검(파드·DNS·포트·ALB·HTTP), 실패마다 다음 행동 출력</li>
+  <li><span class="tag auto">자동화</span><strong>수동 변경 감지</strong> — CloudTrail 콘솔 세션/IAM 변경/루트 사용 → SNS 허브 실시간 통보</li>
+</ul>
+</div>
+
+<div class="box">
+<strong>⑤ 문서화</strong>
+<ul>
+  <li><span class="tag doc">문서</span>트러블슈팅 종합(post-mortem) md/html + <strong>전체 타임라인 갱신(56건)</strong> + 제로트러스트 보고서 + CI/CD 가이드(<code>CICD_SETUP.md</code>) + runbook 현행화</li>
+</ul>
+</div>
+<p class="tsref">관련 사고 11건 → <a href="troubleshooting-timeline.html">타임라인 §08-04</a></p>
+
+<h2>총평 — 8일의 궤적</h2>
+<div class="callout">
+<p><strong>구축(7/27~28) → 자동화(7/29) → 관측(7/30) → 설계(7/31) → 강화(8/3) → 제로트러스트·자가치유(8/4)</strong>
+순서로 계층을 쌓았다. 특히 후반부의 전환이 뚜렷하다: 초반에는 "만들고 고치는" 날들이었다면,
+7/31부터는 <strong>함정을 apply 전에 설계로 회피</strong>하기 시작했고, 8/4에는 사람의 체크리스트가 두 번
+실패한 지점(반쪽 배포, ECR 비움)을 <strong>계약 검증·스모크 테스트·드리프트 감지라는 강제 장치</strong>로
+바꿨다. 남은 큰 덩어리는 CloudFront 2차 apply 활성화, 재구축 사이클의 파괴적 보안 항목
+(RDS/EFS CMK, Object Lock), 이미지 태그 자동화(write PAT read-only 강등)다.</p>
+</div>
+
+<footer>
+  gochuchamchi EKS 프로젝트 · 날짜별 작업 보고서 (2026-07-27경~08-04) ·
+  짝 문서: <code>troubleshooting-timeline.html</code>(사고 56건) ·
+  원자료: go/docs/README.md 인덱스, 2026-07-28~08-04 일별 기록, SECURITY_AUDIT_REPORT.md, architecture.md
+</footer>
+
+</div>
+</body>
+</html>
