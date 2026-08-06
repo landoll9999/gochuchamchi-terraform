@@ -670,7 +670,7 @@ kubectl -n gochuchamchi get netpol web-allow -o jsonpath="{.spec.egress[0].to}"
 | RDS 시크릿 ARN | `terraform output -raw rds_secret_arn` (로컬) |
 | 배스천 IP / ID | `terraform output bastion_ip` / `terraform output bastion_id` (로컬) |
 | ALB 주소 | `kubectl -n gochuchamchi get ingress` |
-| Grafana 비밀번호 | `terraform output -raw grafana_admin_password` (로컬) |
+| Grafana 비밀번호 | `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}')))` — **terraform output에는 없습니다** (§8.1) |
 
 EKS 엔드포인트도 클러스터를 재생성하면 바뀝니다. 로컬 kubectl이 `no such host`를 뱉으면 kubeconfig가 낡은 것이니 `aws eks update-kubeconfig --name gochuchamchi-eks --region ap-northeast-2 --profile admin`으로 갱신하세요.
 
@@ -686,9 +686,15 @@ EKS 엔드포인트도 클러스터를 재생성하면 바뀝니다. 로컬 kube
 
 ### 8.1 Grafana
 
+계정은 `admin`, 비밀번호는 **클러스터에서 직접** 조회합니다 (PowerShell):
+
 ```powershell
-terraform output -raw grafana_admin_password    # 계정: admin
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}')))
 ```
+
+> `terraform output -raw grafana_admin_password`는 **더 이상 없습니다.** 2026-08-04 보안 리뷰에서 제거했습니다 — data source → output 경유로 비밀번호가 tfstate에 **평문 저장**되고 있었기 때문입니다(`sensitive = true`는 CLI 출력만 가릴 뿐 state에는 그대로 남습니다). 근거와 대체 명령은 `grafana.tf:52` 주석에 있습니다.
+>
+> `| base64 -d` 형태는 PowerShell 5.1에 `base64`가 없어서 실패합니다 (2026-08-05 §6). 배스천 등 리눅스에서라면 `kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d`를 쓰세요.
 
 브라우저 **`https://grafana.gochuchamchi.shop`** — ArgoCD와 달리 **internet-facing**이라 터널 없이 바로 열립니다.
 
