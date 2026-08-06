@@ -166,6 +166,15 @@ variable "smoke_test_enforce" {
   default     = false
 }
 
+# 기본이 true인 이유 — Pod Identity 자격증명이 누락된 파드는 재시작 말고 고칠 방법이
+# 없다(주입은 파드 생성 시 1회뿐). 그대로 두면 그 파드의 AWS 호출은 영원히 실패하므로,
+# 검출과 복구를 분리할 실익이 없다. 재시작을 원치 않으면 false로 두면 FAIL만 보고한다.
+variable "pod_identity_autofix" {
+  description = "스모크 테스트 #13에서 Pod Identity 자격증명 미주입 파드를 찾으면 워크로드를 자동 재시작할지 여부"
+  type        = bool
+  default     = true
+}
+
 resource "null_resource" "post_apply_smoke_test" {
   count = var.smoke_test_after_apply ? 1 : 0
 
@@ -200,6 +209,6 @@ resource "null_resource" "post_apply_smoke_test" {
     # 작은따옴표 이스케이프: JSON 값에 '가 들어갈 여지는 없지만 방어적으로 처리.
     # 한 줄로 유지 — 여러 줄 + 백틱 연결은 PowerShell -Command 로 넘길 때 개행 처리에
     # 따라 깨질 수 있어서, 길더라도 단일 명령 문자열이 안전하다.
-    command = "& '${path.module}/../scripts/smoke-test.ps1' -ContractJson '${replace(jsonencode(local.deployment_contract), "'", "''")}' -Region '${var.region}' -AwsProfile '${var.aws_profile}' ${var.smoke_test_enforce ? "-Enforce" : ""}"
+    command = "& '${path.module}/../scripts/smoke-test.ps1' -ContractJson '${replace(jsonencode(local.deployment_contract), "'", "''")}' -Region '${var.region}' -AwsProfile '${var.aws_profile}' ${var.smoke_test_enforce ? "-Enforce" : ""} ${var.pod_identity_autofix ? "-FixPodIdentity" : ""}"
   }
 }

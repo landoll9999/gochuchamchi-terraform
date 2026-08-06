@@ -247,10 +247,16 @@ aws ecr describe-images --repository-name gochuchamchi --region ap-northeast-2 -
 ### 3.1 앱 재배포 (이미지 빌드 → ECR → ArgoCD 자동 sync)
 
 ```powershell
-gh workflow run "Deploy to Amazon ECR" --repo landoll9999/gochuchamchi-spring
+gh workflow run "Build and sign release image" --repo landoll9999/gochuchamchi-spring
 gh run watch --repo landoll9999/gochuchamchi-spring
 ```
-이후 흐름은 자동입니다: ECR push → Image Updater 감지 → `gochuchamchi-gitops` write-back 커밋 → ArgoCD sync → 롤링 업데이트
+이후 흐름은 자동입니다: ECR push(`candidate-` → 서명 → `signed-`) → Image Updater 감지 → `gochuchamchi-gitops` write-back 커밋 → ArgoCD sync → 롤링 업데이트
+
+> ⚠️ **같은 커밋으로 다시 돌리면 마지막 단계에서 실패합니다** (2026-08-06 §5). ECR 태그가 불변이라 워크플로가 이미 릴리스된 `signed-<sha>`를 다른 이미지로 옮기기를 거부합니다:
+> ```
+> Refusing to move existing signed-<sha> from sha256:...
+> ```
+> 재빌드는 **복구 수단이 아닙니다** — 배포할 내용이 있으면 새 커밋을 만드세요. (ECR이 통째로 비어 태그도 함께 사라진 경우에는 정상 동작합니다.)
 
 ### 3.2 `ImagePullBackOff` 복구
 
@@ -442,7 +448,11 @@ aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> 
   aws ce get-anomaly-monitors --profile admin --region us-east-1 --query "AnomalyMonitors[?MonitorType=='DIMENSIONAL'].MonitorArn" --output text
   terraform import aws_ce_anomaly_monitor.services "<위 ARN>"
   ```
-- [ ] **ECR 이미지 적재** — `aws ecr describe-images`가 비어있으면 §3.1 워크플로 실행 (`force_delete = true`라 destroy가 이미지까지 지웁니다)
+- [ ] **ECR 이미지 확인** — `aws ecr describe-images`에 `signed-` 태그가 있는지. 없으면 §3.1 워크플로 실행.
+
+  > **2026-08-06부터 destroy가 이미지를 지우지 않습니다.** ECR을 `go/persistent`로 옮겨 `prevent_destroy`를 걸었습니다(§4). 그 전까지는 `force_delete = true` 때문에 재구축마다 비워졌고, 그게 8/3·8/5·8/6 503의 원인이었습니다. 이제 이 항목은 최초 구축이나 이미지를 수동 삭제한 경우에만 해당합니다.
+  >
+  > apply가 자동으로 확인하고 비어 있으면 복구 명령까지 출력합니다(`ci-sync.tf`의 `verify_ecr_has_image`).
 - [ ] **DB 스키마 적용 확인** — `SHOW TABLES`에 4개(`users`/`notices`/`products`/`product_sizes`)가 보여야 합니다 → 없으면 **§5.1**
 - [ ] **사이트 200 확인** — `curl` 5회 (§2.4). 503이면 §2.3의 타겟 수부터
 - [ ] **Route 53 레코드가 신규 ALB를 가리키는지** — §2.4 교차 확인
@@ -635,6 +645,43 @@ kubectl -n gochuchamchi get netpol web-allow -o jsonpath="{.spec.egress[0].to}"
 단 **GitOps 관리 리소스를 `kubectl patch`로 고친 건 selfHeal이 몇 분 뒤 원복**하므로
 진단용으로만 쓰고 해결은 gitops 저장소 커밋으로 하세요.
 
+### 6.9 파드의 AWS 호출만 전부 실패 (`no EC2 IMDS role found`)
+
+Grafana 대시보드가 전 패널 `No data`이거나, 특정 파드의 AWS SDK 호출이 이런 에러로 죽을 때입니다.
+
+```
+get identity: get credentials: failed to refresh cached credentials,
+no EC2 IMDS role found, operation error ec2imds: GetMetadata, context deadline exceeded
+```
+
+`get credentials`라는 표현 때문에 **애플리케이션 로그인 자격증명 문제로 읽히지만 무관합니다.** 자격증명 체인의 마지막 후보인 IMDS까지 갔다는 것은 **Pod Identity 주입이 통째로 빠졌다**는 신호입니다. 파드는 `Running`·`Ready`이므로 파드 상태만 봐서는 알 수 없습니다.
+
+**확인 — 파드 spec에 env가 있는지 (한 줄로 판별됩니다)**
+
+```powershell
+kubectl -n <ns> get pod <파드> -o json | ConvertFrom-Json | ForEach-Object { $_.spec.containers.env.name } | Select-String AWS_CONTAINER
+```
+
+`AWS_CONTAINER_CREDENTIALS_FULL_URI`가 없으면 미주입입니다. 있는데도 실패하면 IAM 정책·association의 역할을 보세요.
+
+**조치 — 재시작 외에는 방법이 없습니다**
+
+주입은 **파드 생성 시 1회**뿐이라, association을 고쳐도 이미 뜬 파드는 끝까지 자격증명이 없습니다.
+
+```powershell
+kubectl -n <ns> rollout restart deploy/<이름>
+```
+
+**재시작해도 안 고쳐지면** association 자체를 의심하세요 — `namespace`/`service_account`가 파드와 정확히 일치해야 합니다.
+
+```powershell
+cd C:\terraform\go\terraform
+terraform state show 'module.grafana.aws_eks_pod_identity_association.grafana'
+kubectl -n <ns> get pod <파드> -o jsonpath="{.spec.serviceAccountName}"
+```
+
+> 스모크 테스트 #13이 Pod Identity 대상 7개를 자동으로 점검하고, 미주입을 찾으면 워크로드를 재시작합니다(`pod_identity_autofix`, 기본 켜짐). 수동 실행은 `.\smoke-test.ps1 -FixPodIdentity`. 자세한 배경은 2026-08-06 §6.
+
 ---
 
 ## 7. 고정 값 참조
@@ -700,6 +747,7 @@ EKS 엔드포인트도 클러스터를 재생성하면 바뀝니다. 로컬 kube
 
 - 앱 ALB와 **같은 ALB를 공유**합니다 (ingress group `gochuchamchi-web`, `group.order=30`). `kubectl -n monitoring get ingress grafana`의 ADDRESS가 앱과 동일하게 나오는 게 정상입니다
 - CloudWatch 데이터소스는 Pod Identity로 붙습니다 — 역할 ARN은 `terraform output grafana_iam_role_arn`
+- **대시보드가 전 패널 `No data`이고 패널 메시지에 `no EC2 IMDS role found`가 보이면 → §6.9** (Grafana 로그인 문제가 아니라 파드에 AWS 자격증명이 주입되지 않은 상태입니다. 조치는 `kubectl -n monitoring rollout restart deploy/grafana`)
 
 ### 8.2 Athena (CloudTrail 조회)
 

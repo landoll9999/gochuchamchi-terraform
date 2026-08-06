@@ -14,6 +14,7 @@
     #9  파드에서 RDS 3306 / Redis 6379 도달          <- 제로트러스트 SG/netpol 회귀 감지
     #11 사이트 HTTP 응답 (/ , /api/health)           <- 최종 사용자 관점 확인
     #12 ALB 타겟 헬스                                 <- 타겟 미등록/헬스체크 실패
+    #13 Pod Identity 자격증명 주입                    <- 8/6 Grafana No data (IMDS 폴백)
 
   기본은 경고 모드(-Enforce 미지정): 결과만 출력하고 종료코드 0.
   재구축 직후에는 PAT 수동 주입 전이라 앱이 안 떠 있는 게 정상이기 때문.
@@ -21,6 +22,10 @@
 .EXAMPLE
   .\smoke-test.ps1                       # 로컬에서 수동 실행 (terraform output에서 계약 조회)
   .\smoke-test.ps1 -Enforce              # 실패 시 종료코드 1
+  .\smoke-test.ps1 -FixPodIdentity       # #13에서 자격증명 누락 파드를 찾으면 재시작까지
+
+.NOTES
+  이 파일은 반드시 UTF-8 **BOM 포함**으로 저장할 것 (preflight-check.ps1과 동일 이유).
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +35,11 @@ param(
   [string] $Region = 'ap-northeast-2',
   [string] $AwsProfile = 'admin',
   [switch] $Enforce,
-  [switch] $SkipHttp
+  [switch] $SkipHttp,
+  # #13에서 자격증명 누락 파드를 찾으면 rollout restart까지 실행한다.
+  # 누락된 파드는 재시작 말고는 고칠 방법이 없어서(주입은 파드 생성 시 1회뿐)
+  # apply 파이프라인에서는 기본으로 켠다 — smoke-test.tf의 pod_identity_autofix.
+  [switch] $FixPodIdentity
 )
 
 $ErrorActionPreference = 'Continue'
@@ -323,6 +332,135 @@ if ($hasAws -and $albDns) {
   else { Add-Result '12. ALB 타겟 헬스' 'SKIP' 'aws elbv2 호출 실패(권한/프로파일)' }
 }
 else { Add-Result '12. ALB 타겟 헬스' 'SKIP' 'aws CLI 또는 ALB 주소 없음' }
+
+# ---------------------------------------------------------------------------
+# 13. Pod Identity 자격증명 주입  (2026-08-06)
+#
+# 왜 — Pod Identity의 env(AWS_CONTAINER_CREDENTIALS_FULL_URI)와 토큰 볼륨 주입은
+#   파드가 "생성되는 순간" EKS admission이 딱 한 번 한다. association이 아직 전파되기
+#   전에 파드가 뜨면 주입이 통째로 빠지고, AWS SDK는 자격증명 체인 끝의 IMDS로 폴백해
+#   "no EC2 IMDS role found"로 죽는다.
+#   이게 특히 안 잡히는 이유 — 파드는 Running/Ready라서 #5는 PASS로 지나간다. 증상은
+#   한참 뒤에 "그 파드의 AWS 호출만 전부 실패"로 나타난다. 8/6 Grafana 대시보드가
+#   전 패널 No data였던 게 정확히 이 경우였고, depends_on이 걸려 있었는데도 발생했다.
+#   module/grafana의 time_sleep으로 확률은 낮췄지만 노드 교체·수동 재배포로 언제든
+#   다시 날 수 있어서, 원인이 아니라 결과를 여기서 직접 확인한다.
+#
+# 고치는 법이 재시작뿐인 이유 — 주입 기회는 파드 생성 시 1회뿐이다. association을
+#   나중에 고쳐도 이미 뜬 파드는 끝까지 자격증명이 없다.
+#
+# 대상 추가 — Pod Identity association을 새로 만들면 아래에 한 줄 추가할 것
+#   (eks-pod-identity.tf, module/grafana/main.tf의 aws_eks_pod_identity_association).
+# ---------------------------------------------------------------------------
+$script:PodIdentityTargets = @(
+  @{ ns = 'monitoring'; sa = 'grafana' }
+  @{ ns = $ns; sa = 'gochuchamchi-app' }
+  @{ ns = 'kube-system'; sa = 'aws-load-balancer-controller' }
+  @{ ns = 'kube-system'; sa = 'cluster-autoscaler' }
+  @{ ns = 'kube-system'; sa = 'efs-csi-controller-sa' }
+  @{ ns = 'external-dns'; sa = 'external-dns' }
+  @{ ns = 'argocd'; sa = 'argocd-image-updater' }
+)
+
+# admission이 넣은 env는 파드 spec에 그대로 남으므로 exec 없이 확인할 수 있다.
+# (exec는 컨테이너에 셸이 없으면 실패해서 도구 부재와 진짜 누락이 섞인다 — #9 교훈)
+function Get-PodIdentityState {
+  param([string]$Namespace, [string]$ServiceAccount)
+  $pods = Invoke-Cli 'kubectl' @('-n', $Namespace, 'get', 'pods', '-o', 'json')
+  if (-not $pods.Ok) { return $null }   # 네임스페이스 자체가 없음/조회 실패
+  $items = @(($pods.Out | ConvertFrom-Json).items | Where-Object {
+      $_.spec.serviceAccountName -eq $ServiceAccount -and -not $_.metadata.deletionTimestamp
+    })
+  $missing = New-Object System.Collections.ArrayList
+  foreach ($p in $items) {
+    $has = $false
+    foreach ($c in @($p.spec.containers)) {
+      if (@($c.env | Where-Object { $_.name -eq 'AWS_CONTAINER_CREDENTIALS_FULL_URI' }).Count -gt 0) { $has = $true; break }
+    }
+    if (-not $has) { [void]$missing.Add($p) }
+  }
+  return [pscustomobject]@{ Total = $items.Count; Missing = @($missing) }
+}
+
+# 재시작 대상은 파드가 아니라 그 파드를 만든 워크로드다. 파드를 직접 지우면 Deployment는
+# 어차피 같은 ReplicaSet으로 다시 만들지만, rollout restart 쪽이 상태 추적(rollout status)이
+# 되고 DaemonSet/StatefulSet까지 같은 방식으로 다룰 수 있다.
+function Get-OwnerWorkload {
+  param([string]$Namespace, $Pod)
+  $owner = @($Pod.metadata.ownerReferences) | Select-Object -First 1
+  if (-not $owner) { return $null }
+  if ($owner.kind -eq 'ReplicaSet') {
+    $rs = Invoke-Cli 'kubectl' @('-n', $Namespace, 'get', 'rs', $owner.name, '-o', 'json')
+    if (-not $rs.Ok) { return $null }
+    $rsOwner = @(($rs.Out | ConvertFrom-Json).metadata.ownerReferences) | Select-Object -First 1
+    if ($rsOwner) { return "$($rsOwner.kind.ToLower())/$($rsOwner.name)" }
+    return $null
+  }
+  if (@('DaemonSet', 'StatefulSet', 'Deployment') -contains $owner.kind) { return "$($owner.kind.ToLower())/$($owner.name)" }
+  return $null   # Job/스탠드얼론 파드 등 — 재시작 개념이 없다
+}
+
+if (-not $hasKubectl) {
+  Add-Result '13. Pod Identity 주입' 'SKIP' 'kubectl 없음'
+}
+else {
+  $injected = 0
+  $absent = @()   # 아직 배포되지 않은 대상 (재구축 직후에는 정상)
+  $broken = New-Object System.Collections.ArrayList
+
+  foreach ($t in $script:PodIdentityTargets) {
+    $state = Get-PodIdentityState -Namespace $t.ns -ServiceAccount $t.sa
+    if (-not $state -or $state.Total -eq 0) { $absent += "$($t.ns)/$($t.sa)"; continue }
+    $injected += ($state.Total - $state.Missing.Count)
+    foreach ($p in $state.Missing) {
+      [void]$broken.Add([pscustomobject]@{ Ns = $t.ns; Sa = $t.sa; Pod = $p })
+    }
+  }
+
+  if ($broken.Count -eq 0) {
+    # "$injected개"로 쓰면 "개"까지 변수명으로 먹혀 숫자가 사라진다 — $()로 끊을 것
+    $detail = "$($injected)개 파드 주입 확인"
+    if ($absent.Count -gt 0) { $detail += " / 미배포: $($absent -join ', ')" }
+    Add-Result '13. Pod Identity 주입' 'PASS' $detail
+  }
+  elseif (-not $FixPodIdentity) {
+    $names = @($broken | ForEach-Object { "$($_.Ns)/$($_.Pod.metadata.name)" })
+    Add-Result '13. Pod Identity 주입' 'FAIL' ("자격증명 미주입 $($broken.Count)개: $($names -join ', ') — 해당 워크로드를 rollout restart 하세요 (-FixPodIdentity로 자동 실행)")
+  }
+  else {
+    # 자동 복구: 워크로드 단위로 중복 제거해서 재시작 -> Ready 대기 -> 재확인
+    $workloads = New-Object System.Collections.ArrayList
+    foreach ($b in $broken) {
+      $wl = Get-OwnerWorkload -Namespace $b.Ns -Pod $b.Pod
+      if (-not $wl) {
+        Write-Host ("        복구 불가(소유 워크로드 없음): {0}/{1}" -f $b.Ns, $b.Pod.metadata.name) -ForegroundColor DarkGray
+        continue
+      }
+      $key = "$($b.Ns)|$wl"
+      if (@($workloads | ForEach-Object { "$($_.Ns)|$($_.Wl)" }) -contains $key) { continue }
+      [void]$workloads.Add([pscustomobject]@{ Ns = $b.Ns; Wl = $wl; Sa = $b.Sa })
+    }
+
+    $failedFix = @()
+    foreach ($w in $workloads) {
+      Write-Host ("        재시작: {0} -n {1}" -f $w.Wl, $w.Ns) -ForegroundColor Yellow
+      $r = Invoke-Cli 'kubectl' @('-n', $w.Ns, 'rollout', 'restart', $w.Wl)
+      if (-not $r.Ok) { $failedFix += "$($w.Ns)/$($w.Wl): restart 실패"; continue }
+      $null = Invoke-Cli 'kubectl' @('-n', $w.Ns, 'rollout', 'status', $w.Wl, '--timeout=180s')
+      $after = Get-PodIdentityState -Namespace $w.Ns -ServiceAccount $w.Sa
+      if (-not $after -or $after.Missing.Count -gt 0) {
+        $failedFix += "$($w.Ns)/$($w.Wl): 재시작 후에도 미주입"
+      }
+    }
+
+    if ($failedFix.Count -eq 0) {
+      Add-Result '13. Pod Identity 주입' 'WARN' ("미주입 $($broken.Count)개를 발견해 워크로드 $($workloads.Count)개를 재시작했습니다 — 지금은 정상입니다. 반복되면 association 전파 대기(module/grafana의 time_sleep)를 늘리세요.")
+    }
+    else {
+      Add-Result '13. Pod Identity 주입' 'FAIL' ("자동 복구 실패: $($failedFix -join ' | ') — association 자체를 확인하세요 (namespace/service_account가 파드와 정확히 일치해야 합니다)")
+    }
+  }
+}
 
 # ---------------------------------------------------------------------------
 # 결과

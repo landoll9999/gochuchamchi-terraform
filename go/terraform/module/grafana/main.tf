@@ -236,6 +236,23 @@ resource "aws_eks_pod_identity_association" "grafana" {
 }
 
 
+# Pod Identity 자격증명 주입은 파드가 "생성되는 순간" EKS admission이 한 번만 한다
+# (AWS_CONTAINER_CREDENTIALS_FULL_URI + eks-pod-identity-token 볼륨). 그런데 위
+# association은 API가 200을 돌려준 뒤에도 admission 쪽에 반영되기까지 시간이 걸린다.
+# depends_on은 "Terraform이 association 생성을 끝냈다"까지만 보장하므로, 바로 다음
+# 스텝인 helm_release가 그 갭 안에서 파드를 띄우면 주입이 통째로 누락된다. 주입 기회는
+# 파드 생성 시 1회뿐이라, 이후 association이 전파돼도 그 파드는 끝까지 자격증명이 없다.
+#   -> AWS SDK가 자격증명 체인 끝의 IMDS로 폴백 -> "no EC2 IMDS role found"
+#   -> CloudWatch 데이터소스가 GetMetricData 실패 -> 대시보드 전 패널 No data
+# 2026-08-06 실제 장애. depends_on이 이미 걸려 있었는데도 발생했다(RS가 1개뿐인
+# 최초 배포 파드에 env·볼륨이 둘 다 없었음). s3.tf의 wait_for_public_access_block과
+# 같은 뿌리 — 그래프상 순서 != 실제 전파 완료.
+resource "time_sleep" "grafana_pod_identity_propagation" {
+  depends_on      = [aws_eks_pod_identity_association.grafana]
+  create_duration = "30s"
+}
+
+
 # =============================================================================
 # Grafana Helm 설치
 # =============================================================================
@@ -406,8 +423,9 @@ resource "helm_release" "grafana" {
     })
   ]
 
+  # association "직후"가 아니라 전파 대기를 거친 뒤에 파드를 띄운다 (위 time_sleep 주석 참고)
   depends_on = [
-    aws_eks_pod_identity_association.grafana,
+    time_sleep.grafana_pod_identity_propagation,
     aws_iam_role_policy.grafana_cloudwatch
   ]
 }
