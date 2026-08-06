@@ -42,7 +42,7 @@ variable "nat_ami" {
 
 variable "node_instance_types" {
   type    = list(string)
-  default = ["t3.small"]
+  default = ["t3.medium"]
 }
 
 variable "node_min_size" {

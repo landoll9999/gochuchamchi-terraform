@@ -273,14 +273,30 @@ kubectl -n argocd patch application gochuchamchi --type merge -p '{\"operation\"
 
 ## 4. Terraform
 
-```powershell
-cd C:\terraform\go\go\terraform
+state가 **둘**입니다 (2026-08-06 분리).
 
+| 디렉토리 | state key | 무엇이 들어 있나 | destroy 대상 |
+|---|---|---|---|
+| `go/terraform` | `eks/` | VPC·EKS·RDS·ArgoCD 등 인프라 본체 | 예 |
+| `go/persistent` | `persistent/` | ECR·서명 KMS 키·GitHub OIDC/IAM 역할·ArgoCD PAT 시크릿 | **아니오** |
+
+`persistent`는 "재구축을 건너 살아남아야 하는 것"만 모아 둔 곳입니다. 여기 있던 것들이 메인과 함께 삭제되면서 재구축 때마다 503이 반복됐습니다(§ECR 빈 상태 → ImagePullBackOff, PAT 소실 → ArgoCD 인증 실패). 모든 리소스에 `prevent_destroy`가 걸려 있습니다.
+
+```powershell
+# 최초 1회만 (또는 persistent 쪽 코드를 고쳤을 때)
+cd C:\terraform\go\persistent
+terraform init
+terraform apply          # 평소에는 "No changes"가 정상
+
+# 평소 작업
+cd C:\terraform\go\terraform
 terraform validate
 terraform plan
 terraform apply
 terraform state list
 ```
+
+> 메인의 `persistent-data.tf`가 data source로 `persistent`의 리소스를 조회하므로, **완전 신규 구축이라면 `persistent`를 먼저 apply**해야 합니다. 이미 만들어져 있으면 순서는 상관없습니다.
 
 ### 4.1 apply 시 주의
 
@@ -375,10 +391,15 @@ aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> 
 
 **Terraform 코드 밖에 있는 상태는 destroy/apply에서 살아남지 못합니다.** apply 성공 후 아래를 순서대로 확인하세요.
 
-- [ ] **ArgoCD PAT 주입** — **가장 먼저.** 안 하면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3, 2026-08-05 §4).
-  `recovery_window_in_days = 0`이라 destroy 때 값이 함께 사라지므로 **재구축마다 필요**합니다.
+- [ ] **ArgoCD PAT 확인** — 안 되어 있으면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3, 2026-08-05 §4, 2026-08-06 §1.4).
 
-  **권장 — apply 전에 환경변수만 설정하면 자동 주입됩니다** (2026-08-05 §4.3):
+  > **2026-08-06부터 재구축마다 다시 넣을 필요가 없습니다.** 시크릿을 `go/persistent`로 옮겨(`prevent_destroy`) 값이 destroy를 건너 살아남습니다. 아래는 **최초 구축**과 **로테이션**용입니다. 확인만 하고 값이 있으면 넘어가세요:
+  > ```powershell
+  > aws secretsmanager describe-secret --secret-id gochuchamchi/argocd/git-pat --region ap-northeast-2 --profile admin --query VersionIdsToStages
+  > ```
+  > `null`이면 **컨테이너만 있고 값이 한 번도 안 들어간 상태**입니다(2026-08-06 §1.4). 이때 증상은 `authentication required: Repository not found` — private 저장소에 인증 없이 접근했을 때의 응답이라 저장소 경로 문제로 오해하기 쉽습니다.
+
+  **apply 전에 환경변수를 설정하면 자동 주입됩니다** (2026-08-05 §4.3):
   ```powershell
   $env:ARGOCD_GIT_PAT = "<GitHub PAT>"
   terraform apply

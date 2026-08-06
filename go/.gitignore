@@ -3,3 +3,5 @@
 .tfstate.
 crash.log
 *.pem
+tfplan*
+gochuchamchi-gitops/

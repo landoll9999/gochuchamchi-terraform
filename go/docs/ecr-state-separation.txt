@@ -6,12 +6,56 @@ ECR State 분리 매뉴얼
 대상   : gochuchamchi 인프라 (계정 307223751140, ap-northeast-2)
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-주의 (2026-08-05)
+주의 (2026-08-05)  →  해소됨 (2026-08-06, 아래 참조)
 이 문서는 이미지 서명 도입 전의 MUTABLE/latest 구조를 기준으로 작성됐다.
 현재 ECR에는 불변 태그, Cosign 참조 아티팩트 예외, KMS 키와 서명 IAM 역할이 있으므로
 이 매뉴얼을 그대로 실행하면 공급망 보안 구성이 누락되거나 되돌아갈 수 있다.
 state 분리는 팀 합의 후 현재 ecr.tf의 서명·Lifecycle 구성을 함께 옮기는 방식으로 재설계할 것.
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+★ 실행 완료 — 2026-08-06 ★
+
+  위 주의사항이 요구한 대로 "서명 구성을 함께 옮기는 방식"으로 재설계해서
+  실행했습니다. 계획서 원문과 달라진 점은 다음과 같습니다.
+
+  1) 디렉토리 이름이 go/ecr 이 아니라 go/persistent 입니다.
+     옮긴 대상이 ECR만이 아니라서 이름을 바꿨습니다.
+
+  2) 옮긴 리소스가 5개가 아니라 10개입니다.
+     2026-08-06 재구축에서 ECR 말고도 같은 성격의 사고가 둘 더 드러났습니다.
+       - 서명 KMS 키가 재생성 -> GitHub 변수가 옛 키(PendingDeletion)를 가리킴
+         -> CI 서명 잡 실패 -> ECR에 이미지가 안 올라감 -> 503 유지
+       - ArgoCD PAT 시크릿이 삭제(recovery_window 0) -> 값 소실
+         -> ArgoCD가 private GitOps 저장소 인증 실패 -> 앱 미배포 -> 503
+     이미지만 살려도 CI를 못 돌리면 갱신할 수 없고, CI가 돌아도 PAT가 없으면
+     배포가 안 됩니다. 그래서 넷을 한 묶음으로 옮겼습니다.
+
+     추가된 5개:
+       aws_kms_key.image_signing
+       aws_kms_alias.image_signing
+       aws_iam_role.github_actions_image_signer
+       aws_iam_role_policy.github_actions_image_signer
+       aws_secretsmanager_secret.argocd_git_pat
+
+  3) 공급망 보안 구성(PR #5, feat/ecr-tag-immutability)을 그대로 이관했습니다.
+     불변 태그(IMMUTABLE_WITH_EXCLUSION) + Cosign 아티팩트 3종 예외 필터와
+     3단계 lifecycle 정책(signed 20개 보존 / candidate 7일 / untagged 7일)이
+     go/persistent/ecr.tf 에 있습니다. 위 주의사항이 경고한 "누락되거나
+     되돌아감"이 일어나지 않도록, 분리 직후 그 구성을 반영해 apply했습니다.
+
+     ※ PR #5는 머지만 되고 apply되지 않은 상태였습니다(실물 ECR은 MUTABLE +
+       lifecycle 1규칙). 그래서 분리 시점의 import는 실물 기준으로 잡혔고,
+       불변 태그 전환은 별도 apply로 적용했습니다.
+
+  실행 방식도 계획서의 state mv 대신 "persistent에서 import -> 메인에서
+  state rm" 순서를 썼습니다. 두 state에 잠시 동시 존재할 뿐 apply를 하지
+  않으므로, 순서를 잘못 밟아 ECR이 파괴될 위험이 없습니다.
+
+  검증 결과 — 메인 plan에서 "0 to change, 실제 인프라 destroy 0건"
+  (재실행 전용 null_resource 3개만 교체됨).
+
+  현재 절차는 docs/runbook.md §4 를 보세요.
+  아래 원문은 당시 계획 기록으로 남겨 둡니다.
 
 
 --------------------------------------------------------------------------------

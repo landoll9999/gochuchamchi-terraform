@@ -1,7 +1,7 @@
-# =============================================================================
+﻿# =============================================================================
 # ArgoCD + Image Updater
 #   - gochuchamchi-gitops 저장소(Deployment/Service/HPA)를 감시해서 클러스터 상태를 자동 동기화
-#   - ECR(ecr.tf의 aws_ecr_repository.gochuchamchi)에 새 이미지가 올라오면 태그를 감지해서
+#   - ECR(../persistent 관리, persistent-data.tf로 조회)에 새 이미지가 올라오면 태그를 감지해서
 #     write-back(git commit)으로 gitops 저장소에 반영 (예전엔 Docker Hub 사용, 마이그레이션함)
 #   - UI는 argocd.gochuchamchi.shop 서브도메인 (기존 앱과 동일하게 ALB가 TLS 종단)
 # =============================================================================
@@ -10,7 +10,7 @@ locals {
   gitops_repo_url = "https://github.com/${var.argocd_github_owner}/${var.argocd_gitops_repo}.git"
 
   # "<account>.dkr.ecr.<region>.amazonaws.com" — repository_url에서 저장소 이름을 뗀 부분
-  ecr_registry_host = split("/", aws_ecr_repository.gochuchamchi.repository_url)[0]
+  ecr_registry_host = split("/", data.aws_ecr_repository.gochuchamchi.repository_url)[0]
 }
 
 resource "helm_release" "argocd" {
@@ -112,7 +112,7 @@ resource "helm_release" "gochuchamchi_application" {
       repoURL              = local.gitops_repo_url
       gitBranch            = "main"
       destinationNamespace = "gochuchamchi"
-      appImage             = aws_ecr_repository.gochuchamchi.repository_url
+      appImage             = data.aws_ecr_repository.gochuchamchi.repository_url
     })
   ]
 }

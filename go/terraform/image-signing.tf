@@ -1,16 +1,18 @@
 # =============================================================================
-# Separated container image build and signing trust paths
+# 컨테이너 이미지 서명 검증 (Kyverno 쪽)
 #
-# Build job:
-#   GitHub main branch -> github_actions_ecr_push -> candidate-<commit SHA>
+# 빌드/서명 신뢰 경로:
+#   Build   GitHub main 브랜치 -> github_actions_ecr_push -> candidate-<SHA>
+#   Sign    보호된 GitHub Environment -> github_actions_image_signer -> KMS Sign
+#           -> Cosign 서명 -> signed-<SHA>
 #
-# Signing job:
-#   Protected GitHub Environment -> github_actions_image_signer -> KMS Sign
-#   -> Cosign signature -> signed-<commit SHA>
+# 빌드 역할은 KMS 서명 키를 쓸 수 없다(권한 분리). Kyverno는 이 KMS 키로 만든
+# 서명만 신뢰하며, 기존 워크로드를 끊지 않도록 Audit 모드로 시작한다.
 #
-# The build role cannot use the KMS signing key. Kyverno trusts only signatures
-# produced by this KMS key and starts in Audit mode so existing workloads are
-# not interrupted during rollout.
+# 2026-08-06 — KMS 키와 서명 역할은 ../persistent 로 옮겼다. 재구축 때 키가 새로
+# 생기면 GitHub 변수(IMAGE_SIGNING_KMS_KEY_ARN)와 어긋나 CI 서명 잡이 실패하고,
+# 그러면 ECR에 이미지가 안 올라가 사이트가 503으로 남기 때문이다. 여기에는
+# "그 키를 신뢰해서 검증하는" 쪽만 남는다.
 # =============================================================================
 
 locals {
@@ -21,103 +23,13 @@ locals {
   }
 }
 
-# -----------------------------------------------------------------------------
-# Asymmetric KMS key used by Cosign. The private key never leaves AWS KMS.
-# -----------------------------------------------------------------------------
-
-resource "aws_kms_key" "image_signing" {
-  description              = "Cosign key for gochuchamchi ECR release images"
-  key_usage                = "SIGN_VERIFY"
-  customer_master_key_spec = "ECC_NIST_P256"
-  deletion_window_in_days  = 30
-
-  tags = merge(local.image_signing_tags, { Name = "gochuchamchi-image-signing" })
-}
-
-resource "aws_kms_alias" "image_signing" {
-  name          = "alias/gochuchamchi-image-signing"
-  target_key_id = aws_kms_key.image_signing.key_id
-}
-
+# Kyverno 정책에 넣을 공개키. 개인키는 KMS 밖으로 나오지 않는다.
 data "aws_kms_public_key" "image_signing" {
-  key_id = aws_kms_key.image_signing.key_id
+  key_id = data.aws_kms_key.image_signing.key_id
 }
 
 # -----------------------------------------------------------------------------
-# Dedicated GitHub Actions signing role
-#
-# GitHub must create an Environment named by image_signing_github_environment.
-# Protect that Environment with required reviewers and allow only main.
-# -----------------------------------------------------------------------------
-
-resource "aws_iam_role" "github_actions_image_signer" {
-  name                 = "gochuchamchi-github-actions-image-signer"
-  max_session_duration = 3600
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.github_actions.arn
-      }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.argocd_github_owner}/gochuchamchi-spring:environment:${var.image_signing_github_environment}"
-        }
-      }
-    }]
-  })
-
-  tags = local.image_signing_tags
-}
-
-resource "aws_iam_role_policy" "github_actions_image_signer" {
-  name = "sign-and-publish-cosign-artifact"
-  role = aws_iam_role.github_actions_image_signer.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "EcrAuthentication"
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken"]
-        Resource = "*"
-      },
-      {
-        Sid    = "ReadCandidateAndPublishSignature"
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:BatchGetImage",
-          "ecr:CompleteLayerUpload",
-          "ecr:DescribeImages",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:InitiateLayerUpload",
-          "ecr:PutImage",
-          "ecr:UploadLayerPart"
-        ]
-        Resource = aws_ecr_repository.gochuchamchi.arn
-      },
-      {
-        Sid    = "SignWithDedicatedKmsKey"
-        Effect = "Allow"
-        Action = [
-          "kms:DescribeKey",
-          "kms:GetPublicKey",
-          "kms:Sign"
-        ]
-        Resource = aws_kms_key.image_signing.arn
-      }
-    ]
-  })
-}
-
-# -----------------------------------------------------------------------------
-# Kyverno ECR read identity used when fetching private Cosign signatures.
+# Kyverno가 private ECR의 Cosign 서명 아티팩트를 읽을 때 쓰는 신원
 # -----------------------------------------------------------------------------
 
 resource "aws_iam_policy" "kyverno_ecr_signature_read" {
@@ -142,7 +54,7 @@ resource "aws_iam_policy" "kyverno_ecr_signature_read" {
           "ecr:DescribeImages",
           "ecr:GetDownloadUrlForLayer"
         ]
-        Resource = aws_ecr_repository.gochuchamchi.arn
+        Resource = data.aws_ecr_repository.gochuchamchi.arn
       }
     ]
   })
@@ -168,7 +80,7 @@ module "kyverno_ecr_pod_identity" {
 }
 
 # -----------------------------------------------------------------------------
-# Namespaced Kyverno ImageValidatingPolicy
+# 네임스페이스 범위 Kyverno ImageValidatingPolicy
 # -----------------------------------------------------------------------------
 
 resource "helm_release" "image_signature_policy" {
@@ -182,7 +94,7 @@ resource "helm_release" "image_signature_policy" {
     yamlencode({
       validationAction = var.image_signature_validation_action
       failurePolicy    = var.image_signature_validation_action == "Deny" ? "Fail" : "Ignore"
-      imageRepository  = aws_ecr_repository.gochuchamchi.repository_url
+      imageRepository  = data.aws_ecr_repository.gochuchamchi.repository_url
       publicKey        = data.aws_kms_public_key.image_signing.public_key_pem
       mutateDigest     = var.image_signature_validation_action == "Deny"
       verifyDigest     = var.image_signature_validation_action == "Deny"
@@ -197,22 +109,22 @@ resource "helm_release" "image_signature_policy" {
 }
 
 # -----------------------------------------------------------------------------
-# Outputs consumed by the protected signing workflow
+# 보호된 서명 워크플로가 참조하는 값 (실체는 ../persistent 관리)
 # -----------------------------------------------------------------------------
 
 output "github_actions_image_signer_role_arn" {
   description = "AWS role assumed only by the protected GitHub signing Environment"
-  value       = aws_iam_role.github_actions_image_signer.arn
+  value       = data.aws_iam_role.github_actions_image_signer.arn
 }
 
 output "image_signing_kms_key_arn" {
   description = "KMS key ARN used with cosign --key awskms:///..."
-  value       = aws_kms_key.image_signing.arn
+  value       = data.aws_kms_key.image_signing.arn
 }
 
 output "image_signing_kms_uri" {
   description = "Cosign KMS URI for the protected signing job"
-  value       = "awskms:///${aws_kms_key.image_signing.arn}"
+  value       = "awskms:///${data.aws_kms_key.image_signing.arn}"
 }
 
 output "image_signature_validation_action" {

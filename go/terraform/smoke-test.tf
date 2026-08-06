@@ -79,7 +79,9 @@ resource "null_resource" "wait_for_app_ready" {
     kubernetes_ingress_v1.gochuchamchi_web,
     kubernetes_network_policy_v1.gochuchamchi_web_allow,
     null_resource.provision_app_db_user,
-    null_resource.inject_git_pat, # PAT가 먼저 들어가야 ArgoCD가 저장소에 붙는다
+    null_resource.inject_git_pat,        # PAT가 먼저 들어가야 ArgoCD가 저장소에 붙는다
+    null_resource.sync_kubeconfig,       # 아래 kubectl들이 새 클러스터를 보게 한다 (ci-sync.tf)
+    null_resource.verify_ecr_has_image,  # 이미지가 없으면 기다려도 안 뜬다 — 먼저 알린다
     helm_release.eso_config,
   ]
 
@@ -120,7 +122,15 @@ resource "null_resource" "wait_for_app_ready" {
       }
 
       if (-not $deploy) {
-        Stop-Wait "제한 시간 안에 Deployment($selector)가 나타나지 않았습니다.`n  가장 흔한 원인은 PAT 미주입입니다 — ArgoCD가 저장소 인증에 실패하면 앱이 배포되지 않습니다.`n  확인: kubectl get externalsecret -n argocd  /  kubectl get application -n argocd"
+        # 원인이 여러 갈래라 "확인 순서"까지 적는다. 2026-08-06에는 ECR이 비어 있었고
+        # (destroy가 이미지까지 지움) 동시에 ArgoCD가 리소스 부족으로 죽어 있어서,
+        # PAT만 의심하다가 진단이 길어졌다.
+        Stop-Wait ("제한 시간 안에 Deployment($selector)가 나타나지 않았습니다.`n" +
+          "  흔한 원인 3가지 — 위에서부터 순서대로 확인하세요.`n" +
+          "   1) ECR에 signed- 이미지가 없음 (destroy가 지움) : 이번 apply 로그의 'ECR 확인' 단계 참고`n" +
+          "   2) ArgoCD가 저장소에 못 붙음 (PAT 미주입)       : kubectl get externalsecret -n argocd`n" +
+          "   3) ArgoCD 자체가 죽어 있음 (노드 리소스 부족)    : kubectl get pods -n argocd  /  kubectl top nodes`n" +
+          "  공통 확인: kubectl get application -n argocd -o wide")
       }
 
       # 2) Ready까지. 남은 시간을 넘기되 최소 30초는 준다.

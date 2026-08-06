@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # External Secrets Operator (2026-08-04 백로그 B3)
 #
 # 왜 도입하나 — 감사 #1이 정한 "state에 secret_string이 다시 들어가는 시점 = ESO
@@ -23,14 +23,16 @@
 # 나르면서 생기는" 노출이며, PAT가 정확히 그 케이스였음.
 # =============================================================================
 
-# PAT 컨테이너 — 값은 위 명령으로 사람이 넣고, Terraform은 값을 절대 읽지 않음
-resource "aws_secretsmanager_secret" "argocd_git_pat" {
-  name        = "gochuchamchi/argocd/git-pat"
-  description = "gochuchamchi-gitops GitHub PAT (Contents: Read/write). Value injected manually via CLI, synced to K8s by ESO — never touched by Terraform."
-
-  # db-zero-trust.tf의 app_db와 동일: 실습용이라 destroy 후 즉시 재생성 가능하게 0일
-  recovery_window_in_days = 0
-}
+# PAT 컨테이너는 2026-08-06에 ../persistent 로 옮겼다.
+#
+# 왜 — 이 시크릿은 recovery_window_in_days = 0이라 destroy 때 값까지 즉시 사라졌다.
+# 재구축하면 빈 컨테이너만 생기고, 사람이 값을 다시 넣기 전까지
+# ESO -> ArgoCD -> 앱 배포가 통째로 멈춰 사이트가 503이 된다(2026-08-05, 08-06 연속 발생).
+# 영속 state로 옮기면 PAT가 재구축을 건너 살아남아 이 단계 자체가 사라진다.
+#
+# 조회는 persistent-data.tf의 data.aws_secretsmanager_secret.argocd_git_pat 가 담당한다.
+# 아래 자동 주입은 "값이 이미 있으면 건드리지 않는" 동작이라 그대로 두어도 충돌하지 않고,
+# 시크릿을 새로 만든 경우(최초 구축)에만 실제로 값을 넣는다.
 
 # ---------------------------------------------------------------------------
 # PAT 자동 주입 (2026-08-05)
@@ -57,13 +59,13 @@ resource "aws_secretsmanager_secret" "argocd_git_pat" {
 resource "null_resource" "inject_git_pat" {
   triggers = {
     # 시크릿이 재생성되면 ARN 끝의 랜덤 접미사가 바뀐다 -> 재구축마다 다시 주입된다
-    secret_arn = aws_secretsmanager_secret.argocd_git_pat.arn
+    secret_arn = data.aws_secretsmanager_secret.argocd_git_pat.arn
   }
 
   provisioner "local-exec" {
     interpreter = ["PowerShell", "-ExecutionPolicy", "Bypass", "-Command"]
     command     = <<-EOT
-      $secretId = '${aws_secretsmanager_secret.argocd_git_pat.name}'
+      $secretId = '${data.aws_secretsmanager_secret.argocd_git_pat.name}'
       $region   = '${var.region}'
       $profile  = '${var.aws_profile}'
 
@@ -102,7 +104,7 @@ module "eso_pod_identity" {
       sid     = "ReadDesignatedSecretsOnly"
       actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
       resources = [
-        aws_secretsmanager_secret.argocd_git_pat.arn,
+        data.aws_secretsmanager_secret.argocd_git_pat.arn,
         # 앱 DB 시크릿도 나중에 ESO로 이관할 수 있게 미리 포함 (DB_SECRET_SETUP.md)
         aws_secretsmanager_secret.app_db.arn,
       ]
@@ -155,7 +157,7 @@ resource "helm_release" "eso_config" {
   values = [
     yamlencode({
       region        = var.region
-      patSecretName = aws_secretsmanager_secret.argocd_git_pat.name
+      patSecretName = data.aws_secretsmanager_secret.argocd_git_pat.name
       repoURL       = local.gitops_repo_url
       username      = var.argocd_github_owner
     })
@@ -163,6 +165,6 @@ resource "helm_release" "eso_config" {
 }
 
 output "argocd_git_pat_inject_command" {
-  value       = "aws secretsmanager put-secret-value --secret-id ${aws_secretsmanager_secret.argocd_git_pat.name} --secret-string '<GitHub PAT>' --region ${var.region} --profile ${var.aws_profile}"
+  value       = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_git_pat.name} --secret-string '<GitHub PAT>' --region ${var.region} --profile ${var.aws_profile}"
   description = "PAT 수동 주입/로테이션 명령. 재구축 시 자동 주입을 쓰려면 apply 전에 $env:ARGOCD_GIT_PAT를 설정할 것 (null_resource.inject_git_pat)"
 }
