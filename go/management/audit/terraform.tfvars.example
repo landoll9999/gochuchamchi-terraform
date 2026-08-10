@@ -1,0 +1,1 @@
+log_archive_kms_key_arn = "arn:aws:kms:ap-northeast-2:564186750363:key/REPLACE_AFTER_LOG_ARCHIVE_APPLY"

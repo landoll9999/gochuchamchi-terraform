@@ -7,7 +7,7 @@ variable "region" {
 variable "aws_profile" {
   description = "AWS CLI profile (../terraform/variables.tf와 동일 값 사용)"
   type        = string
-  default     = "admin"
+  default     = "workload-admin"
 }
 
 # 개인 이메일을 코드에 하드코딩하지 않기 위해 변수로 주입 (2026-08-04 하드코딩 리뷰 원칙).

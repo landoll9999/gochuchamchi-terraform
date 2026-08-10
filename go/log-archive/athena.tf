@@ -1,14 +1,22 @@
 # =============================================================================
-# Athena - CloudTrail 중앙 로그 조회
+# Athena - CloudTrail 중앙 로그 조회 (로그 계정 버전)
 #
-# CloudTrail 원본은 중앙 로그 S3에서 읽고, 쿼리 결과는 별도 S3에 7일간 보관합니다.
-# 리전/날짜 파티션은 projection으로 관리하여 MSCK REPAIR TABLE이 필요 없습니다.
+# ../account-baseline/athena.tf 에서 이식. 전환일 이후 로그는 여기서 조회하고,
+# 전환일 이전 로그는 워크로드 계정 Athena(구 버킷)에 남는다 — runbook 참고.
+#
+# org trail의 경로 차이:
+#   management(=이 계정) 자신의 이벤트 -> AWSLogs/<이계정ID>/CloudTrail/...
+#   멤버 계정(워크로드) 이벤트         -> AWSLogs/<org-ID>/<워크로드계정ID>/CloudTrail/...
+# 조사 대상의 대부분은 워크로드 이벤트라 테이블은 워크로드의 org 경로를 잡는다.
+# 이 계정 자신의 이벤트를 봐야 하면 앞 경로로 테이블을 하나 더 만들면 된다.
 # =============================================================================
 
 locals {
   athena_security_database_name = "gochuchamchi_security_logs"
   athena_cloudtrail_table_name  = "cloudtrail_logs"
   athena_workgroup_name         = "gochuchamchi-security-logs"
+
+  cloudtrail_s3_base_prefix = "${local.cloudtrail_s3_key_prefix}/AWSLogs/${local.org_id}/${local.workload_account_id}/CloudTrail"
 
   cloudtrail_athena_columns = [
     { name = "eventversion", type = "string" },
@@ -59,7 +67,8 @@ locals {
 # =============================================================================
 
 resource "aws_s3_bucket" "athena_results" {
-  bucket = "gochuchamchi-athena-results-${data.aws_caller_identity.current.account_id}"
+  # 구 워크로드 시절의 athena-results 버킷과 이름 충돌을 피하려고 log- 접두사를 붙인다
+  bucket = "gochuchamchi-log-athena-results-${data.aws_caller_identity.current.account_id}"
 
   # 쿼리 결과는 재생성할 수 있으므로 프로젝트 정리 시 함께 삭제 가능
   force_destroy = true
@@ -162,13 +171,13 @@ resource "aws_s3_bucket_policy" "athena_results" {
 
 resource "aws_glue_catalog_database" "security_logs" {
   name        = local.athena_security_database_name
-  description = "CloudTrail 중앙 감사 로그 조회용 Athena 데이터베이스"
+  description = "CloudTrail 중앙 감사 로그 조회용 Athena 데이터베이스 (전환일 이후분)"
 }
 
 resource "aws_glue_catalog_table" "cloudtrail" {
   name          = local.athena_cloudtrail_table_name
   database_name = aws_glue_catalog_database.security_logs.name
-  description   = "중앙 S3에 저장된 다중 리전 CloudTrail 관리 이벤트"
+  description   = "중앙 S3에 저장된 org trail 관리 이벤트 (워크로드 계정 경로)"
   table_type    = "EXTERNAL_TABLE"
 
   parameters = {
@@ -184,7 +193,7 @@ resource "aws_glue_catalog_table" "cloudtrail" {
     "projection.event_date.interval.unit" = "DAYS"
     "projection.event_date.range"         = "${var.athena_cloudtrail_projection_start_date},NOW"
 
-    "storage.location.template" = "s3://${aws_s3_bucket.cloudwatch_log_archive.id}/${local.cloudtrail_s3_key_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/CloudTrail/$${region}/$${event_date}/"
+    "storage.location.template" = "s3://${aws_s3_bucket.cloudwatch_log_archive.id}/${local.cloudtrail_s3_base_prefix}/$${region}/$${event_date}/"
   }
 
   partition_keys {
@@ -198,7 +207,7 @@ resource "aws_glue_catalog_table" "cloudtrail" {
   }
 
   storage_descriptor {
-    location      = "s3://${aws_s3_bucket.cloudwatch_log_archive.id}/${local.cloudtrail_s3_key_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/CloudTrail/"
+    location      = "s3://${aws_s3_bucket.cloudwatch_log_archive.id}/${local.cloudtrail_s3_base_prefix}/"
     input_format  = "com.amazon.emr.cloudtrail.CloudTrailInputFormat"
     output_format = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"
     compressed    = true

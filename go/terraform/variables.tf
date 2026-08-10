@@ -1,7 +1,7 @@
 variable "aws_profile" {
   description = "AWS CLI profile (PowerShell에서 관리 중인 프로파일명)"
   type        = string
-  default     = "admin"
+  default     = "workload-admin"
 }
 
 variable "region" {
@@ -185,9 +185,9 @@ variable "waf_rate_limit_per_5min" {
 # ---------------------------------------------------------------------------
 
 variable "enable_dr" {
-  description = "AWS Backup(RDS/EFS -> 도쿄 크로스리전 복사) + S3 CRR 활성화 여부. 끄면 볼트/플랜/복제가 모두 제거됨"
+  description = "AWS Backup(RDS/EFS -> 도쿄 크로스리전 복사) + S3 CRR 활성화 여부. 비용 절감을 위해 기본 비활성화하며, 재해복구가 필요할 때만 명시적으로 true로 설정"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "dr_backup_retention_days" {
@@ -251,4 +251,21 @@ variable "enable_vpc_endpoints" {
   description = "인터페이스형 VPC 엔드포인트 7종 생성 여부 (시간당 과금 — 시연일에만 true)"
   type        = bool
   default     = false
+}
+
+# ---------------------------------------------------------------------------
+# (2026-08-10 org 로그 분리) 로그 아카이브 계정 ID — flow-logs.tf 와
+# log-archive-subscriptions.tf 가 ARN 조립에 쓴다. data source를 쓰지 않는 이유는
+# 크로스 계정 조회에 로그 계정 자격증명이 필요해서다 (해당 파일 주석 참고).
+# 비어 있으면 두 리소스의 precondition이 plan에서 명확한 메시지로 실패한다.
+# ---------------------------------------------------------------------------
+variable "log_archive_account_id" {
+  description = "별도 Security/Log 계정 ID. 중앙 로그 버킷과 KMS 키를 소유"
+  type        = string
+  default     = "564186750363"
+
+  validation {
+    condition     = can(regex("^(\\d{12})?$", var.log_archive_account_id))
+    error_message = "log_archive_account_id는 12자리 AWS 계정 ID여야 합니다."
+  }
 }

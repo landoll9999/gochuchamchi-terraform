@@ -9,7 +9,7 @@
 # =============================================================================
 
 $ErrorActionPreference = "Stop"
-$env:AWS_PROFILE = "admin"
+$env:AWS_PROFILE = "workload-admin"
 
 $tfDir = Join-Path $PSScriptRoot "..\terraform"
 Set-Location $tfDir

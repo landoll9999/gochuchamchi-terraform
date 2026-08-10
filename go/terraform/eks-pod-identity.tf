@@ -38,7 +38,7 @@ provider "kubernetes" {
 module "aws_lb_controller_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-alb-controller"
+  name    = "gochuchamchi-alb-controller"
 
   attach_aws_lb_controller_policy = true
 
@@ -100,7 +100,7 @@ resource "helm_release" "aws_load_balancer_controller" {
 module "external_dns_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-external-dns"
+  name    = "gochuchamchi-external-dns"
 
   attach_external_dns_policy = true
   # 계정 내 전체 호스팅존이 아니라 gochuchamchi.shop 존 하나로 제한
@@ -146,7 +146,7 @@ resource "helm_release" "external_dns" {
 module "cluster_autoscaler_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-cluster-autoscaler"
+  name    = "gochuchamchi-cluster-autoscaler"
 
   attach_cluster_autoscaler_policy = true
   cluster_autoscaler_cluster_names = [module.eks.cluster_name]
@@ -168,7 +168,7 @@ module "cluster_autoscaler_pod_identity" {
 module "image_updater_ecr_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-image-updater-ecr"
+  name    = "gochuchamchi-image-updater-ecr"
 
   additional_policy_arns = {
     ecr_read_only = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
@@ -208,7 +208,7 @@ resource "helm_release" "cluster_autoscaler" {
 module "efs_csi_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-efs-csi"
+  name    = "gochuchamchi-efs-csi"
 
   attach_aws_efs_csi_policy = true
 

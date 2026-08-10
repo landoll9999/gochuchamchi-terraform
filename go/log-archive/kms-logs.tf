@@ -1,29 +1,16 @@
 # =============================================================================
-# KMS CMK — AWS Config 버킷 전용 (2026-08-10 org 로그 분리로 축소)
+# 로그 계정 전용 KMS CMK — 중앙 로그 버킷 암호화
 #
-# 원래 이 키는 중앙 로그 버킷(CloudTrail/Firehose/Flow Logs) 겸용이었으나,
-# 로그 저장·분석 전체가 Security/Log 계정(../log-archive, 564186750363)으로 옮겨가면서
-# 이 계정(워크로드)에 남은 용도는 aws-config.tf 의 Config 버킷 암호화뿐이다.
-# CloudTrail도 이 계정에는 없다 — 로그 계정의 org trail이 조직 전체를 기록한다.
+# ../account-baseline/kms-logs.tf 에서 이식. 그쪽 키는 Config 버킷 전용으로
+# 축소되어 워크로드 계정에 남는다 — 즉 "logs 키"는 계정마다 하나씩, 총 2개.
 #
-# 키 분리 원칙 (용도별 2개)은 유지:
-#   - logs: Config 버킷 전용 (이 파일)
-#   - data: RDS/EFS 등 워크로드 데이터 (../terraform/kms.tf)
-# 로그 계정에는 별도의 logs 키가 있다 (log-archive/kms-logs.tf).
+# 크로스 계정 차이: Flow Logs 암호화 요청은 Workload 계정에서, Org Trail은
+# Management 계정에서 온다. 둘 다 SourceAccount/SourceArn으로 제한한다.
+# Config는 워크로드 계정 자기 버킷을 쓰므로 여기서는 허용하지 않는다.
 # =============================================================================
 
-locals {
-  # aws-config.tf 가 태그로 함께 쓴다 (이름은 이관 전 관례 유지)
-  cloudwatch_log_archive_tags = {
-    Project     = "gochuchamchi"
-    Environment = "project"
-    ManagedBy   = "Terraform"
-    Component   = "central-log-archive"
-  }
-}
-
 resource "aws_kms_key" "logs" {
-  description             = "gochuchamchi AWS Config 버킷 암호화"
+  description             = "gochuchamchi 로그 계정 중앙 아카이브 암호화 (CloudTrail/Firehose/Flow Logs)"
   enable_key_rotation     = true
   deletion_window_in_days = 7 # 실습 환경 최소값. 운영 전환 시 30일 권장
 
@@ -41,8 +28,8 @@ resource "aws_kms_alias" "logs" {
 }
 
 data "aws_iam_policy_document" "kms_logs" {
-  # 계정 루트 위임 — IAM 정책 기반 접근(관리자, 조회 등)을 가능하게 하는
-  # 표준 문구. 이게 없으면 키가 "관리 불가" 상태가 될 수 있다.
+  # 계정 루트 위임 — IAM 정책 기반 접근(assume한 admin의 Athena 조회 등)을
+  # 가능하게 하는 표준 문구. 이게 없으면 키가 "관리 불가" 상태가 될 수 있다.
   statement {
     sid    = "EnableIAMPolicies"
     effect = "Allow"
@@ -56,14 +43,37 @@ data "aws_iam_policy_document" "kms_logs" {
     resources = ["*"]
   }
 
-  # AWS Config의 S3 기록
+  # Management 계정 소유 Org Trail이 로그 객체를 암호화할 때
   statement {
-    sid    = "AllowConfigService"
+    sid    = "AllowCloudTrailEncrypt"
     effect = "Allow"
 
     principals {
       type        = "Service"
-      identifiers = ["config.amazonaws.com"]
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey"
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = [local.cloudtrail_arn]
+    }
+  }
+
+  # 워크로드 계정의 VPC Flow Logs S3 전달
+  statement {
+    sid    = "AllowLogDeliveryServices"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
     }
 
     actions = [
@@ -75,14 +85,12 @@ data "aws_iam_policy_document" "kms_logs" {
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
+      values   = [local.workload_account_id]
     }
   }
 
-  # 이 계정의 gochuchamchi-* IAM 역할(Config 커스텀 역할 등)이 버킷에 쓰기/읽기할 때.
-  # 역할 ARN을 직접 참조하면 module.aws_config와 순환 의존이 생겨서
-  # (버킷 암호화 -> 키 -> Config 역할 -> Config 모듈 -> 버킷 암호화 depends_on)
-  # 이름 패턴 조건으로 푼다.
+  # 이 계정의 gochuchamchi-* IAM 역할(Firehose 전달 역할)이 버킷에 쓸 때.
+  # baseline과 같은 이름 패턴 방식 — 역할 ARN 직접 참조는 순환 의존을 만든다.
   statement {
     sid    = "AllowProjectRoles"
     effect = "Allow"
@@ -112,6 +120,6 @@ data "aws_iam_policy_document" "kms_logs" {
 # =============================================================================
 
 output "kms_logs_key_arn" {
-  description = "Config 버킷 암호화 CMK ARN"
+  description = "로그 계정 중앙 아카이브 CMK ARN"
   value       = aws_kms_key.logs.arn
 }

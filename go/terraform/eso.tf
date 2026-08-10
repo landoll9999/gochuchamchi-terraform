@@ -97,7 +97,7 @@ resource "null_resource" "inject_git_pat" {
 module "eso_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-eso"
+  name    = "gochuchamchi-eso"
 
   attach_custom_policy = true
   policy_statements = [

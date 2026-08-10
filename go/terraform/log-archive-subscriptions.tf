@@ -1,31 +1,23 @@
 # =============================================================================
-# CloudWatch Logs -> Firehose 구독 필터  (2026-08-07 분리)
+# CloudWatch Logs -> 로그 계정 Destination 구독 필터  (2026-08-10 org 분리)
 #
-# 중앙 로그 아카이브(S3 버킷 / Firehose / IAM / 수명주기 600여 줄)는
-# ../account-baseline 으로 옮겼다. 그 계층은 destroy하지 않는다 —
-# 로그 버킷이 Object Lock COMPLIANCE라 애초에 지울 수 없기도 하고,
-# 로그는 인프라가 죽어 있을 때야말로 남아 있어야 하기 때문이다.
+# 8/7에 Firehose를 account-baseline으로 뺐고, 이번에는 그 수신부 전체가
+# ../log-archive(별도 로그 계정)로 갔다. 여기 남는 것은 여전히
+# "EKS 로그 그룹을 수신부에 붙이는 배선"뿐이다 — 클러스터와 생명주기가 같다.
 #
-# 여기 남긴 것은 "EKS 로그 그룹을 그 Firehose에 붙이는 배선"뿐이다.
-# 클러스터와 생명주기가 같아서(클러스터가 사라지면 로그 그룹도 사라진다)
-# 메인 스택에 있는 게 맞다.
+# 크로스 계정이라 두 가지가 8/7 버전과 다르다:
+#   1. Firehose ARN이 아니라 Log Destination ARN을 가리킨다 — 구독 필터는
+#      다른 계정의 Firehose를 직접 못 가리킨다.
+#   2. role_arn이 없다 — 인가는 수신측(log-archive)의 destination policy가 맡고,
+#      Firehose 투입 권한도 수신측 destination의 role이 갖는다.
 #
-# 참조는 remote state가 아니라 이름 고정 data source로 한다 —
-# persistent-data.tf 와 같은 이유다.
+# 참조는 data source가 아니라 ARN 조립이다 — 크로스 계정 data source는 로그
+# 계정의 자격증명이 필요해서 kim/moon의 DenySensitiveServices 환경에서 걸린다.
+# destination 이름 규칙은 ../log-archive/log-archive.tf 와 반드시 일치해야 한다.
 # =============================================================================
 
-data "aws_iam_role" "cloudwatch_logs_to_firehose" {
-  name = "gochuchamchi-cloudwatch-logs-to-firehose"
-}
-
-data "aws_kinesis_firehose_delivery_stream" "cloudwatch_log_archive" {
-  for_each = local.cloudwatch_log_archive_sources
-
-  name = "gochuchamchi-${each.key}-log-archive"
-}
-
 locals {
-  # 키는 ../account-baseline/log-archive.tf 의 cloudwatch_log_archive_sources 와
+  # 키는 ../log-archive/log-archive.tf 의 cloudwatch_log_archive_sources 와
   # 반드시 일치해야 한다. 여기서 값(로그 그룹 이름)을 붙인다.
   cloudwatch_log_archive_sources = {
     application   = aws_cloudwatch_log_group.container_insights_application.name
@@ -39,8 +31,14 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_log_archive" {
   name            = "gochuchamchi-${each.key}-s3-archive"
   log_group_name  = each.value
   filter_pattern  = ""
-  destination_arn = data.aws_kinesis_firehose_delivery_stream.cloudwatch_log_archive[each.key].arn
-  role_arn        = data.aws_iam_role.cloudwatch_logs_to_firehose.arn
+  destination_arn = "arn:aws:logs:${var.region}:${var.log_archive_account_id}:destination:gochuchamchi-${each.key}-log-archive"
 
   depends_on = [aws_eks_addon.cloudwatch_observability]
+
+  lifecycle {
+    precondition {
+      condition     = var.log_archive_account_id != ""
+      error_message = "log_archive_account_id가 비어 있습니다. 로그 계정 생성 후 계정 ID를 변수에 넣어야 합니다 (../log-archive 먼저 apply)."
+    }
+  }
 }

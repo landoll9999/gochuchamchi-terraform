@@ -1,19 +1,16 @@
 # =============================================================================
-# VPC Flow Logs — 분석 계층 (Glue 테이블 / Athena 저장 쿼리) -> 중앙 로그 S3 + Athena 조회
+# VPC Flow Logs — 분석 계층 (로그 계정 버전)
 #
-# CloudTrail(API 호출)·EKS 감사로그·GuardDuty findings는 이미 갖췄지만
-# "어느 IP가 어떤 포트를 언제 훑었는지"의 네트워크 레이어 원본 증거가 없었음
-# -> 모의해킹/포렌식에서 체인이 끊기는 유일한 공백이라 여기서 채운다.
+# ../account-baseline/flow-logs-analytics.tf 에서 이식. 경로의 계정 ID가
+# "이 계정"이 아니라 "워크로드 계정"인 것이 유일한 차이다 — Flow Logs 배달
+# 경로의 AWSLogs/<계정ID>는 버킷 소유자가 아니라 "로그를 만든 VPC의 계정"이다.
 #
-# 저장 위치는 CloudTrail·Config와 같은 중앙 로그 버킷이고 prefix로만 분리:
-#   s3://<중앙-로그-버킷>/vpc-flow-logs/AWSLogs/<계정ID>/vpcflowlogs/<리전>/yyyy/MM/dd/
-# 버킷 정책의 delivery.logs.amazonaws.com 허용은 cloudwatch-log-archive.tf 참고.
+#   s3://<새-로그-버킷>/vpc-flow-logs/AWSLogs/<워크로드계정ID>/vpcflowlogs/<리전>/yyyy/MM/dd/
 # =============================================================================
 
 locals {
-  vpc_flow_logs_s3_prefix      = "vpc-flow-logs"
   athena_flowlogs_table_name   = "vpc_flow_logs"
-  vpc_flow_logs_s3_base_prefix = "${local.vpc_flow_logs_s3_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/vpcflowlogs"
+  vpc_flow_logs_s3_base_prefix = "${local.vpc_flow_logs_s3_prefix}/AWSLogs/${local.workload_account_id}/vpcflowlogs"
 
   # 파케이(parquet) 기본 v2 필드. Athena 스캔 비용이 JSON/text 대비 크게 준다.
   flowlogs_athena_columns = [
@@ -35,7 +32,6 @@ locals {
 }
 
 
-
 # =============================================================================
 # Athena - Flow Logs 조회 테이블 (CloudTrail 테이블과 동일한 projection 패턴)
 # =============================================================================
@@ -43,7 +39,7 @@ locals {
 resource "aws_glue_catalog_table" "vpc_flow_logs" {
   name          = local.athena_flowlogs_table_name
   database_name = aws_glue_catalog_database.security_logs.name
-  description   = "중앙 S3에 저장된 VPC Flow Logs (parquet)"
+  description   = "중앙 S3에 저장된 VPC Flow Logs (parquet, 워크로드 계정 발신)"
   table_type    = "EXTERNAL_TABLE"
 
   parameters = {
@@ -179,7 +175,6 @@ resource "aws_athena_named_query" "flowlogs" {
 # =============================================================================
 # Outputs
 # =============================================================================
-
 
 output "vpc_flow_logs_s3_location" {
   description = "Flow Logs 원본이 저장되는 S3 기본 경로"

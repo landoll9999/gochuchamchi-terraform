@@ -1,17 +1,19 @@
 # =============================================================================
-# CloudWatch Logs 중앙 S3 아카이브
+# 중앙 로그 S3 아카이브 — 로그 계정 버전
 #
-# 실시간 조회는 기존 CloudWatch Logs/Grafana에서 계속 수행하고,
-# 새로 유입되는 로그를 Firehose를 통해 S3에 장기 보관합니다.
+# ../account-baseline/log-archive.tf 에서 이식. 달라진 것:
+#   1. Object Lock COMPLIANCE — 구 버킷에서 "생성 시점에만 켤 수 있어 보류"였던
+#      것을 신규 생성인 지금 반영. 버킷 정책 Deny는 정책이 지워지면 같이 사라지지만
+#      Object Lock은 보존기간 동안 루트도 못 푼다.
+#   2. 쓰기 허용 조건이 전부 크로스 계정 — CloudTrail은 org trail 경로(management
+#      계정 + org ID 경로 둘 다), Flow Logs는 워크로드 계정 SourceAccount.
+#   3. Log Destination 신설 — 워크로드 계정의 구독 필터는 다른 계정의 Firehose를
+#      직접 못 가리키므로, 이 계정에 수신 창구(destination)를 만들고 destination
+#      policy로 워크로드 계정을 인가한다.
 # =============================================================================
 
 locals {
-  # 로그 유형 키. 예전에는 EKS 로그 그룹 이름을 값으로 갖는 map이었지만, 그 참조
-  # 때문에 이 계층이 메인 스택(module.eks)에 묶여 있었다. Firehose/로그그룹/스트림은
-  # 키만 쓰고 값은 구독 필터에서만 쓰였으므로, 여기서는 키만 남기고 실제 로그 그룹
-  # 연결은 ../terraform/log-archive-subscriptions.tf 가 담당한다.
   cloudwatch_log_archive_sources = toset(["application", "control-plane"])
-
 
   cloudwatch_log_archive_tags = {
     Project     = "gochuchamchi"
@@ -20,14 +22,17 @@ locals {
     Component   = "central-log-archive"
   }
 
-  # 불변성 Deny에서 예외로 둘 운영 주체. 비워두면 현재 apply를 돌리는 주체가 들어간다.
+  # 불변성 Deny 예외 주체. 비워두면 현재 apply를 돌리는 주체(log-admin IAM user —
+  # 직접 프로파일이라 ARN이 고정)가 들어간다. baseline과 같은 방식.
   cloudwatch_log_archive_admin_arns = length(var.cloudwatch_log_archive_admin_arns) > 0 ? var.cloudwatch_log_archive_admin_arns : [data.aws_caller_identity.current.arn]
-}
 
-variable "cloudwatch_log_archive_admin_arns" {
-  description = "로그 버킷 불변성 Deny에서 예외로 둘 운영 주체 ARN 목록 (비우면 apply 실행 주체). CI 역할에서도 apply한다면 그 역할 ARN을 함께 넣을 것"
-  type        = list(string)
-  default     = []
+  # Org Trail은 Management 계정 소유이며 ../management/audit에서 관리한다.
+  # Log 계정의 버킷/KMS 정책은 Management 소유 Trail ARN만 신뢰한다.
+  cloudtrail_name          = "gochuchamchi-org-trail"
+  cloudtrail_s3_key_prefix = "cloudtrail"
+  cloudtrail_arn           = "arn:aws:cloudtrail:${var.region}:${var.management_account_id}:trail/${local.cloudtrail_name}"
+
+  vpc_flow_logs_s3_prefix = "vpc-flow-logs"
 }
 
 
@@ -36,17 +41,34 @@ variable "cloudwatch_log_archive_admin_arns" {
 # =============================================================================
 
 resource "aws_s3_bucket" "cloudwatch_log_archive" {
-  bucket = "gochuchamchi-cloudwatch-log-archive-${data.aws_caller_identity.current.account_id}"
+  # 구(舊) 워크로드 시절의 버킷(gochuchamchi-cloudwatch-log-archive-...)과 이름을
+  # 다르게 둔다 — 구 인프라 teardown이 어디까지 되든 충돌하지 않도록.
+  # 이 이름은 ../terraform/flow-logs.tf 가 ARN 조립으로 재현한다 — 바꾸면 같이 바꿀 것.
+  bucket = "gochuchamchi-log-archive-${data.aws_caller_identity.current.account_id}"
 
-  # 중앙 로그는 실수로 함께 삭제되지 않도록 보호
+  # Object Lock은 생성 시점에만 켤 수 있다 (구 버킷이 못 켠 이유).
+  # 켜면 versioning이 강제된다.
+  object_lock_enabled = true
+
   force_destroy = false
 
   tags = merge(
     local.cloudwatch_log_archive_tags,
     {
-      Name = "gochuchamchi-cloudwatch-log-archive"
+      Name = "gochuchamchi-log-archive"
     }
   )
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "cloudwatch_log_archive" {
+  bucket = aws_s3_bucket.cloudwatch_log_archive.id
+
+  rule {
+    default_retention {
+      mode = "COMPLIANCE"
+      days = var.log_archive_object_lock_days
+    }
+  }
 }
 
 resource "aws_s3_bucket_ownership_controls" "cloudwatch_log_archive" {
@@ -79,21 +101,12 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudwatch_log_ar
 
   rule {
     apply_server_side_encryption_by_default {
-      # (2026-08-03 full-HA에서 복원) 로그 전용 CMK로 암호화 (kms.tf).
-      # CloudTrail/Firehose/Flow Logs가 이 키를 쓸 수 있는 권한은 키 정책 쪽에 있다.
-      # 기존 객체는 AES256 그대로 남고 신규 객체부터 KMS 적용 — in-place 변경.
       sse_algorithm     = "aws:kms"
       kms_master_key_id = aws_kms_key.logs.arn
     }
     bucket_key_enabled = true # 객체마다 KMS 호출하지 않도록 -> KMS 비용 절감
   }
 }
-
-# (복원 보류) Object Lock — fin 라인은 버킷 생성 시 object_lock_enabled=true +
-# COMPLIANCE 30일 잠금이었으나, Object Lock은 "생성 시점"에만 켤 수 있어 기존
-# 버킷에 적용하면 버킷 교체(로그 소실 또는 이관 필요)가 계획된다.
-# 다음 전체 재구축 사이클에서 반영할 것 (fin의 variables: log_archive_object_lock_*).
-# 그때까지는 아래 버킷 정책의 DenyObjectDeletion이 API 경유 삭제를 차단한다.
 
 resource "aws_s3_bucket_lifecycle_configuration" "cloudwatch_log_archive" {
   bucket = aws_s3_bucket.cloudwatch_log_archive.id
@@ -120,6 +133,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudwatch_log_archive" {
       days = var.cloudwatch_log_archive_retention_days
     }
 
+    # Object Lock 보존기간(기본 30일)이 지난 버전만 실제로 정리된다 —
+    # 수명주기는 잠긴 버전을 건너뛰었다가 잠금 해제 후 정리한다.
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
@@ -132,7 +147,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudwatch_log_archive" {
 
 
 # =============================================================================
-# 중앙 로그 버킷 정책
+# 중앙 로그 버킷 정책 — 쓰기 주체가 전부 "다른 계정"인 것이 baseline과의 차이
 # =============================================================================
 
 data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
@@ -187,6 +202,11 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     }
   }
 
+  # org trail의 배달 경로는 두 갈래다:
+  #   management 계정 자신의 이벤트         -> AWSLogs/<management계정ID>/*
+  #   멤버 계정(워크로드) 이벤트            -> AWSLogs/<org-ID>/<워크로드계정ID>/*
+  # 둘 다 열어야 org trail 생성이 통과된다. 조사 대상인 워크로드 이벤트는
+  # 두 번째 경로(org 경로)로 온다 — Athena 테이블(athena.tf)이 그걸 본다.
   statement {
     sid    = "AWSCloudTrailWrite"
     effect = "Allow"
@@ -203,7 +223,8 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     ]
 
     resources = [
-      "${aws_s3_bucket.cloudwatch_log_archive.arn}/${local.cloudtrail_s3_key_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+      "${aws_s3_bucket.cloudwatch_log_archive.arn}/${local.cloudtrail_s3_key_prefix}/AWSLogs/${var.management_account_id}/*",
+      "${aws_s3_bucket.cloudwatch_log_archive.arn}/${local.cloudtrail_s3_key_prefix}/AWSLogs/${local.org_id}/*"
     ]
 
     condition {
@@ -219,10 +240,7 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     }
   }
 
-  # ---------------------------------------------------------------------------
-  # (2026-08-03 full-HA에서 복원) VPC Flow Logs 전달 (flow-logs.tf)
-  # delivery.logs 서비스가 쓴다
-  # ---------------------------------------------------------------------------
+  # VPC Flow Logs — 보내는 쪽이 이제 워크로드 계정이다
   statement {
     sid    = "AWSLogDeliveryAclCheck"
     effect = "Allow"
@@ -243,7 +261,7 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
+      values   = [local.workload_account_id]
     }
   }
 
@@ -261,7 +279,7 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     ]
 
     resources = [
-      "${aws_s3_bucket.cloudwatch_log_archive.arn}/${local.vpc_flow_logs_s3_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+      "${aws_s3_bucket.cloudwatch_log_archive.arn}/${local.vpc_flow_logs_s3_prefix}/AWSLogs/${local.workload_account_id}/*"
     ]
 
     condition {
@@ -273,31 +291,16 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
+      values   = [local.workload_account_id]
     }
   }
 
   # ---------------------------------------------------------------------------
-  # (2026-08-03 full-HA에서 복원) 로그 불변성 보강 — API 경유 삭제와 정책 변조를
-  # 명시적으로 거부. 운영 주체(아래 예외 목록) 외의 누구도 증거 로그를 지우거나
-  # 이 정책을 풀 수 없게 하는 목적.
-  #
-  # 2026-08-05 수정 — 이전 버전은 방어가 성립하지 않으면서 운영만 막고 있었다:
-  #   · Deny 대상이 PutBucketPolicy "뿐"이라 DeleteBucketPolicy로 정책을 통째로
-  #     지우면 DenyObjectDeletion까지 함께 사라졌다. 침해자는 한 번의 호출로
-  #     모든 Deny를 걷어낼 수 있었으므로 "admin 자격증명을 얻어도 못 지운다"는
-  #     전제가 실제로는 거짓이었다.
-  #   · 반대로 Terraform은 정책 "수정"이 막혀 apply가 403으로 실패했다
-  #     (2026-08-05 재구축에서 실제 발생).
-  #   · 옛 주석은 "루트만 DeleteBucketPolicy 가능"이라고 적었으나 그건 Delete까지
-  #     Deny했을 때의 이야기고, 당시 정책은 그렇지 않아 admin으로도 삭제됐다.
-  # 그래서 (1) DeleteBucketPolicy를 Deny에 추가해 우회 경로를 막고,
-  #        (2) 운영 주체는 ArnNotLike 조건으로 예외를 둬 apply가 통과되게 한다.
-  #
-  # ⚠️ 남는 한계: 예외 주체(기본값 = apply 실행자)의 자격증명이 탈취되면 이 방어는
-  # 무력하다. 같은 계정의 관리자를 그 계정 리소스로 막는 구조의 본질적 한계이므로,
-  # 운영 전환 시에는 로그 전용 계정 분리나 S3 Object Lock으로 재설계할 것.
-  # 라이프사이클 만료는 S3 내부 동작이라 이 Deny의 영향을 받지 않고 계속 정리된다.
+  # 불변성 Deny — Object Lock이 1차 방어가 됐지만 그대로 유지한다.
+  # Object Lock은 "보존기간 내 버전 삭제"만 막고, 이 Deny는 정책 변조와
+  # 보존기간 지난 객체의 API 삭제까지 막는다 (수명주기 만료는 영향 없음).
+  # 워크로드 계정 주체는 여기 예외 목록에 없으므로 구조적으로 차단된다 —
+  # 이 계층을 분리한 목적 그 자체.
   # ---------------------------------------------------------------------------
   statement {
     sid    = "DenyObjectDeletion"
@@ -317,8 +320,6 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
       "${aws_s3_bucket.cloudwatch_log_archive.arn}/*"
     ]
 
-    # 요청에 aws:PrincipalArn이 없는 서비스 주체(CloudTrail 등)에는 부정형 연산자가
-    # true로 평가되어 Deny가 그대로 적용된다 — 의도한 동작이다.
     condition {
       test     = "ArnNotLike"
       variable = "aws:PrincipalArn"
@@ -335,7 +336,6 @@ data "aws_iam_policy_document" "cloudwatch_log_archive_bucket" {
       identifiers = ["*"]
     }
 
-    # Put만 막으면 Delete로 정책 전체를 걷어낼 수 있다 — 둘 다 막아야 의미가 있다.
     actions = [
       "s3:PutBucketPolicy",
       "s3:DeleteBucketPolicy"
@@ -457,7 +457,7 @@ resource "aws_iam_role_policy" "cloudwatch_log_archive_firehose" {
 
 
 # =============================================================================
-# CloudWatch Logs -> Firehose -> S3
+# Firehose -> S3
 # =============================================================================
 
 resource "aws_kinesis_firehose_delivery_stream" "cloudwatch_log_archive" {
@@ -527,10 +527,16 @@ resource "aws_kinesis_firehose_delivery_stream" "cloudwatch_log_archive" {
 
 
 # =============================================================================
-# CloudWatch Logs가 Firehose로 전송할 IAM Role
+# Log Destination — 워크로드 계정의 구독 필터가 가리킬 수신 창구 (크로스 계정 신설분)
+#
+# 같은 계정일 때는 구독 필터가 Firehose ARN을 직접 가리켰지만(구 baseline 방식),
+# 크로스 계정에서는 반드시 destination을 거쳐야 한다. 인가도 두 단계로 갈린다:
+#   - destination policy: "워크로드 계정이 이 destination을 구독해도 된다"
+#   - destination의 role: "logs 서비스가 이 계정의 Firehose에 넣어도 된다"
+# 워크로드 쪽 구독 필터에는 role_arn을 넣지 않는다.
 # =============================================================================
 
-data "aws_iam_policy_document" "cloudwatch_logs_to_firehose_assume_role" {
+data "aws_iam_policy_document" "logs_destination_assume_role" {
   statement {
     sid    = "AllowCloudWatchLogs"
     effect = "Allow"
@@ -538,7 +544,7 @@ data "aws_iam_policy_document" "cloudwatch_logs_to_firehose_assume_role" {
     principals {
       type = "Service"
       identifiers = [
-        "logs.${var.region}.amazonaws.com"
+        "logs.amazonaws.com"
       ]
     }
 
@@ -546,24 +552,25 @@ data "aws_iam_policy_document" "cloudwatch_logs_to_firehose_assume_role" {
       "sts:AssumeRole"
     ]
 
+    # 발신자(워크로드 계정)의 로그 그룹에서 온 요청만 이 롤을 쓸 수 있다
     condition {
-      test     = "StringLike"
+      test     = "ArnLike"
       variable = "aws:SourceArn"
       values = [
-        "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
+        "arn:aws:logs:${var.region}:${local.workload_account_id}:*"
       ]
     }
   }
 }
 
-resource "aws_iam_role" "cloudwatch_logs_to_firehose" {
-  name               = "gochuchamchi-cloudwatch-logs-to-firehose"
-  assume_role_policy = data.aws_iam_policy_document.cloudwatch_logs_to_firehose_assume_role.json
+resource "aws_iam_role" "logs_destination" {
+  name               = "gochuchamchi-logs-destination"
+  assume_role_policy = data.aws_iam_policy_document.logs_destination_assume_role.json
 
   tags = local.cloudwatch_log_archive_tags
 }
 
-data "aws_iam_policy_document" "cloudwatch_logs_to_firehose" {
+data "aws_iam_policy_document" "logs_destination" {
   statement {
     sid    = "WriteFirehoseStreams"
     effect = "Allow"
@@ -580,13 +587,51 @@ data "aws_iam_policy_document" "cloudwatch_logs_to_firehose" {
   }
 }
 
-resource "aws_iam_role_policy" "cloudwatch_logs_to_firehose" {
-  name   = "gochuchamchi-cloudwatch-logs-to-firehose"
-  role   = aws_iam_role.cloudwatch_logs_to_firehose.id
-  policy = data.aws_iam_policy_document.cloudwatch_logs_to_firehose.json
+resource "aws_iam_role_policy" "logs_destination" {
+  name   = "gochuchamchi-logs-destination"
+  role   = aws_iam_role.logs_destination.id
+  policy = data.aws_iam_policy_document.logs_destination.json
 }
 
+# 이름은 ../terraform/log-archive-subscriptions.tf 가 ARN 조립으로 참조한다 —
+# 바꾸면 그쪽 조립식도 함께 바꿀 것.
+resource "aws_cloudwatch_log_destination" "cloudwatch_log_archive" {
+  for_each = local.cloudwatch_log_archive_sources
 
+  name       = "gochuchamchi-${each.key}-log-archive"
+  role_arn   = aws_iam_role.logs_destination.arn
+  target_arn = aws_kinesis_firehose_delivery_stream.cloudwatch_log_archive[each.key].arn
+
+  depends_on = [aws_iam_role_policy.logs_destination]
+}
+
+data "aws_iam_policy_document" "logs_destination_access" {
+  statement {
+    sid    = "AllowWorkloadAccountSubscription"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = [local.workload_account_id]
+    }
+
+    actions = [
+      "logs:PutSubscriptionFilter"
+    ]
+
+    resources = [
+      for dest in values(aws_cloudwatch_log_destination.cloudwatch_log_archive) :
+      dest.arn
+    ]
+  }
+}
+
+resource "aws_cloudwatch_log_destination_policy" "cloudwatch_log_archive" {
+  for_each = aws_cloudwatch_log_destination.cloudwatch_log_archive
+
+  destination_name = each.value.name
+  access_policy    = data.aws_iam_policy_document.logs_destination_access.json
+}
 
 
 # =============================================================================
@@ -594,19 +639,19 @@ resource "aws_iam_role_policy" "cloudwatch_logs_to_firehose" {
 # =============================================================================
 
 output "cloudwatch_log_archive_bucket_name" {
-  description = "CloudWatch Logs 중앙 아카이브 S3 버킷 이름"
+  description = "중앙 아카이브 S3 버킷 이름"
   value       = aws_s3_bucket.cloudwatch_log_archive.bucket
 }
 
 output "cloudwatch_log_archive_bucket_arn" {
-  description = "CloudWatch Logs 중앙 아카이브 S3 버킷 ARN"
+  description = "중앙 아카이브 S3 버킷 ARN"
   value       = aws_s3_bucket.cloudwatch_log_archive.arn
 }
 
-output "cloudwatch_log_archive_firehose_arns" {
-  description = "로그 유형별 Firehose Delivery Stream ARN"
+output "cloudwatch_log_destination_arns" {
+  description = "워크로드 계정 구독 필터가 가리킬 destination ARN (terraform/은 이걸 ARN 조립으로 재현한다)"
   value = {
-    for name, stream in aws_kinesis_firehose_delivery_stream.cloudwatch_log_archive :
-    name => stream.arn
+    for name, dest in aws_cloudwatch_log_destination.cloudwatch_log_archive :
+    name => dest.arn
   }
 }

@@ -13,7 +13,7 @@ variable "region" {
 variable "aws_profile" {
   description = "AWS CLI profile (PowerShell에서 관리 중인 프로파일명)"
   type        = string
-  default     = "admin"
+  default     = "workload-admin"
 }
 
 variable "enable_guardduty_runtime_monitoring" {
@@ -49,17 +49,6 @@ variable "aws_config_snapshot_delivery_frequency" {
   }
 }
 
-variable "athena_cloudtrail_projection_start_date" {
-  description = "Athena CloudTrail 파티션 프로젝션 시작일 (yyyy/MM/dd)"
-  type        = string
-  default     = "2026/01/01"
-
-  validation {
-    condition     = can(regex("^\\d{4}/(0[1-9]|1[0-2])/(0[1-9]|[12]\\d|3[01])$", var.athena_cloudtrail_projection_start_date))
-    error_message = "Athena 파티션 시작일은 yyyy/MM/dd 형식이어야 합니다."
-  }
-}
-
 variable "allowed_regions" {
   description = "Region Guard가 허용하는 리전 (서울 워크로드 + 도쿄 DR). 글로벌 서비스는 정책의 NotAction으로 별도 제외"
   type        = list(string)
@@ -70,15 +59,4 @@ variable "console_admin_users" {
   description = "MFA 강제 콘솔 관리자 그룹에 넣을 IAM 사용자 이름 목록 (콘솔 전용 사용자만)"
   type        = list(string)
   default     = []
-}
-
-variable "cloudwatch_log_archive_retention_days" {
-  description = "중앙 S3에 보관할 CloudWatch 로그의 총 보존 기간"
-  type        = number
-  default     = 365
-
-  validation {
-    condition     = var.cloudwatch_log_archive_retention_days > 90
-    error_message = "S3 아카이브 보존 기간은 Glacier 전환 시점보다 긴 91일 이상이어야 합니다."
-  }
 }
