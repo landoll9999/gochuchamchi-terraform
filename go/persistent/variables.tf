@@ -1,7 +1,7 @@
 variable "aws_profile" {
   description = "AWS CLI 프로필 (../terraform/variables.tf와 같은 값)"
   type        = string
-  default     = "admin"
+  default     = "workload-admin"
 }
 
 variable "region" {

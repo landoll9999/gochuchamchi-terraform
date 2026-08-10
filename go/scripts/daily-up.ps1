@@ -20,7 +20,7 @@
 # =============================================================================
 
 $ErrorActionPreference = "Stop"
-$env:AWS_PROFILE = "admin"
+$env:AWS_PROFILE = "workload-admin"
 
 # 이 스크립트 기준으로 terraform 디렉토리 고정 (실행 위치 무관)
 $tfDir = Join-Path $PSScriptRoot "..\terraform"

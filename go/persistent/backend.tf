@@ -2,10 +2,10 @@
 # (../terraform, ../discord-notifications 와 동일 패턴, key만 다름)
 terraform {
   backend "s3" {
-    bucket       = "gochuchamchi-tfstate-307223751140"
+    bucket       = "gochuchamchi-tfstate-828885965304"
     key          = "persistent/terraform.tfstate"
     region       = "ap-northeast-2"
-    profile      = "admin"
+    profile      = "workload-admin"
     encrypt      = true
     use_lockfile = true
   }

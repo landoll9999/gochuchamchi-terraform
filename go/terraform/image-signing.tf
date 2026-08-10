@@ -65,7 +65,7 @@ resource "aws_iam_policy" "kyverno_ecr_signature_read" {
 module "kyverno_ecr_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.0" # (v8) 버전 핀
-  name   = "gochuchamchi-kyverno-ecr"
+  name    = "gochuchamchi-kyverno-ecr"
 
   additional_policy_arns = {
     ecr_signature_read = aws_iam_policy.kyverno_ecr_signature_read.arn

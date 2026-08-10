@@ -1,7 +1,12 @@
 .terraform/
 *.tfstate
-.tfstate.
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
 crash.log
+crash.*
 *.pem
 tfplan*
 gochuchamchi-gitops/
+scripts/.last-up-commit

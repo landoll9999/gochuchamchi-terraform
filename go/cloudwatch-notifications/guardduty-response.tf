@@ -143,8 +143,6 @@ resource "aws_iam_role_policy_attachment" "isolation_basic_execution" {
   )
 }
 
-data "aws_caller_identity" "current" {}
-
 data "aws_iam_policy_document" "guardduty_isolation" {
   # --- 조회: 대상 확인용. Describe*는 리소스 수준 제한을 지원하지 않아 * ---
   statement {
