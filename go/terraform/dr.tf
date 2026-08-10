@@ -62,7 +62,7 @@ resource "aws_backup_vault" "seoul" {
   count = local.dr_count
 
   name        = "gochuchamchi-backup-vault"
-  kms_key_arn = aws_kms_key.data.arn
+  kms_key_arn = data.aws_kms_key.data.arn
 
   # 볼트 안에 복구 지점이 남아 있으면 destroy가 막힌다. 실습 환경이라 자동 정리.
   force_destroy = true

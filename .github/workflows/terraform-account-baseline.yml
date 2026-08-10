@@ -1,0 +1,118 @@
+# =============================================================================
+# account-baseline 계층 CI — plan까지만, apply는 없다 (의도적)
+#
+# 이 계층에 apply job이 없는 이유:
+#   1. log-archive 버킷 정책의 admin_arns가 비어 있으면 "apply를 돌린 주체"가
+#      불변성 Deny의 예외로 들어간다. 로컬 admin과 CI 롤이 번갈아 apply하면
+#      버킷 정책이 매번 뒤집힌다(perpetual diff). apply 주체를 로컬 admin
+#      하나로 고정하면 이 문제가 구조적으로 사라진다.
+#   2. 이 계층은 CloudTrail/GuardDuty/Config/Object Lock 버킷 등 계정 단위
+#      싱글턴이다. 잘못 apply하면 영향 범위가 계정 전체라서, MFA 걸린 admin이
+#      로컬에서 plan을 눈으로 읽고 apply하는 걸 통제 수단으로 삼는다.
+#      CI에는 "읽기(plan) 가시성"만 준다 — 최소 권한.
+#
+# apply 절차: 로컬에서 $env:AWS_PROFILE="admin"; terraform apply
+# 2차 작업(assume_role 전환)에서 admin_arns가 롤 ARN으로 고정되면
+# 그때 apply job 추가를 재검토한다.
+# =============================================================================
+name: Terraform — account-baseline
+
+on:
+  pull_request:
+    paths:
+      - 'go/account-baseline/**'
+      - '.github/workflows/terraform-account-baseline.yml'
+
+permissions:
+  id-token: write       # OIDC (plan job용, 롤이 생기면 사용)
+  contents: read
+  pull-requests: write  # plan 결과 코멘트
+
+env:
+  TF_VERSION: '1.10.5'
+  WORKDIR: go/account-baseline
+  AWS_REGION: ap-northeast-2
+
+concurrency:
+  # persistent / terraform 계층 워크플로가 생기면 같은 그룹명을 쓸 것.
+  # 세 계층이 같은 계정을 만지므로, 겹치면 8/4식 교착이 재현될 수 있다.
+  group: terraform-gochuchamchi
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) 자격증명 없이 도는 정적 검사 — 오늘부터 유효
+  # ---------------------------------------------------------------------------
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Format check
+        working-directory: ${{ env.WORKDIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Init (backend 없이 — S3/자격증명 불필요)
+        working-directory: ${{ env.WORKDIR }}
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        working-directory: ${{ env.WORKDIR }}
+        run: terraform validate
+
+  # ---------------------------------------------------------------------------
+  # 2) 실제 plan — 읽기 전용 롤(vars.AWS_TF_PLAN_ROLE_ARN)이 생기기 전까진 skip
+  #    (롤 생성은 2차 작업: persistent/에 gochuchamchi-terraform-plan 롤 신설)
+  # ---------------------------------------------------------------------------
+  plan:
+    needs: static-check
+    if: vars.AWS_TF_PLAN_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Init
+        working-directory: ${{ env.WORKDIR }}
+        run: terraform init -input=false
+
+      - name: Plan
+        id: plan
+        working-directory: ${{ env.WORKDIR }}
+        run: terraform plan -input=false -no-color -lock=false 2>&1 | tee plan.txt
+
+      # 이 계층은 destroy하지 않는 것이 존재 이유다. plan에 destroy가 잡히면
+      # 사람이 반드시 눈으로 확인해야 하므로 실패로 처리한다.
+      - name: Guard — destroy가 계획되면 실패
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          if grep -qE '^Plan: .*[1-9][0-9]* to destroy' plan.txt; then
+            echo "::error::account-baseline은 destroy 대상이 아닙니다. plan을 확인하세요."
+            exit 1
+          fi
+
+      - name: PR 코멘트
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('${{ env.WORKDIR }}/plan.txt', 'utf8');
+            const body = ['#### account-baseline plan', '```', plan.slice(-60000), '```'].join('\n');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

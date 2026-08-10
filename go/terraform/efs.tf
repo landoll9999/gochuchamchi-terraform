@@ -8,10 +8,10 @@
 resource "aws_efs_file_system" "this" {
   creation_token = "gochuchamchi-efs"
   encrypted      = true
-  # (복원 보류) 전 구간 KMS CMK 원칙(kms.tf)상 아래 한 줄이 목표지만, 키 변경은
-  # "파일시스템 교체"를 유발해 저장 파일이 소실된다 (fin 라인 자체 경고).
-  # 다음 전체 재구축(destroy→apply) 사이클에서 주석 해제할 것:
-  # kms_key_id = aws_kms_key.data.arn
+  # (2026-08-07 복원) 전 구간 KMS CMK 원칙 적용. 키는 persistent 계층에 있어
+  # 일일 destroy와 무관하게 ARN이 고정된다 — "키 변경 = 파일시스템 교체" 리스크는
+  # 키가 매일 순환하던 구조의 문제였고, 이제 구조적으로 소멸.
+  kms_key_id       = data.aws_kms_key.data.arn
   performance_mode = "generalPurpose"
   throughput_mode  = "bursting"
 

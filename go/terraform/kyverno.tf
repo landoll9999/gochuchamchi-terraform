@@ -10,12 +10,13 @@
 #       gitops Deployment에 securityContext를 다 넣은 뒤 PSA enforce를
 #       restricted로 올릴 때, "지금 뭐가 걸리는지"를 이 리포트로 확인하고 올린다.
 #
-#   t3.small 2대 리소스 절충:
+#   t3.small 2대 리소스 절충과 Deny 승격 준비:
 #     - admission/reports 컨트롤러만 켜고 background/cleanup 컨트롤러는 끔
 #       (mutate-existing/generate/cleanup 정책을 안 쓰므로 불필요)
-#     - replicas 1 (프로덕션 기준은 admission 3대 — HA webhook. 여기선 비용 우선)
-#     - webhook failurePolicy = Ignore (아래 kyverno_policies values). replicas 1이라
-#       Kyverno가 죽으면 웹훅 응답자가 아예 없어지므로 Fail이면 클러스터가 잠긴다.
+#     - Audit에서는 admission 1대로 비용을 아끼고, 이미지 서명을 Deny로 올리면
+#       admission 3대 + PDB(minAvailable=2)를 자동 적용한다.
+#     - restricted 계량 정책의 webhook failurePolicy는 Ignore를 유지한다. 이미지
+#       서명 정책만 Deny에서 Fail로 바뀌며, 위 HA 설정이 그 fail-closed 경로를 보호한다.
 #
 #   ⚠️ validationFailureAction과 failurePolicy는 다른 것이다 (2026-08-04에 혼동으로 사고)
 #     - validationFailureAction=Audit : 정책을 "위반한" 요청을 차단하지 않고 기록만
@@ -55,7 +56,15 @@ resource "helm_release" "kyverno" {
   values = [
     yamlencode({
       admissionController = {
-        replicas = 1
+        # (v8 병합, main 브랜치 보안 작업) Kyverno가 권장하는 HA 최소 수는 3대다.
+        # 서명 정책이 Audit인 동안에는 기존 비용 절충(1대)을 유지하고,
+        # Deny(fail-closed)를 선택하는 순간 replicas 3 + PDB로 함께 확장한다 —
+        # 웹훅 응답자가 전멸하면 클러스터 admission이 잠기는 경로를 보호.
+        replicas = var.image_signature_validation_action == "Deny" ? 3 : 1
+        podDisruptionBudget = {
+          enabled      = var.image_signature_validation_action == "Deny"
+          minAvailable = var.image_signature_validation_action == "Deny" ? 2 : 1
+        }
         container = {
           resources = {
             requests = { cpu = "50m", memory = "128Mi" }
@@ -102,10 +111,9 @@ resource "helm_release" "kyverno_policies" {
       #   validate.kyverno.svc-fail: service kyverno-svc not found"
       #   -> 파드 삭제 불가 -> 네임스페이스 Terminating 고착 -> helm uninstall 실패
       #
-      # Ignore면 웹훅이 고아가 돼도 요청이 그냥 통과한다. 트레이드오프는 Kyverno가
-      # 죽어 있는 동안 정책 계량이 비는 것인데, 지금은 Audit(기록 전용)이라 실질
-      # 손실이 없다. 나중에 Enforce로 승격할 때는 admissionController.replicas를
-      # 늘려 HA를 확보한 뒤에 이 값을 재검토할 것.
+      # Ignore면 웹훅이 고아가 돼도 요청이 그냥 통과한다. 이 chart는 restricted
+      # 준수 현황을 Audit으로 계량하는 용도이므로 Ignore를 유지한다. 별도의 이미지
+      # 서명 정책은 Deny 승격 시 failurePolicy=Fail과 admission HA를 함께 적용한다.
       failurePolicy = "Ignore"
     })
   ]

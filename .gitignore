@@ -1,23 +1,7 @@
-<<<<<<< Updated upstream
-# Claude Code 로컬 설정 (도구 권한 등 — 작업자마다 다르고 공유할 값이 아님).
-# .claude/ 를 통째로 막으면 공유해야 할 .claude/skills/ 까지 빠지므로 파일 단위로 제외한다.
-**/.claude/settings.local.json
-=======
-# Claude Code 로컬 설정 (도구 권한 등 — 작업자마다 다르고 공유할 값이 아님)
-.claude/
-
-# Terraform 로컬 산출물 — 루트 레벨 이중 방어 (2026-08-04)
-# 주 방어선은 go/.gitignore (tfstate/.terraform/pem/plan 등 이미 커버).
-# 여기는 go/ 밖에 스택이 생기거나 go/.gitignore가 실수로 지워지는 경우 대비 +
-# go/.gitignore에 없던 *.tfvars 보강 (주입 변수 파일 — 이메일 등 개인정보 포함 가능).
-**/.terraform/
+.terraform/
 *.tfstate
-*.tfstate.*
-*.tfvars
+.tfstate.
 crash.log
-*-params.json
-
-# Lambda 배포 ZIP (archive_file이 plan/apply 때마다 재생성하는 빌드 산출물)
-# ※ cloudwatch-discord.zip은 과거에 이미 커밋됨 — git rm --cached 로 추적 해제 필요
-*.zip
->>>>>>> Stashed changes
+*.pem
+tfplan*
+gochuchamchi-gitops/

@@ -121,6 +121,7 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
     SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "5"
     SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "2"
     CLOUD_AWS_S3_BUCKET                        = aws_s3_bucket.images.bucket
+    CLOUD_AWS_S3_PUBLIC_BASE_URL               = "https://${aws_cloudfront_distribution.images.domain_name}"
     CLOUD_AWS_REGION_STATIC                    = var.region
     SPRING_SESSION_STORE_TYPE                  = "redis"
     # replication_group 전환(redis.tf)으로 엔드포인트 속성이 primary_endpoint_address로 변경됨

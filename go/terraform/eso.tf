@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 # External Secrets Operator (2026-08-04 백로그 B3)
 #
 # 왜 도입하나 — 감사 #1이 정한 "state에 secret_string이 다시 들어가는 시점 = ESO
@@ -95,7 +95,8 @@ resource "null_resource" "inject_git_pat" {
 # ESO 컨트롤러가 이 스택의 시크릿"만" 읽도록 정확한 ARN으로 제한
 # (iamRole.tf에서 rds!* 와일드카드를 걷어낸 것과 같은 원칙)
 module "eso_pod_identity" {
-  source = "terraform-aws-modules/eks-pod-identity/aws"
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0" # (v8) 버전 핀
   name   = "gochuchamchi-eso"
 
   attach_custom_policy = true

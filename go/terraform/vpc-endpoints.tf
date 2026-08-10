@@ -46,6 +46,9 @@ module "vpc_endpoints_sg" {
   source  = "terraform-aws-modules/security-group/aws"
   version = "~> 6.0"
 
+  # (v8) 엔드포인트와 생명주기 일치 — 꺼져 있으면 SG도 안 만든다
+  create = var.enable_vpc_endpoints
+
   name        = "gochuchamchi-vpce-sg"
   description = "Interface VPC endpoints - HTTPS from inside VPC only"
   vpc_id      = module.vpc.vpc_id
@@ -68,7 +71,9 @@ module "vpc_endpoints_sg" {
 }
 
 resource "aws_vpc_endpoint" "interface" {
-  for_each = toset(local.vpc_interface_endpoints)
+  # (v8) 기본 꺼짐 — 7종×2AZ ≈ 월 $133로 이 스택 최대 시간당 비용 항목.
+  # 끈 상태에서는 ECR/Secrets/SSM/logs가 전부 NAT 인스턴스 경유 (variables.tf 주석 참고).
+  for_each = var.enable_vpc_endpoints ? toset(local.vpc_interface_endpoints) : toset([])
 
   vpc_id             = module.vpc.vpc_id
   service_name       = "com.amazonaws.${var.region}.${each.value}"

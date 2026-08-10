@@ -122,10 +122,24 @@ module "rds" {
   # 주의: 이미 떠 있는 인스턴스에서 plan에 이 항목이 "변경"으로 뜬다면 실제로는 암호화가
   # 꺼져 있던 것 -> 그대로 apply하면 재생성(데이터 삭제)이므로 중단하고 스냅샷 경유로 전환할 것.
   storage_encrypted = true
+  # (2026-08-07) 관리형 키(aws/rds) → 우리 CMK로 전환. kms.tf 주석은 "RDS/EFS 전용
+  # 키"라 했지만 실제로는 지정이 없어 관리형 키를 쓰고 있었다 — 코드와 문서의 불일치
+  # 해소. CMK는 키 정책·CloudTrail 사용 추적·교체 주기를 우리가 통제한다는 차이.
+  # 키 변경은 인스턴스 교체를 유발하므로 전체 재구축 시점(지금)에만 적용할 것.
+  kms_key_id = data.aws_kms_key.data.arn
 
   backup_retention_period = 1
-  skip_final_snapshot     = true # 실습용이라 삭제 시 최종 스냅샷 생략. 운영에서는 false 권장
-  deletion_protection     = false
+
+  # (v8) 변수화. default = true — "하지 않은 것의 이유":
+  #   매일 destroy하는 이 체제에서 false면 최종 스냅샷이 매일 1개씩 쌓인다
+  #   (20GB 기준 개당 월 $0.4, 30일이면 ~$12/월). DB 데이터는 rds-schema-init.tf가
+  #   복원하는 재현 가능한 시드라, 스냅샷 누적 비용이 데이터 가치보다 크다.
+  #   운영 전환 시에만 -var rds_skip_final_snapshot=false + 스냅샷 수명 관리 추가.
+  skip_final_snapshot = var.rds_skip_final_snapshot
+  # prefix 방식(모듈이 유니크 suffix를 붙임) — timestamp() 기반 이름은 매 plan마다
+  # 값이 바뀌어 상시 diff를 만들므로 쓰지 않는다 (8/7 결정 그대로).
+  final_snapshot_identifier_prefix = "gochuchamchi-final"
+  deletion_protection              = false
 }
 
 output "rds_secret_arn" {

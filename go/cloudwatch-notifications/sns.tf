@@ -38,7 +38,13 @@ resource "aws_sns_topic_policy" "alerts" {
         Resource  = aws_sns_topic.alerts.arn
         Condition = {
           ArnEquals = {
-            "aws:SourceArn" = aws_cloudwatch_event_rule.cloudwatch_alarm_state_change.arn
+            # 발행 가능한 rule을 명시적 목록으로 관리 — 신규 알림 소스는 여기 추가
+            # (격리 Lambda의 결과 발행은 이 정책이 아니라 Lambda 역할의 IAM
+            #  sns:Publish로 허용됨 — 같은 계정은 IAM/리소스 정책의 합집합)
+            "aws:SourceArn" = [
+              aws_cloudwatch_event_rule.cloudwatch_alarm_state_change.arn,
+              aws_cloudwatch_event_rule.guardduty_finding.arn,
+            ]
           }
         }
       }

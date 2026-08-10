@@ -121,60 +121,19 @@ variable "container_insights_log_retention_days" {
   default     = 30
 }
 
-variable "cloudwatch_log_archive_retention_days" {
-  description = "중앙 S3에 보관할 CloudWatch 로그의 총 보존 기간"
-  type        = number
-  default     = 365
-
-  validation {
-    condition     = var.cloudwatch_log_archive_retention_days > 90
-    error_message = "S3 아카이브 보존 기간은 Glacier 전환 시점보다 긴 91일 이상이어야 합니다."
-  }
-}
 
 # ---------------------------------------------------------------------------
 # AWS Config / Security Hub
 # ---------------------------------------------------------------------------
 
-variable "aws_config_snapshot_delivery_frequency" {
-  description = "AWS Config 전체 스냅샷을 중앙 S3로 전달하는 주기. 짧게 잡을수록 S3 객체 수와 비용이 늘어난다."
-  type        = string
-  default     = "Six_Hours"
-
-  validation {
-    condition = contains([
-      "One_Hour",
-      "Three_Hours",
-      "Six_Hours",
-      "Twelve_Hours",
-      "TwentyFour_Hours"
-    ], var.aws_config_snapshot_delivery_frequency)
-    error_message = "aws_config_snapshot_delivery_frequency는 AWS Config가 지원하는 전달 주기여야 합니다."
-  }
-}
 
 # 우선 FSBP만 켜고, CIS 점검이 필요해지면 true로 바꾼다.
 # 표준을 하나 더 켜면 Control 평가 수만큼 Security Hub 비용이 추가된다.
-variable "security_hub_enable_cis_benchmark_v3" {
-  description = "Security Hub에 CIS AWS Foundations Benchmark v3.0.0을 추가로 활성화할지 여부"
-  type        = bool
-  default     = false
-}
 
 # ---------------------------------------------------------------------------
 # Athena / CloudTrail
 # ---------------------------------------------------------------------------
 
-variable "athena_cloudtrail_projection_start_date" {
-  description = "Athena CloudTrail 파티션 프로젝션 시작일 (yyyy/MM/dd)"
-  type        = string
-  default     = "2026/01/01"
-
-  validation {
-    condition     = can(regex("^\\d{4}/(0[1-9]|1[0-2])/(0[1-9]|[12]\\d|3[01])$", var.athena_cloudtrail_projection_start_date))
-    error_message = "Athena 파티션 시작일은 yyyy/MM/dd 형식이어야 합니다."
-  }
-}
 
 # ---------------------------------------------------------------------------
 # (2026-08-04 복원) 이하 변수들은 8/3 full-HA 보안 강화 라인(fin)에서 복원됨.
@@ -219,17 +178,7 @@ variable "waf_rate_limit_per_5min" {
 #    이 그룹에는 MFA 강제 + Region Guard의 explicit Deny가 붙어 있어서,
 #    CLI 액세스 키(MFA 없음)로 도는 Terraform이 통째로 AccessDenied가 된다
 #    (07/29 '3pro' 그룹 사고와 같은 유형 — docs/architecture.md §4.2).
-variable "console_admin_users" {
-  description = "MFA 강제 콘솔 관리자 그룹에 넣을 IAM 사용자 이름 목록 (콘솔 전용 사용자만)"
-  type        = list(string)
-  default     = []
-}
 
-variable "allowed_regions" {
-  description = "Region Guard가 허용하는 리전 (서울 워크로드 + 도쿄 DR). 글로벌 서비스는 정책의 NotAction으로 별도 제외"
-  type        = list(string)
-  default     = ["ap-northeast-2", "ap-northeast-1"]
-}
 
 # ---------------------------------------------------------------------------
 # L8 복원력 — Tokyo DR (dr.tf)
@@ -251,15 +200,6 @@ variable "dr_backup_retention_days" {
 # GuardDuty 런타임 모니터링 (guardduty.tf)
 # ---------------------------------------------------------------------------
 
-variable "enable_guardduty_runtime_monitoring" {
-  description = <<-EOT
-    GuardDuty 런타임 모니터링(노드 DaemonSet 에이전트) 활성화 여부.
-    프로세스/시스콜 수준 탐지가 추가되지만 t3.small 2대에는 메모리 부담이 있어
-    기본 OFF. EKS 감사 로그/CloudTrail/FlowLogs 기반 탐지는 이 값과 무관하게 동작.
-  EOT
-  type        = bool
-  default     = false
-}
 
 # ---------------------------------------------------------------------------
 # 애플리케이션 설정 (k8s-deploy.tf)
@@ -288,4 +228,27 @@ variable "pss_enforce_level" {
     condition     = contains(["privileged", "baseline", "restricted"], var.pss_enforce_level)
     error_message = "pss_enforce_level 은 privileged / baseline / restricted 중 하나여야 합니다."
   }
+}
+
+# ---------------------------------------------------------------------------
+# (v8) RDS 최종 스냅샷 — default true인 이유는 rds.tf 주석 참고
+#   요약: 매일 destroy 체제에서 false면 스냅샷이 매일 누적(월 ~$12).
+#   DB 데이터는 재현 가능한 시드라 스냅샷 누적 비용 > 데이터 가치.
+# ---------------------------------------------------------------------------
+variable "rds_skip_final_snapshot" {
+  description = "destroy 시 RDS 최종 스냅샷 생략 여부. 운영 전환 시 false + 스냅샷 수명 관리 필요"
+  type        = bool
+  default     = true
+}
+
+# ---------------------------------------------------------------------------
+# (v8) VPC 인터페이스 엔드포인트 온오프 — 8/7 비용 분류의 1위 항목(7종×2AZ ≈ 월 $133)
+#   default = false: ECR pull·SecretsManager·SSM이 NAT 인스턴스 2대 경유가 된다.
+#   동작은 하지만 NAT가 해당 경로의 단일 실패점이 됨 — 시연/검증일에만
+#   -var enable_vpc_endpoints=true 로 켠다. (S3 Gateway 엔드포인트는 무료라 main.tf에서 상시 유지)
+# ---------------------------------------------------------------------------
+variable "enable_vpc_endpoints" {
+  description = "인터페이스형 VPC 엔드포인트 7종 생성 여부 (시간당 과금 — 시연일에만 true)"
+  type        = bool
+  default     = false
 }

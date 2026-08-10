@@ -41,7 +41,8 @@ provider "aws" {
 #     data "aws_vpc" / data "aws_subnets" 로 기존 자원을 참조하면 됩니다.)
 # ---------------------------------------------------------------------------
 module "vpc" {
-  source = "terraform-aws-modules/vpc/aws"
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 6.0" # (v8) 매일 init하는 구조라 버전 미고정 시 major 업그레이드가 무경고 유입
 
   name = "gochuchamchi-vpc"
   cidr = "172.30.0.0/16"
@@ -109,6 +110,17 @@ module "eks" {
       min_size       = var.node_min_size
       max_size       = var.node_max_size
       desired_size   = var.node_desired_size
+
+      # (v8 병합, main 브랜치 보안 작업) IMDSv2만 허용하고, Pod가 노드 IAM 역할
+      # 자격 증명을 직접 가져가지 못하도록 metadata 응답의 hop limit을 1로 제한한다.
+      # 워크로드의 AWS 권한은 Pod Identity 사용.
+      metadata_options = {
+        http_endpoint               = "enabled"
+        http_tokens                 = "required"
+        http_put_response_hop_limit = 1
+        instance_metadata_tags      = "disabled"
+      }
+
       # (2026-08-04 백로그 B2) key_name 제거 — 노드 접속은 SSM으로만
       # (iam_role_additional_policies의 AmazonSSMManagedInstanceCore).
       # 감사 #2에서 배스천 SSH를 제거한 것과 같은 원칙. launch template 변경이라
@@ -183,6 +195,7 @@ module "eks" {
 # ---------------------------------------------------------------------------
 module "bastion_host" {
   source     = "terraform-aws-modules/ec2-instance/aws"
+  version    = "~> 6.0" # (v8) 버전 핀
   depends_on = [module.eks]
 
   name                        = "gochuchamchi-bastion"
@@ -190,6 +203,15 @@ module "bastion_host" {
   instance_type               = "t3.micro"
   associate_public_ip_address = true
   monitoring                  = true
+
+  # (v8 병합) 세션 토큰이 필요한 IMDSv2 요청만 허용한다 — 퍼블릭 서브넷 +
+  # IAM 크리덴셜 보유 인스턴스라 SSRF→IMDSv1 크리덴셜 탈취 경로 차단이 핵심.
+  metadata_options = {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "disabled"
+  }
 
   user_data_replace_on_change = true
 
@@ -228,8 +250,9 @@ module "bastion_host" {
 #    순서). 그래서 count.index로 같은 AZ끼리 1:1 매칭이 된다.
 # ---------------------------------------------------------------------------
 module "nat_instance" {
-  source = "terraform-aws-modules/ec2-instance/aws"
-  count  = length(var.azs)
+  source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "~> 6.0" # (v8) 버전 핀
+  count   = length(var.azs)
 
   name          = "gochuchamchi-nat-${count.index}"
   ami           = var.nat_ami
@@ -240,6 +263,14 @@ module "nat_instance" {
   source_dest_check      = false
   create_security_group  = false
   vpc_security_group_ids = [module.nat_sg.id]
+
+  # (v8 병합) 세션 토큰이 필요한 IMDSv2 요청만 허용한다.
+  metadata_options = {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "disabled"
+  }
 
   user_data                   = templatefile("${path.module}/nat_install.tpl", {})
   user_data_replace_on_change = true

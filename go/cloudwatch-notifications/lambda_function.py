@@ -163,7 +163,7 @@ def lambda_handler(
     results = []
 
     for bridge_event in unwrap_events(event):
-        results.append(handle_alarm_event(bridge_event))
+        results.append(route_event(bridge_event))
 
     return {
         "statusCode": 200,
@@ -175,6 +175,162 @@ def lambda_handler(
             ensure_ascii=False,
         ),
     }
+
+
+def route_event(event: dict[str, Any]) -> dict[str, Any]:
+    """이벤트 source별로 렌더러를 분기합니다.
+
+    SNS 허브에 소스가 늘면서(CloudWatch Alarm / GuardDuty / 격리 결과)
+    하나의 Lambda가 여러 형식을 받는다. 렌더러 함수만 추가하면 채널
+    확장이 되도록 라우팅을 한 곳에 모은다.
+    """
+    source = event.get("source", "")
+
+    if source == "aws.guardduty":
+        return handle_guardduty_event(event)
+
+    if source == "gochuchamchi.isolation":
+        return handle_isolation_event(event)
+
+    return handle_alarm_event(event)
+
+
+def severity_label(severity: float) -> str:
+    """GuardDuty 숫자 severity를 등급 문자열로 변환합니다."""
+    if severity >= 9:
+        return "CRITICAL"
+    if severity >= 7:
+        return "HIGH"
+    if severity >= 4:
+        return "MEDIUM"
+    return "LOW"
+
+
+def severity_color(severity: float) -> int:
+    """GuardDuty 등급별 Discord Embed 색상."""
+    if severity >= 7:
+        return 10038562  # 진한 빨강
+    if severity >= 4:
+        return 15105570  # 주황
+    return 9807270  # 회색
+
+
+def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
+    """GuardDuty finding 1건을 Discord 메시지로 변환·전송합니다."""
+    detail = event.get("detail", {})
+
+    finding_type = detail.get("type", "알 수 없는 finding")
+    severity = float(detail.get("severity", 0))
+    title = detail.get("title", finding_type)
+    description = detail.get("description", "상세 설명 없음")
+
+    resource = detail.get("resource", {})
+    resource_type = resource.get("resourceType", "알 수 없음")
+    instance_id = (
+        resource.get("instanceDetails", {}).get("instanceId", "-")
+        if resource_type == "Instance"
+        else "-"
+    )
+
+    label = severity_label(severity)
+    will_isolate = severity >= 7 and resource_type == "Instance"
+
+    discord_payload = {
+        "username": "Gochuchamchi GuardDuty",
+        "embeds": [
+            {
+                "title": f"🛡️ [{label}] {trim_text(title, 200)}",
+                "color": severity_color(severity),
+                "fields": [
+                    {
+                        "name": "Finding 유형",
+                        "value": f"`{trim_text(finding_type, 200)}`",
+                        "inline": False,
+                    },
+                    {
+                        "name": "Severity",
+                        "value": f"`{severity}` ({label})",
+                        "inline": True,
+                    },
+                    {
+                        "name": "대상 리소스",
+                        "value": f"`{resource_type}` / `{instance_id}`",
+                        "inline": True,
+                    },
+                    {
+                        "name": "자동 대응",
+                        "value": (
+                            "⚡ High 이상 + EC2 대상 → 격리 Lambda 발동됨 (결과 별도 통보)"
+                            if will_isolate
+                            else "통보만 — 격리 조건(High 이상 + EC2) 미충족"
+                        ),
+                        "inline": False,
+                    },
+                    {
+                        "name": "설명",
+                        "value": trim_text(description),
+                        "inline": False,
+                    },
+                ],
+                "footer": {
+                    "text": "GuardDuty → EventBridge → SNS → Lambda → Discord"
+                },
+            }
+        ],
+    }
+
+    send_discord_message(get_discord_webhook_url(), discord_payload)
+
+    return {"findingType": finding_type, "severity": severity}
+
+
+def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
+    """격리 Lambda의 실행 결과를 Discord 메시지로 변환·전송합니다."""
+    detail = event.get("detail", {})
+
+    action = detail.get("action", "unknown")
+    instance_id = detail.get("instanceId", "-")
+    finding_type = detail.get("findingType", "-")
+    action_detail = detail.get("detail", "")
+
+    action_render = {
+        "isolated": ("🔒 격리 완료", 10038562),
+        "already-isolated": ("🔒 이미 격리됨", 9807270),
+        "dry-run": ("🧪 드라이런 (실제 미실행)", 15105570),
+        "skipped": ("⏭️ 격리 생략", 9807270),
+        "failed": ("❌ 격리 실패 — 수동 개입 필요", 15158332),
+        "none": ("ℹ️ 조치 없음", 9807270),
+    }
+    action_text, color = action_render.get(action, (f"❓ {action}", 9807270))
+
+    discord_payload = {
+        "username": "Gochuchamchi Isolation",
+        "embeds": [
+            {
+                "title": f"{action_text}: {instance_id}",
+                "color": color,
+                "fields": [
+                    {
+                        "name": "발동 Finding",
+                        "value": f"`{trim_text(finding_type, 200)}`",
+                        "inline": False,
+                    },
+                    {
+                        "name": "상세",
+                        "value": trim_text(action_detail),
+                        "inline": False,
+                    },
+                ],
+                "footer": {
+                    "text": "GuardDuty → EventBridge → 격리 Lambda → SNS → Discord"
+                },
+            }
+        ],
+    }
+
+    send_discord_message(get_discord_webhook_url(), discord_payload)
+
+    return {"isolationAction": action, "instanceId": instance_id}
 
 
 def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:

@@ -12,6 +12,18 @@ resource "aws_s3_bucket" "images" {
   force_destroy = true
 }
 
+# (v8 병합) 계정 수준 S3 퍼블릭 차단은 account-baseline/account-hardening.tf 로 이동.
+# 계정 싱글턴이라 일일 destroy 계층에 두면 매일 껐다 켜는 사이클이 됨.
+# 이 버킷의 새 정책(cloudfront_read)은 퍼블릭 정책이 아니므로 계정 차단과 충돌하지 않는다.
+
+resource "aws_s3_bucket_ownership_controls" "images" {
+  bucket = aws_s3_bucket.images.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
 # (2026-08-03 full-HA에서 복원) 도쿄 CRR(dr.tf)의 전제 조건 — 복제는 원본/대상
 # 모두 버전관리가 필수. 버전이 쌓이는 비용은 아래 라이프사이클로 통제한다.
 resource "aws_s3_bucket_versioning" "images" {
@@ -56,35 +68,93 @@ resource "aws_s3_object" "texture" {
 resource "aws_s3_bucket_public_access_block" "images" {
   bucket = aws_s3_bucket.images.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+
+  depends_on = [aws_s3_bucket_policy.images_cloudfront_read]
 }
 
-# public_access_block 설정이 실제로 AWS에 전파되기 전에 bucket_policy가
-# 먼저 적용되면 AccessDenied/OperationAborted가 나는 경우가 있어(eventual
-# consistency), depends_on만으로는 그래프상 순서만 보장되고 실전파 시간은
-# 보장되지 않는다. time_sleep으로 실제 대기 시간을 둬서 단일 apply에서도
-# 안정적으로 동작하게 한다.
-resource "time_sleep" "wait_for_public_access_block" {
-  depends_on      = [aws_s3_bucket_public_access_block.images]
-  create_duration = "10s"
+resource "aws_cloudfront_origin_access_control" "images" {
+  name                              = "gochuchamchi-images-oac"
+  description                       = "Signed CloudFront access to the private product image bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
 }
 
-resource "aws_s3_bucket_policy" "images_public_read" {
+data "aws_cloudfront_cache_policy" "caching_optimized" {
+  name = "Managed-CachingOptimized"
+}
+
+resource "aws_cloudfront_distribution" "images" {
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "Private S3 product images via CloudFront OAC"
+  price_class     = "PriceClass_200"
+
+  origin {
+    domain_name              = aws_s3_bucket.images.bucket_regional_domain_name
+    origin_id                = "gochuchamchi-images-s3"
+    origin_access_control_id = aws_cloudfront_origin_access_control.images.id
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "gochuchamchi-images-s3"
+    viewer_protocol_policy = "redirect-to-https"
+
+    allowed_methods = ["GET", "HEAD", "OPTIONS"]
+    cached_methods  = ["GET", "HEAD"]
+    cache_policy_id = data.aws_cloudfront_cache_policy.caching_optimized.id
+    compress        = true
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = {
+    Project   = "gochuchamchi"
+    Component = "private-image-delivery"
+  }
+}
+
+resource "aws_s3_bucket_policy" "images_cloudfront_read" {
   bucket = aws_s3_bucket.images.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "PublicReadForProductImages"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "${aws_s3_bucket.images.arn}/*"
+        Sid    = "AllowCloudFrontReadOnly"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.images.arn}/*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.images.arn
+          }
+        }
       }
     ]
   })
-  depends_on = [time_sleep.wait_for_public_access_block]
+}
+
+moved {
+  from = aws_s3_bucket_policy.images_public_read
+  to   = aws_s3_bucket_policy.images_cloudfront_read
+}
+
+output "images_cloudfront_domain_name" {
+  description = "CloudFront domain used to serve objects from the private image bucket"
+  value       = aws_cloudfront_distribution.images.domain_name
 }

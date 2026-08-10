@@ -40,3 +40,8 @@ data "aws_iam_role" "github_actions_image_signer" {
 data "aws_secretsmanager_secret" "argocd_git_pat" {
   name = "gochuchamchi/argocd/git-pat"
 }
+
+# 워크로드 데이터 CMK — 별칭으로 조회 (2026-08-07 kms.tf에서 persistent로 이동)
+data "aws_kms_key" "data" {
+  key_id = "alias/gochuchamchi-data"
+}

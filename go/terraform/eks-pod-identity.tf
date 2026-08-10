@@ -36,7 +36,8 @@ provider "kubernetes" {
 # AWS Load Balancer Controller (Ingress -> ALB 자동 생성)
 # ---------------------------------------------------------------------------
 module "aws_lb_controller_pod_identity" {
-  source = "terraform-aws-modules/eks-pod-identity/aws"
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0" # (v8) 버전 핀
   name   = "gochuchamchi-alb-controller"
 
   attach_aws_lb_controller_policy = true
@@ -97,7 +98,8 @@ resource "helm_release" "aws_load_balancer_controller" {
 # ExternalDNS (Ingress 생성 시 gochuchamchi.shop 레코드를 Route53에 자동 등록)
 # ---------------------------------------------------------------------------
 module "external_dns_pod_identity" {
-  source = "terraform-aws-modules/eks-pod-identity/aws"
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0" # (v8) 버전 핀
   name   = "gochuchamchi-external-dns"
 
   attach_external_dns_policy = true
@@ -142,7 +144,8 @@ resource "helm_release" "external_dns" {
 # Cluster Autoscaler (파드가 스케줄 못 될 때 노드그룹 min/max 범위 안에서 자동 증감)
 # ---------------------------------------------------------------------------
 module "cluster_autoscaler_pod_identity" {
-  source = "terraform-aws-modules/eks-pod-identity/aws"
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0" # (v8) 버전 핀
   name   = "gochuchamchi-cluster-autoscaler"
 
   attach_cluster_autoscaler_policy = true
@@ -163,7 +166,8 @@ module "cluster_autoscaler_pod_identity" {
 #    get-login-password`를 실행함)
 # ---------------------------------------------------------------------------
 module "image_updater_ecr_pod_identity" {
-  source = "terraform-aws-modules/eks-pod-identity/aws"
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0" # (v8) 버전 핀
   name   = "gochuchamchi-image-updater-ecr"
 
   additional_policy_arns = {
@@ -202,7 +206,8 @@ resource "helm_release" "cluster_autoscaler" {
 #   서비스어카운트 이름(efs-csi-controller-sa)은 aws-efs-csi-driver addon 기본값과 일치해야 함
 # ---------------------------------------------------------------------------
 module "efs_csi_pod_identity" {
-  source = "terraform-aws-modules/eks-pod-identity/aws"
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.0" # (v8) 버전 핀
   name   = "gochuchamchi-efs-csi"
 
   attach_aws_efs_csi_policy = true

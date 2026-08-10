@@ -16,9 +16,14 @@
 # =============================================================================
 
 variable "cost_alert_email" {
-  description = "비용 알림을 받을 이메일 주소"
+  description = "비용 알림을 받을 이메일 주소. 하드코딩 금지 원칙(2026-08-04)에 따라 주입: $env:TF_VAR_cost_alert_email = \"you@example.com\""
   type        = string
-  default     = "where5683@naver.com"
+  # default 없음 — 개인정보를 코드/커밋 이력에 남기지 않기 위해 apply 시점 주입 강제
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.cost_alert_email))
+    error_message = "cost_alert_email은 이메일 주소 형식이어야 합니다."
+  }
 }
 
 variable "monthly_budget_usd" {

@@ -6,10 +6,12 @@
 # =============================================================================
 
 locals {
-  cloudwatch_log_archive_sources = {
-    application   = aws_cloudwatch_log_group.container_insights_application.name
-    control-plane = module.eks.cloudwatch_log_group_name
-  }
+  # 로그 유형 키. 예전에는 EKS 로그 그룹 이름을 값으로 갖는 map이었지만, 그 참조
+  # 때문에 이 계층이 메인 스택(module.eks)에 묶여 있었다. Firehose/로그그룹/스트림은
+  # 키만 쓰고 값은 구독 필터에서만 쓰였으므로, 여기서는 키만 남기고 실제 로그 그룹
+  # 연결은 ../terraform/log-archive-subscriptions.tf 가 담당한다.
+  cloudwatch_log_archive_sources = toset(["application", "control-plane"])
+
 
   cloudwatch_log_archive_tags = {
     Project     = "gochuchamchi"
@@ -585,24 +587,6 @@ resource "aws_iam_role_policy" "cloudwatch_logs_to_firehose" {
 }
 
 
-# =============================================================================
-# 애플리케이션/제어 플레인 로그 구독
-# =============================================================================
-
-resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_log_archive" {
-  for_each = local.cloudwatch_log_archive_sources
-
-  name            = "gochuchamchi-${each.key}-s3-archive"
-  log_group_name  = each.value
-  filter_pattern  = ""
-  destination_arn = aws_kinesis_firehose_delivery_stream.cloudwatch_log_archive[each.key].arn
-  role_arn        = aws_iam_role.cloudwatch_logs_to_firehose.arn
-
-  depends_on = [
-    aws_eks_addon.cloudwatch_observability,
-    aws_iam_role_policy.cloudwatch_logs_to_firehose
-  ]
-}
 
 
 # =============================================================================
