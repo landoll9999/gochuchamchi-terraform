@@ -10,3 +10,5 @@ crash.*
 tfplan*
 gochuchamchi-gitops/
 scripts/.last-up-commit
+# terraform archive_file이 apply 때 만드는 람다 빌드 산출물
+cloudwatch-notifications/*.zip

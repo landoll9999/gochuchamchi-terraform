@@ -1,0 +1,13 @@
+# 줄바꿈 고정 — Windows 체크아웃(autocrlf)이 .tf heredoc의 셔뱅을 CRLF로 오염시켜
+# 클러스터 스크립트가 fork/exec ENOENT로 죽는 장애 재발 방지 (docs/2026-08-11-트러블슈팅-종합.md §6).
+# 2026-08-05 §1에서 만들었다 §7에서 삭제된 가드의 재도입.
+
+# 클러스터/리눅스로 들어가는 파일은 항상 LF
+*.tf    text eol=lf
+*.tpl   text eol=lf
+*.sh    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+
+# Windows 전용 스크립트는 CRLF 유지
+*.ps1   text eol=crlf
