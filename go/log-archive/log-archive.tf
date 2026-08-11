@@ -552,12 +552,15 @@ data "aws_iam_policy_document" "logs_destination_assume_role" {
       "sts:AssumeRole"
     ]
 
-    # 발신자(워크로드 계정)의 로그 그룹에서 온 요청만 이 롤을 쓸 수 있다
+    # PutDestination은 생성 시 수신 계정에서 테스트 메시지를 보내므로,
+    # 발신 Workload 계정과 수신 Log 계정의 Logs ARN을 모두 허용해야 한다.
+    # 실제 구독 권한은 아래 destination access policy가 Workload 계정으로 제한한다.
     condition {
       test     = "ArnLike"
       variable = "aws:SourceArn"
       values = [
-        "arn:aws:logs:${var.region}:${local.workload_account_id}:*"
+        "arn:aws:logs:${var.region}:${local.workload_account_id}:*",
+        "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*",
       ]
     }
   }
