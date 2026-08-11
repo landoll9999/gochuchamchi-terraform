@@ -25,3 +25,20 @@ output "account_map" {
     workload    = var.workload_account_id
   }
 }
+
+# Security/Log 계정 담당자에게 넘기는 인계 지점.
+# 이 값이 채워지면 Log 계정에서 조직 단위 GuardDuty·Security Hub 설정을 시작할 수 있다.
+output "security_services_delegated_admin" {
+  value = var.enable_security_services_delegation ? {
+    account_id  = var.log_archive_account_id
+    region      = var.region
+    guardduty   = one(aws_guardduty_organization_admin_account.log_archive[*].admin_account_id)
+    securityhub = one(aws_securityhub_organization_admin_account.log_archive[*].admin_account_id)
+  } : null
+  description = "GuardDuty·Security Hub 위임 관리자로 지정된 계정과 리전. 미지정 시 null"
+}
+
+output "management_guardduty_detector_id" {
+  value       = one(aws_guardduty_detector.management[*].id)
+  description = "Management 계정 자체 탐지기 ID. Log 계정에서 멤버로 관리할 때 참조"
+}
