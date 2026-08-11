@@ -37,5 +37,5 @@ resources:
 #   ArgoCD가 그 문자열을 실제 태그로 렌더링해서 ImagePullBackOff가 난다.
 #   spring CI가 처음 돌면 이 값이 SHA 태그로 자동 교체된다.
 images:
-  - name: 307223751140.dkr.ecr.ap-northeast-2.amazonaws.com/gochuchamchi
+  - name: 828885965304.dkr.ecr.ap-northeast-2.amazonaws.com/gochuchamchi
     newTag: latest
