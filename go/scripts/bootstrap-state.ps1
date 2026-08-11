@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("management", "log", "workload")]
     [string]$Account
@@ -31,7 +31,8 @@ if ($callerAccount -ne $accountId) {
     throw "중단: '$profile'의 실제 계정은 $callerAccount, 예상 계정은 $accountId 입니다."
 }
 
-aws s3api head-bucket --bucket $bucket --profile $profile 2>$null
+# PS 5.1에서는 네이티브 명령의 stderr 리다이렉트가 오류로 승격되므로 cmd를 거쳐 확인한다.
+cmd /c "aws s3api head-bucket --bucket $bucket --profile $profile 2>nul"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "tfstate 버킷 생성: $bucket"
     aws s3api create-bucket `
@@ -49,12 +50,10 @@ else {
 }
 
 $publicAccessBlock = @{
-    PublicAccessBlockConfiguration = @{
-        BlockPublicAcls       = $true
-        IgnorePublicAcls      = $true
-        BlockPublicPolicy     = $true
-        RestrictPublicBuckets = $true
-    }
+    BlockPublicAcls       = $true
+    IgnorePublicAcls      = $true
+    BlockPublicPolicy     = $true
+    RestrictPublicBuckets = $true
 } | ConvertTo-Json -Depth 4 -Compress
 
 $encryption = @{
@@ -81,28 +80,45 @@ $tlsOnlyPolicy = @{
     )
 } | ConvertTo-Json -Depth 6 -Compress
 
-aws s3api put-public-access-block `
-    --bucket $bucket `
-    --public-access-block-configuration $publicAccessBlock `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "퍼블릭 액세스 차단 설정에 실패했습니다." }
+# JSON을 인자로 직접 넘기면 PS 버전에 따라 따옴표가 유실되므로 file:// 로 전달한다.
+$jsonDir = Join-Path $env:TEMP "gochuchamchi-bootstrap"
+New-Item -ItemType Directory -Force -Path $jsonDir | Out-Null
 
-aws s3api put-bucket-versioning `
-    --bucket $bucket `
-    --versioning-configuration Status=Enabled `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "버저닝 설정에 실패했습니다." }
+$pabFile = Join-Path $jsonDir "public-access-block.json"
+$encFile = Join-Path $jsonDir "encryption.json"
+$policyFile = Join-Path $jsonDir "tls-policy.json"
 
-aws s3api put-bucket-encryption `
-    --bucket $bucket `
-    --server-side-encryption-configuration $encryption `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "기본 암호화 설정에 실패했습니다." }
+Set-Content -Path $pabFile -Value $publicAccessBlock -Encoding Ascii
+Set-Content -Path $encFile -Value $encryption -Encoding Ascii
+Set-Content -Path $policyFile -Value $tlsOnlyPolicy -Encoding Ascii
 
-aws s3api put-bucket-policy `
-    --bucket $bucket `
-    --policy $tlsOnlyPolicy `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "TLS 전용 버킷 정책 설정에 실패했습니다." }
+try {
+    aws s3api put-public-access-block `
+        --bucket $bucket `
+        --public-access-block-configuration ("file://" + $pabFile.Replace('\', '/')) `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "퍼블릭 액세스 차단 설정에 실패했습니다." }
+
+    aws s3api put-bucket-versioning `
+        --bucket $bucket `
+        --versioning-configuration Status=Enabled `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "버저닝 설정에 실패했습니다." }
+
+    aws s3api put-bucket-encryption `
+        --bucket $bucket `
+        --server-side-encryption-configuration ("file://" + $encFile.Replace('\', '/')) `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "기본 암호화 설정에 실패했습니다." }
+
+    aws s3api put-bucket-policy `
+        --bucket $bucket `
+        --policy ("file://" + $policyFile.Replace('\', '/')) `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "TLS 전용 버킷 정책 설정에 실패했습니다." }
+}
+finally {
+    Remove-Item -Path $jsonDir -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "완료: $bucket (버저닝, 퍼블릭 차단, SSE-S3, TLS 강제)" -ForegroundColor Green

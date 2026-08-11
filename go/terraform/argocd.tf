@@ -159,10 +159,13 @@ resource "helm_release" "argocd_image_updater" {
       authScripts = {
         enabled = true
         scripts = {
-          "ecr-auth.sh" = <<-EOT
+          # Windows 체크아웃(autocrlf)에서 heredoc에 CR이 섞이면 셔뱅이 "/bin/sh\r"가
+          # 되어 fork/exec ENOENT로 죽는다(2026-08-11 실증) — 줄바꿈을 LF로 강제한다.
+          "ecr-auth.sh" = replace(<<-EOT
             #!/bin/sh
             echo "AWS:$(aws ecr get-login-password --region ${var.region})"
           EOT
+          , "\r\n", "\n")
         }
       }
     })
