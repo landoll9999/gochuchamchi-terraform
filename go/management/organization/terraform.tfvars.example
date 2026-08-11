@@ -1,0 +1,2 @@
+enable_identity_center_configuration = false
+enable_log_archive_protection_scp    = false
