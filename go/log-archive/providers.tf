@@ -29,6 +29,15 @@ provider "aws" {
   profile = var.log_profile
 }
 
+# CloudFront 범위 WAF의 CloudWatch Logs는 us-east-1에만 존재한다. WAF 로그
+# 구독용 cross-account Destination만 버지니아에 만들고, 실제 Firehose/S3/Athena는
+# 기존 서울 리전 Log 계정에 유지한다.
+provider "aws" {
+  alias   = "us_east_1"
+  region  = "us-east-1"
+  profile = var.log_profile
+}
+
 data "aws_caller_identity" "current" {}
 
 # Security/Log 계정이 Organization에 가입한 뒤 현재 Organization ID를 읽는다.

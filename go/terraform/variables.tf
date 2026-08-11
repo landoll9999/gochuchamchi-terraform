@@ -170,6 +170,17 @@ variable "waf_rate_limit_per_5min" {
   }
 }
 
+variable "cloudfront_origin_header_rotation_version" {
+  description = "CloudFront -> ALB Origin 검증값 회전 버전. 변경 시 짧은 전파 불일치가 가능하므로 점검 시간에 apply합니다."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.cloudfront_origin_header_rotation_version >= 1
+    error_message = "Origin 검증값 회전 버전은 1 이상이어야 합니다."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # IAM 보안 (iam-security.tf)
 # ---------------------------------------------------------------------------

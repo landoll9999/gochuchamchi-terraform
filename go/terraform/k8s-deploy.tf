@@ -208,6 +208,18 @@ resource "kubernetes_ingress_v1" "gochuchamchi_web" {
         "external-dns.alpha.kubernetes.io/ingress-hostname-source"      = "annotation-only"
         "alb.ingress.kubernetes.io/security-groups"                     = aws_security_group.alb_edge[0].id
         "alb.ingress.kubernetes.io/manage-backend-security-group-rules" = "true"
+        # CloudFront가 추가한 비밀 헤더가 있는 요청만 앱 Target Group으로 전달한다.
+        # 직접 ALB 호출이나 다른 CloudFront 배포를 통한 우회는 listener default
+        # action으로 떨어져 애플리케이션에 도달하지 않는다.
+        "alb.ingress.kubernetes.io/conditions.gochuchamchi-web-svc" = jsonencode([
+          {
+            field = "http-header"
+            httpHeaderConfig = {
+              httpHeaderName = "X-Gochuchamchi-Origin-Verify"
+              values         = [random_password.cloudfront_origin_verify[0].result]
+            }
+          }
+        ])
       } : {}
     )
   }

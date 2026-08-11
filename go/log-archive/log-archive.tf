@@ -14,6 +14,12 @@
 
 locals {
   cloudwatch_log_archive_sources = toset(["application", "control-plane"])
+  # Firehose/S3에는 WAF까지 보관하지만, application/control-plane의 Logs
+  # Destination은 서울이고 WAF Destination만 us-east-1이라 provider를 분리한다.
+  cloudwatch_log_delivery_sources = setunion(
+    local.cloudwatch_log_archive_sources,
+    toset(["waf"])
+  )
 
   cloudwatch_log_archive_tags = {
     Project     = "gochuchamchi"
@@ -369,7 +375,7 @@ resource "aws_s3_bucket_policy" "cloudwatch_log_archive" {
 # =============================================================================
 
 resource "aws_cloudwatch_log_group" "cloudwatch_log_archive_firehose" {
-  for_each = local.cloudwatch_log_archive_sources
+  for_each = local.cloudwatch_log_delivery_sources
 
   name              = "/aws/kinesisfirehose/gochuchamchi-${each.key}-log-archive"
   retention_in_days = 14
@@ -378,7 +384,7 @@ resource "aws_cloudwatch_log_group" "cloudwatch_log_archive_firehose" {
 }
 
 resource "aws_cloudwatch_log_stream" "cloudwatch_log_archive_firehose" {
-  for_each = local.cloudwatch_log_archive_sources
+  for_each = local.cloudwatch_log_delivery_sources
 
   name           = "S3Delivery"
   log_group_name = aws_cloudwatch_log_group.cloudwatch_log_archive_firehose[each.key].name
@@ -461,7 +467,7 @@ resource "aws_iam_role_policy" "cloudwatch_log_archive_firehose" {
 # =============================================================================
 
 resource "aws_kinesis_firehose_delivery_stream" "cloudwatch_log_archive" {
-  for_each = local.cloudwatch_log_archive_sources
+  for_each = local.cloudwatch_log_delivery_sources
 
   name        = "gochuchamchi-${each.key}-log-archive"
   destination = "extended_s3"
@@ -561,6 +567,8 @@ data "aws_iam_policy_document" "logs_destination_assume_role" {
       values = [
         "arn:aws:logs:${var.region}:${local.workload_account_id}:*",
         "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*",
+        "arn:aws:logs:us-east-1:${local.workload_account_id}:*",
+        "arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:*",
       ]
     }
   }
@@ -636,6 +644,40 @@ resource "aws_cloudwatch_log_destination_policy" "cloudwatch_log_archive" {
   access_policy    = data.aws_iam_policy_document.logs_destination_access.json
 }
 
+# CloudFront WAF 로그 그룹과 Destination은 같은 리전이어야 하므로 Destination만
+# us-east-1에 둔다. 이 Destination이 가리키는 Firehose는 서울 리전에 있어도 된다.
+resource "aws_cloudwatch_log_destination" "waf" {
+  provider = aws.us_east_1
+
+  name       = "gochuchamchi-waf-log-archive"
+  role_arn   = aws_iam_role.logs_destination.arn
+  target_arn = aws_kinesis_firehose_delivery_stream.cloudwatch_log_archive["waf"].arn
+
+  depends_on = [aws_iam_role_policy.logs_destination]
+}
+
+data "aws_iam_policy_document" "logs_destination_access_waf" {
+  statement {
+    sid    = "AllowWorkloadWafSubscription"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = [local.workload_account_id]
+    }
+
+    actions   = ["logs:PutSubscriptionFilter"]
+    resources = [aws_cloudwatch_log_destination.waf.arn]
+  }
+}
+
+resource "aws_cloudwatch_log_destination_policy" "waf" {
+  provider = aws.us_east_1
+
+  destination_name = aws_cloudwatch_log_destination.waf.name
+  access_policy    = data.aws_iam_policy_document.logs_destination_access_waf.json
+}
+
 
 # =============================================================================
 # Outputs
@@ -653,8 +695,11 @@ output "cloudwatch_log_archive_bucket_arn" {
 
 output "cloudwatch_log_destination_arns" {
   description = "워크로드 계정 구독 필터가 가리킬 destination ARN (terraform/은 이걸 ARN 조립으로 재현한다)"
-  value = {
-    for name, dest in aws_cloudwatch_log_destination.cloudwatch_log_archive :
-    name => dest.arn
-  }
+  value = merge(
+    {
+      for name, dest in aws_cloudwatch_log_destination.cloudwatch_log_archive :
+      name => dest.arn
+    },
+    { waf = aws_cloudwatch_log_destination.waf.arn }
+  )
 }

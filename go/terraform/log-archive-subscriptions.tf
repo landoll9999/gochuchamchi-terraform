@@ -42,3 +42,23 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_log_archive" {
     }
   }
 }
+
+# CloudFront 범위 WAF 로그는 us-east-1에 있으므로 서울 EKS 로그 구독과 provider를
+# 분리한다. 수신 Destination은 Log 계정에서 먼저 apply되어 있어야 한다.
+resource "aws_cloudwatch_log_subscription_filter" "waf_log_archive" {
+  provider = aws.us_east_1
+
+  name            = "gochuchamchi-waf-s3-archive"
+  log_group_name  = aws_cloudwatch_log_group.waf.name
+  filter_pattern  = ""
+  destination_arn = "arn:aws:logs:us-east-1:${var.log_archive_account_id}:destination:gochuchamchi-waf-log-archive"
+
+  depends_on = [aws_wafv2_web_acl_logging_configuration.edge]
+
+  lifecycle {
+    precondition {
+      condition     = var.log_archive_account_id != ""
+      error_message = "log_archive_account_id가 비어 있습니다. log-archive의 WAF Destination을 먼저 apply해야 합니다."
+    }
+  }
+}

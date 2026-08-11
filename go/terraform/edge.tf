@@ -16,10 +16,10 @@
 #    iam-security.tf의 Region Guard가 글로벌 서비스(acm/cloudfront/waf 등)를
 #    NotAction으로 빼두었으므로 발급이 막히지 않는다.
 #
-# (2026-08-03 갭 마감) ALB 보안그룹을 CloudFront origin-facing 관리형 prefix
-# list로 좁혀 "CloudFront 우회 직접 접근"까지 차단 — 아래 §5 + k8s-deploy.tf의
-# security-groups 어노테이션 참고. 이제 ALB DNS 이름을 알아내도 WAF를 우회해서
-# 직접 때릴 수 없다 (SG 레벨에서 CloudFront 오리진 IP + 관리자 IP만 허용).
+# (2026-08-11 보강) ALB 보안그룹을 CloudFront origin-facing 관리형 prefix list로
+# 좁히는 것에 더해, 이 배포만 아는 Origin Custom Header를 ALB listener rule에서
+# 검증한다. Prefix list만으로는 "CloudFront 서비스에서 왔다"까지만 증명되고
+# "우리 배포에서 왔다"는 증명되지 않기 때문이다.
 # =============================================================================
 
 provider "aws" {
@@ -204,6 +204,21 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
 
+# CloudFront 배포마다 고정된 Origin 검증값. 값은 sensitive state에만 저장하고
+# output으로 노출하지 않는다. rotation_version을 올리면 CloudFront와 Ingress
+# listener 조건이 함께 교체되지만 전파 순서에 따라 짧은 불일치가 생길 수 있으므로
+# 회전 apply는 점검 시간에 수행한다.
+resource "random_password" "cloudfront_origin_verify" {
+  count = var.enable_edge ? 1 : 0
+
+  length  = 48
+  special = false
+
+  keepers = {
+    rotation_version = tostring(var.cloudfront_origin_header_rotation_version)
+  }
+}
+
 resource "aws_cloudfront_distribution" "edge" {
   count = var.enable_edge ? 1 : 0
 
@@ -219,6 +234,11 @@ resource "aws_cloudfront_distribution" "edge" {
   origin {
     origin_id   = "gochuchamchi-alb"
     domain_name = data.aws_lb.ingress_edge[0].dns_name
+
+    custom_header {
+      name  = "X-Gochuchamchi-Origin-Verify"
+      value = random_password.cloudfront_origin_verify[0].result
+    }
 
     custom_origin_config {
       http_port              = 80

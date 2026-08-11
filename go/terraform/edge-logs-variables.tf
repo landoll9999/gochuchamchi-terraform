@@ -22,3 +22,25 @@ variable "cdn_log_retention_days" {
     error_message = "cdn_log_retention_days must be greater than 90 because logs transition to Glacier on day 90."
   }
 }
+
+variable "waf_total_blocked_alarm_threshold" {
+  description = "5분 동안 전체 WAF 차단 요청이 이 값 이상이면 알람"
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.waf_total_blocked_alarm_threshold >= 1
+    error_message = "WAF 전체 차단 알람 임계값은 1 이상이어야 합니다."
+  }
+}
+
+variable "waf_rate_blocked_alarm_threshold" {
+  description = "5분 동안 Rate Limit 규칙 차단 요청이 이 값 이상이면 알람"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.waf_rate_blocked_alarm_threshold >= 1
+    error_message = "WAF Rate Limit 알람 임계값은 1 이상이어야 합니다."
+  }
+}
