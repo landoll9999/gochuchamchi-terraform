@@ -259,6 +259,8 @@ def incident_tier_for_alarm(alarm_name: str) -> str:
     """Classify CloudWatch security alarms without turning routine signals into P1."""
     if "high-security-event" in alarm_name:
         return "P2"
+    if "firehose-" in alarm_name and "delivery-error" in alarm_name:
+        return "P2"
     if any(marker in alarm_name for marker in ("http-5xx", "login-failure", "access-denied", "waf-sqli")):
         return "P2"
     if any(marker in alarm_name for marker in ("waf-", "http-4xx", "target-4xx", "firehose")):
