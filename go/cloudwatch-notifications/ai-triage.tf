@@ -22,12 +22,22 @@
 
 variable "enable_ai_triage" {
   description = <<-EOT
-    AI 트리아지 온오프. false로 되돌리면 GuardDuty 통보가 이 Lambda를 거치지
-    않고 예전처럼 SNS로 직결된다(guardduty-response.tf의 target이 되살아남).
+    AI 트리아지 온오프. false면 GuardDuty 통보가 이 Lambda를 거치지 않고
+    예전처럼 SNS로 직결된다(guardduty-response.tf의 target이 되살아남).
     알림 자체는 어느 쪽이든 끊기지 않는 것이 이 스위치의 요점.
+
+    기본값이 false인 이유 (2026-08-12):
+      켜려면 Terraform 밖에서 Bedrock 모델 구독 계약이 먼저 체결돼야 한다.
+      Opus 5 / Sonnet 5 / Opus 4.8 같은 최신 모델은 Marketplace 구독형이라
+      create-foundation-model-agreement(또는 콘솔의 구독 동의)를 거치지 않으면
+      호출이 AccessDeniedException으로 막힌다. 기본값이 true면 그 상태에서
+      apply 했을 때 KMS 키·S3 버킷·DynamoDB 는 만들어진 뒤 실패해 부분 적용이
+      남는다. 전제 조건을 갖춘 뒤 명시적으로 켜는 편이 안전하다.
+
+      켤 때 확인할 것은 §4-1 / §4-1-1 참고.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "ai_triage_model_id" {
