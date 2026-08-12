@@ -1,0 +1,9 @@
+# Bedrock Mantle 엔드포인트(Messages API)용 Anthropic 공식 SDK.
+#
+# [bedrock] extra가 SigV4 서명을 위해 boto3를 끌어오지만, Lambda 런타임에 이미
+# boto3/botocore가 있으므로 build-layer.ps1이 빌드 후 제거한다(레이어 90MB 절감).
+#
+# 패치 범위로 고정한 이유: ai_triage_function.py가 anthropic.lib.bedrock 경로에서
+# AnthropicBedrockMantle을 직접 import한다(최상위 재수출이 없음). 마이너 버전이
+# 올라가면 이 경로가 바뀔 수 있으므로, 올릴 때 import가 살아 있는지 확인할 것.
+anthropic[bedrock]~=0.121.0

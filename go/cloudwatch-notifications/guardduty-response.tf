@@ -233,7 +233,17 @@ resource "aws_cloudwatch_event_rule" "guardduty_finding" {
   }
 }
 
+# (2026-08-12) AI 트리아지 도입으로 이 직결 경로는 기본적으로 꺼진다.
+# enable_ai_triage = true면 같은 rule의 target이 ai-triage.tf의 Lambda로 바뀌고,
+# Lambda가 판정을 붙여 SNS로 발행한다. false로 되돌리면 이 직결이 되살아나므로
+# 알림 자체는 어느 쪽이든 끊기지 않는다 — 롤백 경로를 코드로 남겨 두는 것.
+#
+# 위 타입 기반 필터가 "무엇을 알릴지"를 정하고, 트리아지는 "그중 무엇이 진짜
+# 위협인지"를 정한다. 두 계층은 겹치지 않는다 — 필터는 EventBridge에서 무료로
+# 걸러 토큰을 아끼고, 판단은 필터를 통과한 것에만 붙는다.
 resource "aws_cloudwatch_event_target" "guardduty_sns" {
+  count = var.enable_ai_triage ? 0 : 1
+
   rule      = aws_cloudwatch_event_rule.guardduty_finding.name
   target_id = "SendGuardDutyFindingToSnsHub"
   arn       = aws_sns_topic.alerts.arn
