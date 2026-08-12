@@ -50,6 +50,7 @@ Terraform 코드와는 무관하며(`.tf` 어디에서도 참조하지 않음), 
 | 파일 | 내용 |
 |---|---|
 | **[runbook.md](runbook.md)** | **자주 쓰는 명령어 치트시트** — 접속(배스천/kubectl/ArgoCD/RDS/Redis), 상태 확인, 배포, terraform, 재구축 후 복구 체크리스트, 에러별 빠른 판별 |
+| **[SECURITY-INCIDENT-RESPONSE-RUNBOOK.md](SECURITY-INCIDENT-RESPONSE-RUNBOOK.md)** | **보안 사고 대응 Runbook** — 알람별 CloudWatch/Athena 조회, WAF 공격 판정, IP 차단 기준, 앱·AWS 계정 탈취 대응, 사고 기록 양식 |
 | [architecture.md](architecture.md) | 초기 구축 기록 — 최종 아키텍처, k8s 매니페스트 자동 배포 파이프라인, 배스천/RDS/ALB 구성, 자주 쓴 디버깅 명령, 작업 PC 이전 체크리스트 |
 | [pitfalls-checklist.md](pitfalls-checklist.md) | 재발 방지 체크리스트 (누적) — 지금까지 밟은 함정 전부 |
 | [SECURITY_AUDIT_REPORT.md](SECURITY_AUDIT_REPORT.md) | 보안 점검 보고서 및 조치 이력 |
