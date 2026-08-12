@@ -193,6 +193,13 @@ resource "kubernetes_ingress_v1" "gochuchamchi_web" {
         # 으로 ALB/Target Group을 조회하므로, 값을 바꾸면 거기도 같이 바꿔야 함.
         "alb.ingress.kubernetes.io/group.name"  = "gochuchamchi-web"
         "alb.ingress.kubernetes.io/group.order" = "10"
+        # ALB access logs are written directly to the immutable Log-account
+        # bucket. The bucket must be applied first in ../log-archive.
+        "alb.ingress.kubernetes.io/load-balancer-attributes" = join(",", [
+          "access_logs.s3.enabled=true",
+          "access_logs.s3.bucket=gochuchamchi-alb-access-logs-${var.log_archive_account_id}",
+          "access_logs.s3.prefix=alb"
+        ])
       },
       # (2026-08-03 full-HA에서 복원) CloudFront 전환(edge.tf, enable_edge=true) 시
       # 이 호스트의 Route53 레코드 소유권을 Terraform으로 넘긴다. ExternalDNS가

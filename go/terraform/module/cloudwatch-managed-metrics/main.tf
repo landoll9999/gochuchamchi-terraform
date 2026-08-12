@@ -192,3 +192,30 @@ resource "aws_cloudwatch_metric_alarm" "redis_evictions" {
   alarm_actions = var.alarm_actions
   ok_actions    = var.alarm_actions
 }
+
+# 인증 실패·권한 거부·스캐닝 증가를 포함한 Target 4xx 급증 확인
+resource "aws_cloudwatch_metric_alarm" "alb_target_4xx" {
+  for_each = local.alb_target_groups
+
+  alarm_name        = "${var.name_prefix}-alb-${each.value}-target-4xx"
+  alarm_description = "ALB Target Group ${each.value}에서 4xx 응답이 급증했습니다. 애플리케이션 로그에서 상태 코드, IP, URI를 확인하세요."
+  namespace         = "AWS/ApplicationELB"
+  metric_name       = "HTTPCode_Target_4XX_Count"
+
+  dimensions = {
+    LoadBalancer = var.alb_arn_suffix
+    TargetGroup  = each.key
+  }
+
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.alb_target_4xx_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = var.alarm_actions
+  ok_actions    = var.alarm_actions
+}

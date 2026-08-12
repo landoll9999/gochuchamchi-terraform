@@ -80,3 +80,9 @@ variable "redis_memory_threshold" {
   type        = number
   default     = 80
 }
+
+variable "alb_target_4xx_threshold" {
+  description = "5분 동안 ALB Target 4xx 응답 알람 임계값"
+  type        = number
+  default     = 20
+}

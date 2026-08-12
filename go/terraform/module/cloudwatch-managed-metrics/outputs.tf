@@ -11,6 +11,11 @@ output "alb_alarm_names" {
       for alarm in values(
         aws_cloudwatch_metric_alarm.alb_target_5xx
       ) : alarm.alarm_name
+    ],
+    [
+      for alarm in values(
+        aws_cloudwatch_metric_alarm.alb_target_4xx
+      ) : alarm.alarm_name
     ]
   )
 }

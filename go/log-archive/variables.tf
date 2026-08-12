@@ -74,3 +74,14 @@ variable "athena_cloudtrail_projection_start_date" {
     error_message = "Athena 파티션 시작일은 yyyy/MM/dd 형식이어야 합니다."
   }
 }
+
+variable "athena_alb_projection_start_date" {
+  description = "ALB 액세스 로그 Athena 파티션 프로젝션 시작일(yyyy/MM/dd)"
+  type        = string
+  default     = "2026/08/12"
+
+  validation {
+    condition     = can(regex("^\\d{4}/(0[1-9]|1[0-2])/(0[1-9]|[12]\\d|3[01])$", var.athena_alb_projection_start_date))
+    error_message = "ALB Athena 파티션 시작일은 yyyy/MM/dd 형식이어야 합니다."
+  }
+}
