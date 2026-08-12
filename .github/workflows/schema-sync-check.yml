@@ -1,0 +1,73 @@
+# =============================================================================
+# schema.sql 동기화 검사 — spring 원본 ↔ terraform 사본
+#
+# 왜 있나 (2026-08-12 실증):
+#   go/k8s/gochuchamchi/schema.sql 은 gochuchamchi-spring 의
+#   src/main/resources/schema.sql 사본인데 동기화가 사람 손에 맡겨져 있었다.
+#   앱 커밋 a288da1 이 테이블 2개(audit_logs, user_behavior_logs)를 추가했을 때
+#   사본이 갱신되지 않아, 앱이 홈 화면마다 에러 1146(테이블 없음)으로 INSERT 에
+#   실패했다. 예외를 삼키고 200 을 반환해 화면은 정상 — 행동 로그 기능이 통째로
+#   죽은 채 아무도 몰랐다. 이 워크플로가 그 동기화를 기계로 검사한다.
+#
+# 스케줄이 있는 이유: 사본이 바뀔 때(PR/push)만 검사하면 "spring 쪽만 바뀌고
+#   사본은 그대로"인 바로 그 사고 패턴을 놓친다. 평일 아침마다 원본과 대조한다.
+#
+# 필요한 시크릿 (없으면 경고만 남기고 통과 — 팀 CI 를 막지 않기 위해):
+#   SPRING_REPO_READ_TOKEN — gochuchamchi-spring 읽기 권한이 있는 PAT.
+#   저장소 Settings > Secrets and variables > Actions 에 추가.
+# =============================================================================
+name: Schema sync — spring 원본 대조
+
+on:
+  pull_request:
+    paths:
+      - 'go/k8s/gochuchamchi/schema.sql'
+      - 'go/scripts/verify-schema-sync.ps1'
+      - '.github/workflows/schema-sync-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'go/k8s/gochuchamchi/schema.sql'
+      - 'go/scripts/verify-schema-sync.ps1'
+      - '.github/workflows/schema-sync-check.yml'
+  schedule:
+    # 평일 00:00 UTC = 09:00 KST — spring 쪽 단독 변경을 하루 안에 잡는다
+    - cron: '0 0 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 시크릿 존재 확인
+        id: gate
+        env:
+          TOKEN: ${{ secrets.SPRING_REPO_READ_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::SPRING_REPO_READ_TOKEN 시크릿이 없어 schema.sql 동기화 검사를 건너뜁니다. gochuchamchi-spring 읽기 권한이 있는 PAT 를 Settings > Secrets and variables > Actions 에 추가하면 검사가 활성화됩니다."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 이 저장소 체크아웃
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/checkout@v4
+
+      - name: spring 원본 체크아웃
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: landoll9999/gochuchamchi-spring
+          token: ${{ secrets.SPRING_REPO_READ_TOKEN }}
+          path: spring-src
+          sparse-checkout: src/main/resources
+
+      - name: CREATE TABLE 블록 비교
+        if: steps.gate.outputs.skip == 'false'
+        shell: pwsh
+        run: ./go/scripts/verify-schema-sync.ps1 -SpringSchemaPath spring-src/src/main/resources/schema.sql

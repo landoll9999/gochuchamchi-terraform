@@ -8,6 +8,10 @@
 --
 -- ※ 이 파일은 gochuchamchi-spring 의 src/main/resources/schema.sql 과 같은 내용을 유지해야 한다.
 --   terraform이 rds-schema-init.tf 에서 이 파일을 RDS에 적용한다(filemd5 트리거).
+--   동기화 검사: go/scripts/verify-schema-sync.ps1 (로컬) +
+--   .github/workflows/schema-sync-check.yml (CI, CREATE TABLE 블록 대조).
+--   2026-08-12 에 동기화 누락으로 테이블 2개가 빠져 앱 INSERT 가 조용히 전멸했던
+--   사고의 재발 방지 장치다 — 시드/마이그레이션 블록은 사본 고유가 허용된다.
 
 CREATE DATABASE IF NOT EXISTS gochuchamchi
   CHARACTER SET utf8mb4
