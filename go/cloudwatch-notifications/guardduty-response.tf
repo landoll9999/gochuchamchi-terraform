@@ -34,22 +34,72 @@ variable "isolation_enabled" {
 }
 
 # ============================================================
-# Rule 1: 통보 — severity >= 4 (Medium 이상) → SNS 허브
-#   Discord/이메일 팬아웃은 기존 구독이 그대로 처리. 코드 추가분은
-#   lambda_function.py의 GuardDuty 이벤트 렌더러뿐.
+# Rule 1: 통보 — 타입 기반 필터 (2026-08-12 개편)
+#
+# 왜 severity 숫자만으로는 부족한가 (실측으로 드러난 문제)
+#   기존엔 severity>=4(Medium)만 통보했다. 그런데 실제 finding 을 보니 전부
+#   severity 2 였고, 그중 Policy:IAMUser/RootCredentialUsage(루트 자격증명 사용)가
+#   있었다 — 가장 중요한 신호인데 숫자가 낮아 통보에서 누락되고 있었다. 반대로
+#   Medium 이상에 섞여오는 PortProbe/BruteForce 는 공인 IP 라면 항상 쏟아지는
+#   인터넷 배경소음이라 통보돼봐야 소음이다(배스천은 SSH/RDP 인바운드가 0개라
+#   무차별 대입은 성공 자체가 불가 = 순수 노이즈).
+#   멘토 조언대로 "심각도 숫자"가 아니라 "타입(필드)"으로 의미를 판단한다.
+#
+# 두 갈래로 판단한다:
+#   (A) 항상 통보 — severity 무관하게 의미가 확정적인 타입
+#       루트 사용, S3 정책 완화, 자격증명 탈취/유출, 백도어/트로이목마/암호화폐,
+#       파괴적 영향(Impact) 등. 저심각도로 와도 놓치면 안 되는 것들.
+#   (B) 그 외 — Medium 이상이면서, 소음 타입(포트스캔/무차별대입)은 제외.
+#
+# 임계값·목록은 변수로 빼서 운영 중 조정 가능하게 둔다.
 # ============================================================
+
+variable "guardduty_always_notify_type_prefixes" {
+  description = "severity와 무관하게 항상 통보할 finding 타입 접두사"
+  type        = list(string)
+  default = [
+    "Policy:IAMUser/Root", # 루트 자격증명 사용
+    "Policy:S3/",          # S3 퍼블릭 차단 해제 등 버킷 정책 완화
+    "CredentialAccess:",   # 자격증명 탈취 시도
+    "Exfiltration:",       # 데이터 반출
+    "Backdoor:",           # C2/백도어
+    "Trojan:",             # 트로이목마
+    "CryptoCurrency:",     # 암호화폐 채굴(피침해 EC2의 전형적 증상)
+    "Impact:",             # 파괴적 영향(랜섬/변조 등)
+    "PenTest:",            # 침투도구 사용
+  ]
+}
+
+variable "guardduty_notify_noise_types" {
+  description = "Medium 이상이어도 통보하지 않을 소음 finding 타입(정확한 전체 이름)"
+  type        = list(string)
+  default = [
+    "Recon:EC2/PortProbeUnprotectedPort",
+    "Recon:EC2/PortProbeEMRUnprotectedPort",
+    "UnauthorizedAccess:EC2/SSHBruteForce",
+    "UnauthorizedAccess:EC2/RDPBruteForce",
+  ]
+}
 
 resource "aws_cloudwatch_event_rule" "guardduty_finding" {
   name        = "gochuchamchi-guardduty-finding"
-  description = "GuardDuty Medium 이상 finding을 SNS 알림 허브로 발행합니다."
+  description = "의미 있는 GuardDuty finding만 SNS 알림 허브로 발행합니다(타입 기반 필터)."
 
   event_pattern = jsonencode({
     source      = ["aws.guardduty"]
     detail-type = ["GuardDuty Finding"]
 
     detail = {
-      severity = [
-        { numeric = [">=", var.guardduty_notify_min_severity] }
+      "$or" = [
+        # (A) 항상 통보: severity 조건 없이 타입 접두사만 본다
+        {
+          type = [for p in var.guardduty_always_notify_type_prefixes : { prefix = p }]
+        },
+        # (B) 그 외: Medium 이상이되, 소음 타입은 제외
+        {
+          severity = [{ numeric = [">=", var.guardduty_notify_min_severity] }]
+          type     = [{ "anything-but" = var.guardduty_notify_noise_types }]
+        }
       ]
     }
   })
