@@ -54,3 +54,9 @@ variable "enable_log_archive_protection_scp" {
   type        = bool
   default     = false
 }
+
+variable "enable_security_services_delegation" {
+  description = "Security/Log 계정을 GuardDuty·Security Hub 위임 관리자로 지정. Log 계정이 조직 설정을 받을 준비가 된 뒤 true로 변경"
+  type        = bool
+  default     = false
+}

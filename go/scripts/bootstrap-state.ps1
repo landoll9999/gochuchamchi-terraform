@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("management", "log", "workload")]
     [string]$Account
@@ -31,16 +31,9 @@ if ($callerAccount -ne $accountId) {
     throw "중단: '$profile'의 실제 계정은 $callerAccount, 예상 계정은 $accountId 입니다."
 }
 
-# Windows PowerShell 5.1은 AWS CLI가 stderr를 쓰면 ErrorActionPreference=Stop에서
-# NativeCommandError로 중단될 수 있다. 버킷 미존재는 여기서는 정상 분기이므로
-# 이 호출에 한해서만 오류를 비종료형으로 처리하고 종료 코드를 보존한다.
-$previousErrorActionPreference = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-aws s3api head-bucket --bucket $bucket --profile $profile 2>$null
-$headBucketExitCode = $LASTEXITCODE
-$ErrorActionPreference = $previousErrorActionPreference
-
-if ($headBucketExitCode -ne 0) {
+# PS 5.1에서는 네이티브 명령의 stderr 리다이렉트가 오류로 승격되므로 cmd를 거쳐 확인한다.
+cmd /c "aws s3api head-bucket --bucket $bucket --profile $profile 2>nul"
+if ($LASTEXITCODE -ne 0) {
     Write-Host "tfstate 버킷 생성: $bucket"
     aws s3api create-bucket `
         --bucket $bucket `
@@ -56,6 +49,23 @@ else {
     Write-Host "기존 tfstate 버킷 사용: $bucket"
 }
 
+$publicAccessBlock = @{
+    BlockPublicAcls       = $true
+    IgnorePublicAcls      = $true
+    BlockPublicPolicy     = $true
+    RestrictPublicBuckets = $true
+} | ConvertTo-Json -Depth 4 -Compress
+
+$encryption = @{
+    Rules = @(
+        @{
+            ApplyServerSideEncryptionByDefault = @{
+                SSEAlgorithm = "AES256"
+            }
+        }
+    )
+} | ConvertTo-Json -Depth 5 -Compress
+
 $tlsOnlyPolicy = @{
     Version = "2012-10-17"
     Statement = @(
@@ -70,42 +80,45 @@ $tlsOnlyPolicy = @{
     )
 } | ConvertTo-Json -Depth 6 -Compress
 
-# PowerShell 5.1은 JSON 문자열을 native executable 인자로 넘길 때 큰따옴표를
-# 제거할 수 있다. 단순 구조는 AWS CLI shorthand를 쓰고, 버킷 정책만 임시 JSON
-# 파일로 전달한다. 임시 파일은 성공/실패와 관계없이 finally에서 제거한다.
-$policyFile = Join-Path ([System.IO.Path]::GetTempPath()) `
-    ("gochuchamchi-tfstate-policy-{0}.json" -f [guid]::NewGuid().ToString("N"))
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($policyFile, $tlsOnlyPolicy, $utf8NoBom)
-$policyFileUri = "file://$($policyFile -replace '\\', '/')"
+# JSON을 인자로 직접 넘기면 PS 버전에 따라 따옴표가 유실되므로 file:// 로 전달한다.
+$jsonDir = Join-Path $env:TEMP "gochuchamchi-bootstrap"
+New-Item -ItemType Directory -Force -Path $jsonDir | Out-Null
 
-aws s3api put-public-access-block `
-    --bucket $bucket `
-    --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "퍼블릭 액세스 차단 설정에 실패했습니다." }
+$pabFile = Join-Path $jsonDir "public-access-block.json"
+$encFile = Join-Path $jsonDir "encryption.json"
+$policyFile = Join-Path $jsonDir "tls-policy.json"
 
-aws s3api put-bucket-versioning `
-    --bucket $bucket `
-    --versioning-configuration Status=Enabled `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "버저닝 설정에 실패했습니다." }
-
-aws s3api put-bucket-encryption `
-    --bucket $bucket `
-    --server-side-encryption-configuration "Rules=[{ApplyServerSideEncryptionByDefault={SSEAlgorithm=AES256}}]" `
-    --profile $profile
-if ($LASTEXITCODE -ne 0) { throw "기본 암호화 설정에 실패했습니다." }
+Set-Content -Path $pabFile -Value $publicAccessBlock -Encoding Ascii
+Set-Content -Path $encFile -Value $encryption -Encoding Ascii
+Set-Content -Path $policyFile -Value $tlsOnlyPolicy -Encoding Ascii
 
 try {
+    aws s3api put-public-access-block `
+        --bucket $bucket `
+        --public-access-block-configuration ("file://" + $pabFile.Replace('\', '/')) `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "퍼블릭 액세스 차단 설정에 실패했습니다." }
+
+    aws s3api put-bucket-versioning `
+        --bucket $bucket `
+        --versioning-configuration Status=Enabled `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "버저닝 설정에 실패했습니다." }
+
+    aws s3api put-bucket-encryption `
+        --bucket $bucket `
+        --server-side-encryption-configuration ("file://" + $encFile.Replace('\', '/')) `
+        --profile $profile
+    if ($LASTEXITCODE -ne 0) { throw "기본 암호화 설정에 실패했습니다." }
+
     aws s3api put-bucket-policy `
         --bucket $bucket `
-        --policy $policyFileUri `
+        --policy ("file://" + $policyFile.Replace('\', '/')) `
         --profile $profile
     if ($LASTEXITCODE -ne 0) { throw "TLS 전용 버킷 정책 설정에 실패했습니다." }
 }
 finally {
-    Remove-Item -LiteralPath $policyFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $jsonDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "완료: $bucket (버저닝, 퍼블릭 차단, SSE-S3, TLS 강제)" -ForegroundColor Green

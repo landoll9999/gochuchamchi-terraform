@@ -30,9 +30,19 @@ Write-Host "`n══ [0/4] 세션 청소 — 잔류 enable_edge 제거 ══" -
 Remove-Item Env:\TF_VAR_enable_edge -ErrorAction SilentlyContinue
 
 Write-Host "`n══ [0.5/4] init — 모듈/프로바이더 요구사항 동기화 ══" -ForegroundColor Cyan
-terraform init -input=false | Select-String "Initializing|Downloading|has been successfully" | Select-Object -First 5
-if ($LASTEXITCODE -ne 0) {
+# 주의(2026-08-12) — native 명령 파이프라인에 Select-Object -First 를 직접 붙이지 말 것.
+# -First 가 개수를 채우는 순간 PowerShell이 상위 파이프라인을 끊어(StopUpstreamCommands)
+# 아직 출력 중이던 terraform.exe를 강제 종료시키고 $LASTEXITCODE 가 -1 이 된다.
+# → init 은 성공했는데 "init 실패"로 오판하고 exit 1. 매칭 줄이 5개 이상일 때만 터지므로
+#   이미 init 된 디렉토리에서는 4줄이라 드러나지 않았다(최초 init 에서만 재현).
+# 출력을 먼저 다 받고, 종료 코드를 즉시 캡처한 뒤에 필터링한다.
+$initOut  = terraform init -input=false -no-color
+$initCode = $LASTEXITCODE
+$initOut | Select-String "Initializing|Downloading|has been successfully" |
+    Select-Object -First 5 | ForEach-Object { Write-Host "   $($_.Line)" }
+if ($initCode -ne 0) {
     Write-Host "✖ init 실패 — 버전 제약이나 backend 문제. apply로 진행하지 않습니다." -ForegroundColor Red
+    $initOut | ForEach-Object { Write-Host "   $_" }
     exit 1
 }
 
@@ -47,9 +57,19 @@ elseif ($head -and (Test-Path $lastFile) -and ($head -ne (Get-Content $lastFile 
 
 if ($codeChanged) {
     Write-Host "`n⚠️ 마지막 성공한 up 이후 코드 변경 감지 — plan 요약:" -ForegroundColor Yellow
-    terraform plan -no-color 2>&1 |
-        Select-String "Plan:|will be created|will be destroyed|must be replaced" |
+    # [0.5]와 같은 이유로 파이프라인 직결 금지 — 여기는 종료 코드를 보지 않아서, plan 이
+    # 중간에 끊겨도 잘린 요약을 그대로 보여주고 승인을 받는다(더 위험).
+    # 2>&1 도 제거: PS 5.1 은 native 명령의 stderr 를 ErrorRecord 로 감싸는데 이 스크립트는
+    # $ErrorActionPreference="Stop" 이라 plan 이 경고 한 줄만 뱉어도 통째로 죽을 수 있다.
+    $planOut  = terraform plan -no-color
+    $planCode = $LASTEXITCODE
+    $planOut | Select-String "Plan:|will be created|will be destroyed|must be replaced" |
         Select-Object -First 15 | ForEach-Object { Write-Host "   $($_.Line)" }
+    if ($planCode -ne 0) {
+        Write-Host "✖ plan 실패 — 승인 단계로 진행하지 않습니다." -ForegroundColor Red
+        $planOut | Select-Object -Last 20 | ForEach-Object { Write-Host "   $_" }
+        exit 1
+    }
     $ok = Read-Host "이 변경 포함해서 apply할까요? (y/N)"
     if ($ok -ne "y") { Write-Host "취소됨"; exit 0 }
 }
@@ -81,4 +101,4 @@ if ($LASTEXITCODE -ne 0) {
 if ($head) { $head | Set-Content $lastFile }
 
 Write-Host "`n══ [4/4] 완료 — HTTP까지 확인됨 ══" -ForegroundColor Green
-Write-Host "https://gochuchamchi.shop 확인. 저녁 종료는 daily-down.ps1"
+Write-Host "https://kycj.click 확인. 저녁 종료는 daily-down.ps1"
