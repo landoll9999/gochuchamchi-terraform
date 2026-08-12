@@ -65,6 +65,8 @@ logger.setLevel(logging.INFO)
 # ── 환경 변수 ──────────────────────────────────────────────────────────
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 TABLE_NAME = os.environ["TRIAGE_TABLE_NAME"]
+CONTEXT_BUCKET = os.environ["CONTEXT_BUCKET"]
+CONTEXT_KEY = os.environ["CONTEXT_KEY"]
 BEDROCK_REGION = os.environ["BEDROCK_REGION"]
 MODEL_ID = os.environ["MODEL_ID"]
 EFFORT = os.environ.get("EFFORT", "medium")
@@ -103,10 +105,32 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
 cloudtrail = boto3.client("cloudtrail")
 
-_bedrock: AnthropicBedrockMantle | None = None
+s3 = boto3.client("s3")
 
-with open(os.path.join(os.path.dirname(__file__), "context.md"), encoding="utf-8") as f:
-    ACCOUNT_CONTEXT = f.read()
+_bedrock: AnthropicBedrockMantle | None = None
+_account_context: str | None = None
+
+
+def account_context() -> str:
+    """환경 컨텍스트(context.md)를 S3에서 읽어 실행 환경 수명 동안 캐시합니다.
+
+    패키지에 넣지 않는 이유는 ai-triage.tf 의 S3 섹션 주석에 적어 두었다.
+    요약하면 lambda:GetFunction 으로 zip 을 받아 열 수 있었기 때문이다.
+
+    모듈 로드 시점이 아니라 함수 안에서 지연 로딩한다. 임포트 중에 실패하면
+    Lambda 초기화 자체가 깨져 모든 호출이 통보도 없이 죽는다. 여기서 읽으면
+    lambda_handler 의 except 가 잡아 "AI 판정 없음"으로 통보되므로 원칙 ①
+    (판정 실패가 통보를 막지 않는다)이 그대로 유지된다.
+
+    ※ 웜 컨테이너는 이 값을 계속 들고 있다. context.md 를 고쳐 apply 해도
+      살아 있는 실행 환경은 옛 내용으로 판정한다. 즉시 반영하려면 실행 환경이
+      교체되도록 Lambda 설정을 한 번 건드릴 것.
+    """
+    global _account_context
+    if _account_context is None:
+        body = s3.get_object(Bucket=CONTEXT_BUCKET, Key=CONTEXT_KEY)["Body"]
+        _account_context = body.read().decode("utf-8")
+    return _account_context
 
 
 # ── 판정 스키마 (구조화 출력으로 강제) ─────────────────────────────────
@@ -341,7 +365,7 @@ def invoke_model(detail: dict[str, Any]) -> dict[str, Any]:
             {"type": "text", "text": TRIAGE_RULES},
             {
                 "type": "text",
-                "text": ACCOUNT_CONTEXT,
+                "text": account_context(),
                 "cache_control": {"type": "ephemeral"},
             },
         ],

@@ -31,9 +31,25 @@ variable "enable_ai_triage" {
 }
 
 variable "ai_triage_model_id" {
-  description = "Bedrock 모델 ID. Bedrock은 1st-party ID 앞에 anthropic. 접두사가 붙는다"
+  description = <<-EOT
+    Bedrock 호출에 쓸 모델 ID. **추론 프로파일 ID를 넣는다.**
+
+    Claude Opus 5는 ap-northeast-2에서 inferenceTypesSupported=INFERENCE_PROFILE
+    만 지원한다(ON_DEMAND 없음). 기반 모델 ID(anthropic.claude-opus-5)를 그대로
+    넣으면 모델 액세스를 켜도 ValidationException이 난다.
+
+    서울에서 잡히는 범위별 최신 모델:
+      global.*  Opus 5 / Sonnet 5 / Opus 4.8 / Haiku 4.5 — 전 세계 리전 라우팅
+      apac.*    Sonnet 4(2025-05)가 최신, 그 위로는 없음 — APAC 내 라우팅
+
+    ※ global 프로파일은 요청이 APAC 밖에서 실행될 수 있다. 모델에 나가는 것은
+      화이트리스트 투영된 finding + context.md + CloudTrail 요약이라 고객 데이터는
+      없지만, ARN·IP·계정 ID·리소스 이름 등 인프라 메타데이터는 포함된다.
+      데이터 반출이 협상 불가 조건인 환경이라면 apac.* 로 내리되, 그쪽 최신이
+      deprecated 모델이라는 부채를 같이 받는다.
+  EOT
   type        = string
-  default     = "anthropic.claude-opus-5"
+  default     = "global.anthropic.claude-opus-5"
 }
 
 variable "ai_triage_bedrock_region" {
@@ -111,6 +127,12 @@ locals {
   ai_triage_enabled = var.enable_ai_triage ? 1 : 0
   ai_triage_region  = var.ai_triage_bedrock_region != "" ? var.ai_triage_bedrock_region : var.region
   ai_triage_dir     = "${path.module}/ai-triage"
+
+  # 추론 프로파일 ID에서 기반 모델 ID를 뽑는다(global.anthropic.claude-opus-5
+  # → anthropic.claude-opus-5). IAM의 foundation-model ARN은 프로파일이 아니라
+  # 기반 모델을 가리켜야 하므로 접두사를 떼지 않으면 존재하지 않는 ARN이 된다.
+  # 프로파일이 아닌 기반 모델 ID를 넣은 경우엔 아무것도 바뀌지 않는다.
+  ai_triage_base_model_id = replace(var.ai_triage_model_id, "/^(global|apac|us|eu)\\./", "")
 }
 
 # ============================================================
@@ -183,12 +205,147 @@ data "archive_file" "ai_triage_function" {
     filename = "ai_triage_function.py"
   }
 
-  source {
-    # 프롬프트에 주입되는 환경 컨텍스트. 코드와 분리해 둬서 인프라가 바뀔 때
-    # 파이썬을 안 건드리고 이 파일만 고치면 된다.
-    content  = file("${local.ai_triage_dir}/context.md")
-    filename = "context.md"
+  # ※ context.md 는 여기 넣지 않는다. 아래 S3 섹션 주석 참고.
+}
+
+# ============================================================
+# 환경 컨텍스트 저장소 (S3 + 전용 CMK)
+#
+# context.md 를 함수 zip 에서 뺀 이유:
+#   lambda:GetFunction 은 배포 패키지의 presigned URL 을 돌려준다. 그 권한은
+#   ReadOnlyAccess 관리형 정책에 들어 있어서, 읽기 전용으로 받은 사람도 zip 을
+#   내려받아 context.md 를 열 수 있었다. 이 파일은 계정 ID·네트워크 구조·IAM
+#   주체·배치된 통제·탐지 우선순위, 그리고 스스로 적어 둔 방어 공백까지 한 장에
+#   모아 둔 문서다. 흩어진 사실 자체는 AWS 가 이미 갖고 있지만, 이렇게 조립된
+#   형태는 이 파이프라인이 처음 만들어 낸 것이라 노출 시 가치가 다르다.
+#
+# S3 로 옮기는 것만으로는 부족하다 — ReadOnlyAccess 에는 s3:GetObject 도 있다.
+# 실효는 SSE-KMS 에서 나온다. SSE-KMS 객체는 요청자 본인이 kms:Decrypt 를
+# 가져야 읽히는데 ReadOnlyAccess 에는 Decrypt 가 없다. 객체는 받아도 평문을
+# 얻지 못한다.
+#
+# 버킷 정책 explicit Deny 는 쓰지 않는다. 배포 주체까지 함께 걸려 버킷을
+# 관리 불능으로 만드는 사고가 흔하다. 통제는 키 정책 한 곳에만 둔다.
+#
+# 전용 키를 새로 만든다. alias/gochuchamchi-data 를 재사용하면 그쪽 스택의
+# 키 정책을 고쳐야 해서 스택 간 결합이 생긴다.
+# ============================================================
+
+data "aws_iam_policy_document" "ai_triage_context_key" {
+  count = local.ai_triage_enabled
+
+  # 계정 IAM 에 위임. 이 문장이 없으면 키를 다시 관리할 수 없게 된다.
+  # 이로써 AdministratorAccess 는 여전히 복호화할 수 있지만, 관리자는 어차피
+  # 무엇이든 읽을 수 있으므로 이 설계가 막으려는 대상이 아니다.
+  statement {
+    sid    = "EnableAccountAdministration"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+
+    actions   = ["kms:*"]
+    resources = ["*"]
   }
+
+  statement {
+    sid    = "AllowTriageLambdaDecrypt"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.ai_triage[0].arn]
+    }
+
+    actions   = ["kms:Decrypt", "kms:DescribeKey"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_kms_key" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  description             = "AI 트리아지 환경 컨텍스트(context.md) 암호화 전용"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  policy                  = data.aws_iam_policy_document.ai_triage_context_key[0].json
+
+  tags = {
+    Name = "gochuchamchi-ai-triage-context"
+  }
+}
+
+resource "aws_kms_alias" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  name          = "alias/gochuchamchi-ai-triage-context"
+  target_key_id = aws_kms_key.ai_triage_context[0].key_id
+}
+
+resource "aws_s3_bucket" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  bucket = "gochuchamchi-ai-triage-context-${data.aws_caller_identity.current.account_id}"
+
+  tags = {
+    Name = "gochuchamchi-ai-triage-context"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  bucket = aws_s3_bucket.ai_triage_context[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_versioning" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  bucket = aws_s3_bucket.ai_triage_context[0].id
+
+  # 인프라가 바뀔 때마다 갱신되는 문서다. 잘못 고쳐 판정 품질이 무너졌을 때
+  # 되돌릴 수 있어야 하고, 언제 무엇이 바뀌었는지도 남아야 한다.
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  bucket = aws_s3_bucket.ai_triage_context[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.ai_triage_context[0].arn
+    }
+
+    # 객체가 하나뿐이라 큰 차이는 없지만, KMS 요청 수를 줄인다.
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_object" "ai_triage_context" {
+  count = local.ai_triage_enabled
+
+  bucket = aws_s3_bucket.ai_triage_context[0].id
+  key    = "context.md"
+
+  # content 가 아니라 source 를 쓴다. content 로 넣으면 파일 내용이 tfstate 에
+  # 그대로 박힌다 — 패키지에서 빼 놓고 state 로 새면 한 일이 없어진다.
+  source = "${local.ai_triage_dir}/context.md"
+  etag   = filemd5("${local.ai_triage_dir}/context.md")
+
+  server_side_encryption = "aws:kms"
+  kms_key_id             = aws_kms_key.ai_triage_context[0].arn
 }
 
 # ============================================================
@@ -265,8 +422,13 @@ data "aws_iam_policy_document" "ai_triage" {
     ]
 
     resources = [
-      "arn:aws:bedrock:${local.ai_triage_region}::foundation-model/${var.ai_triage_model_id}",
-      "arn:aws:bedrock:${local.ai_triage_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+      # 기반 모델은 리전 와일드카드여야 한다. 교차 리전 프로파일(global.*/apac.*)은
+      # 요청을 다른 리전에서 실행하는데, 그때 그 리전의 기반 모델 권한을 본다.
+      # 호출 리전만 박아 두면 라우팅된 순간 AccessDeniedException이 난다.
+      "arn:aws:bedrock:*::foundation-model/${local.ai_triage_base_model_id}",
+      # 프로파일 자체는 호출 리전의 것을 참조한다. 와일드카드였던 것을
+      # 실제 쓰는 프로파일 하나로 좁힌다.
+      "arn:aws:bedrock:${local.ai_triage_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.ai_triage_model_id}",
     ]
   }
 
@@ -282,6 +444,24 @@ data "aws_iam_policy_document" "ai_triage" {
     ]
 
     resources = [aws_dynamodb_table.ai_triage[0].arn]
+  }
+
+  # --- 환경 컨텍스트 읽기 ---
+  # 객체 하나로 좁힌다. 이 역할은 버킷을 나열할 필요도 없다.
+  statement {
+    sid       = "ReadTriageContext"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.ai_triage_context[0].arn}/context.md"]
+  }
+
+  # SSE-KMS 객체는 요청자 본인의 Decrypt 권한으로 풀린다. 이 문장이 실질적인
+  # 접근 통제이고, 키 정책과 짝을 이뤄야 동작한다.
+  statement {
+    sid       = "DecryptTriageContext"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt", "kms:DescribeKey"]
+    resources = [aws_kms_key.ai_triage_context[0].arn]
   }
 
   # --- 컨텍스트 보강 ---
@@ -354,8 +534,16 @@ resource "aws_lambda_function" "ai_triage" {
 
   environment {
     variables = {
-      SNS_TOPIC_ARN          = aws_sns_topic.alerts.arn
-      TRIAGE_TABLE_NAME      = aws_dynamodb_table.ai_triage[0].name
+      SNS_TOPIC_ARN     = aws_sns_topic.alerts.arn
+      TRIAGE_TABLE_NAME = aws_dynamodb_table.ai_triage[0].name
+
+      # 환경 컨텍스트는 패키지가 아니라 S3에서 읽는다(위 S3 섹션 주석 참고).
+      # ※ context.md 를 고쳐도 함수 코드 해시는 안 바뀐다. 즉 apply 해도 웜
+      #   실행 환경은 옛 내용을 계속 들고 있다 — 즉시 반영하려면 실행 환경이
+      #   교체되도록 Lambda 설정을 한 번 건드릴 것.
+      CONTEXT_BUCKET = aws_s3_bucket.ai_triage_context[0].id
+      CONTEXT_KEY    = aws_s3_object.ai_triage_context[0].key
+
       BEDROCK_REGION         = local.ai_triage_region
       MODEL_ID               = var.ai_triage_model_id
       EFFORT                 = var.ai_triage_effort
