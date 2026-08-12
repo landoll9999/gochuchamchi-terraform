@@ -80,6 +80,70 @@ CREATE TABLE IF NOT EXISTS product_sizes (
 
 
 -- =============================================================================
+-- audit_logs / user_behavior_logs (2026-08-12 추가)
+--
+-- 왜 지금 추가하나
+--   RDS 감사 로그에 QUERY_DML_NO_SELECT 를 켜자마자, 앱이 user_behavior_logs 에
+--   INSERT 하다 에러코드 1146(테이블 없음)으로 실패하는 것이 드러났다. 홈 화면이
+--   열릴 때마다 실패했고 5분치 로그에서만 266건이었다. 앱이 예외를 삼키고 200 을
+--   반환해서 화면상으로는 정상이라 그동안 아무도 몰랐다 — 행동 로그 기능이 통째로
+--   죽어 있었다. 원본을 대조하는 과정에서 audit_logs 도 함께 빠져 있는 것을 확인했다.
+--
+--   원인은 이 파일과 원본의 동기화 누락이다. gochuchamchi-spring 의 커밋
+--   "feat: add security audit logging and private image delivery"(a288da1)에서
+--   두 테이블이 추가됐는데 이 사본에 반영되지 않았다. 파일 상단 주석대로 두 파일은
+--   같은 내용을 유지해야 한다 — 앱에 테이블이 추가되면 이 파일도 함께 갱신할 것.
+--
+--   아래 정의는 추정이 아니라 원본 schema.sql 에서 그대로 옮긴 것이다.
+-- =============================================================================
+
+-- 보안 및 중요 상태 변경 이력. 사용자 삭제 이후에도 이력을 보존하기 위해 외래 키를 두지 않는다.
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  event_type varchar(64) NOT NULL,
+  outcome varchar(16) NOT NULL,
+  actor_user_id bigint(20) DEFAULT NULL,
+  actor_username varchar(50) DEFAULT NULL,
+  target_type varchar(32) DEFAULT NULL,
+  target_id varchar(100) DEFAULT NULL,
+  request_method varchar(10) DEFAULT NULL,
+  request_path varchar(255) DEFAULT NULL,
+  ip_address varchar(45) DEFAULT NULL,
+  user_agent varchar(500) DEFAULT NULL,
+  reason_code varchar(64) DEFAULT NULL,
+  details varchar(1000) DEFAULT NULL,
+  occurred_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_audit_occurred_at (occurred_at),
+  KEY idx_audit_actor (actor_user_id, occurred_at),
+  KEY idx_audit_event (event_type, outcome, occurred_at),
+  KEY idx_audit_target (target_type, target_id, occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 공개 콘텐츠의 서버 측 조회 기록. 클릭 추적이나 폼 입력값은 수집하지 않는다.
+CREATE TABLE IF NOT EXISTS user_behavior_logs (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  event_type varchar(64) NOT NULL,
+  user_id bigint(20) DEFAULT NULL,
+  anonymous_id char(36) NOT NULL,
+  behavior_session_id char(36) NOT NULL,
+  request_path varchar(255) NOT NULL,
+  resource_type varchar(32) DEFAULT NULL,
+  resource_id varchar(100) DEFAULT NULL,
+  metadata varchar(1000) DEFAULT NULL,
+  response_status smallint NOT NULL,
+  occurred_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_behavior_occurred_at (occurred_at),
+  KEY idx_behavior_user (user_id, occurred_at),
+  KEY idx_behavior_anonymous (anonymous_id, occurred_at),
+  KEY idx_behavior_session (behavior_session_id, occurred_at),
+  KEY idx_behavior_event (event_type, occurred_at),
+  KEY idx_behavior_resource (resource_type, resource_id, occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =============================================================================
 -- 기존 DB 마이그레이션
 --
 -- CREATE TABLE IF NOT EXISTS 는 이미 있는 테이블에 컬럼을 추가해주지 않는다.
