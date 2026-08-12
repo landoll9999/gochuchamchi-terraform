@@ -62,6 +62,14 @@ CREDENTIAL_RESPONSE_ENABLED = (
 PROTECTED_ACCESS_KEY_IDS = {
     k.strip() for k in os.environ.get("PROTECTED_ACCESS_KEY_IDS", "").split(",") if k.strip()
 }
+PROTECTED_INSTANCE_TAG_KEYS = {
+    k.strip()
+    for k in os.environ.get(
+        "PROTECTED_INSTANCE_TAG_KEYS",
+        "eks:cluster-name,kubernetes.io/cluster/",
+    ).split(",")
+    if k.strip()
+}
 QUARANTINE_STALE_HOURS = float(os.environ.get("QUARANTINE_STALE_HOURS", "12"))
 
 QUARANTINE_TAG = "gochuchamchi:quarantined"
@@ -148,6 +156,17 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return finish(result)
 
         vpc_id = instance["VpcId"]
+        protected_reason = protected_instance_reason(instance)
+        if protected_reason:
+            result["action"] = "manual-review"
+            result["incidentTier"] = "P1"
+            result["detail"] = (
+                f"Automatic isolation withheld: {protected_reason}. "
+                "This is likely an EKS/Kubernetes worker node; page the incident "
+                "owner and perform an approved node/service containment action."
+            )
+            return finish(result)
+
         enis = [ni["NetworkInterfaceId"] for ni in instance["NetworkInterfaces"]]
 
         # ── 3. 드라이런 스위치 ───────────────────────────────────────
@@ -442,6 +461,22 @@ def describe_instance(instance_id: str) -> dict[str, Any] | None:
         return None
 
     return reservations[0]["Instances"][0]
+
+
+def protected_instance_reason(instance: dict[str, Any]) -> str | None:
+    """Return an exemption reason for infrastructure that must not be auto-isolated."""
+    tag_keys = {
+        tag.get("Key", "")
+        for tag in instance.get("Tags", [])
+        if tag.get("Key")
+    }
+    for protected_key in PROTECTED_INSTANCE_TAG_KEYS:
+        if protected_key.endswith("/"):
+            if any(key.startswith(protected_key) for key in tag_keys):
+                return f"protected instance tag prefix matched: {protected_key}"
+        elif protected_key in tag_keys:
+            return f"protected instance tag matched: {protected_key}"
+    return None
 
 
 def ensure_quarantine_sg(vpc_id: str) -> str:
