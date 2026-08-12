@@ -198,14 +198,29 @@ module "bastion_host" {
   version    = "~> 6.0" # (v8) 버전 핀
   depends_on = [module.eks]
 
-  name                        = "gochuchamchi-bastion"
-  ami                         = var.bastion_ami
-  instance_type               = "t3.micro"
-  associate_public_ip_address = true
-  monitoring                  = true
+  name = "gochuchamchi-bastion"
+  ami  = var.bastion_ami
 
-  # (v8 병합) 세션 토큰이 필요한 IMDSv2 요청만 허용한다 — 퍼블릭 서브넷 +
-  # IAM 크리덴셜 보유 인스턴스라 SSRF→IMDSv1 크리덴셜 탈취 경로 차단이 핵심.
+  instance_type = "t3.micro"
+  monitoring    = true
+
+  # (2026-08-12) 퍼블릭 서브넷 + 공인 IP → 프라이빗 서브넷으로 이전.
+  #
+  # 공인 IP 가 하던 일은 하나뿐이었다 — SSM 접속을 위한 아웃바운드 인터넷.
+  # SG 인바운드가 0건이라 그 IP 로 붙을 수 있는 것은 애초에 없었고, EKS API
+  # 허용 CIDR 에도 배스천 IP 는 들어 있지 않다. 즉 인바운드 표면이 아니라
+  # 아웃바운드 경로 문제였고, 프라이빗 서브넷의 NAT 인스턴스 경로로 대체된다.
+  #
+  #   private-2a subnet → NAT 인스턴스 (0.0.0.0/0)
+  #
+  # 트레이드오프: 배스천 도달성이 NAT 에 묶인다. 다만 EKS 노드가 이미 같은 NAT 에
+  # 의존하므로 NAT 장애 시점에는 클러스터가 이미 정상이 아니다 — 한계 손실이 작다.
+  # 이 의존까지 끊으려면 enable_vpc_endpoints 로 SSM 3종(ssm/ssmmessages/ec2messages)
+  # 을 켜면 되지만, 현재 코드는 7종 일괄이라 시간당 비용이 붙는다.
+  associate_public_ip_address = false
+
+  # IMDSv2 강제는 그대로 둔다 — SSRF 로 인스턴스 크리덴셜을 긁어가는 경로는
+  # 서브넷 위치와 무관하게 성립하므로, 공인 IP 를 뗐다고 완화할 이유가 없다.
   metadata_options = {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
@@ -221,7 +236,7 @@ module "bastion_host" {
   }
 
   vpc_security_group_ids = [module.bastion_host_sg.id]
-  subnet_id              = module.vpc.public_subnets[0]
+  subnet_id              = module.vpc.private_subnets[0]
 
   iam_instance_profile = aws_iam_instance_profile.bastion_instance_profile.name
 
@@ -313,9 +328,12 @@ resource "aws_vpc_endpoint" "s3" {
   tags = { Name = "gochuchamchi-s3-endpoint" }
 }
 
-output "bastion_ip" {
-  value       = module.bastion_host.public_ip
-  description = "Bastion host public IP"
+# (2026-08-12) 공인 IP 제거로 프라이빗 IP 를 노출한다. public_ip 를 그대로 두면
+# null 이 나와서 "값이 왜 안 나오나"를 디버깅하게 된다. 접속은 어차피 SSM 경유라
+# 이 값으로 붙을 일은 없고, 세션 로그·flow log 대조용 식별자로 쓴다.
+output "bastion_private_ip" {
+  value       = module.bastion_host.private_ip
+  description = "Bastion host private IP (SSM 경유 접속 — 이 IP 로 직접 붙지 않는다)"
 }
 
 output "bastion_id" {

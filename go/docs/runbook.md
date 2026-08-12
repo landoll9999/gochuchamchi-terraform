@@ -12,7 +12,7 @@
 
 | 값 | 확인 방법 | 바뀌는 시점 |
 |---|---|---|
-| 배스천 인스턴스 ID | `terraform output bastion_ip` 로는 안 나옴 → 아래 명령 | 배스천 재생성마다 |
+| 배스천 인스턴스 ID | `terraform output bastion_id` 또는 아래 명령 | 배스천 재생성마다 |
 | ALB DNS 이름 | 아래 명령 | ALB 재생성마다 |
 | 내 공인 IP | `curl checkip.amazonaws.com` | 작업 네트워크 변경 시 |
 
@@ -72,7 +72,13 @@ export PATH=$PATH:/home/ec2-user/bin
 export KUBECONFIG=/home/ec2-user/.kube/config
 ```
 
-> 공인 IP(`terraform output bastion_ip`)로 **직접 SSH는 불가** — SG 인바운드가 0개이고 모든 접속이 SSM 경유입니다.
+> **배스천에는 공인 IP가 없습니다** (2026-08-12 프라이빗 서브넷 이전). SSH 경로 자체가 없고
+> 모든 접속이 SSM 경유입니다. SG 인바운드도 0개입니다.
+>
+> 아웃바운드(SSM 제어 채널)는 프라이빗 서브넷의 **NAT 인스턴스**를 탑니다. 배스천에 붙지 못하면
+> SSM 문제이기 전에 NAT를 먼저 확인하세요 — `aws ssm describe-instance-information` 의
+> `PingStatus` 가 `ConnectionLost` 면 그쪽일 가능성이 높습니다.
+> 식별자는 `terraform output bastion_private_ip` 로 확인합니다(접속용이 아니라 세션 로그·flow log 대조용).
 
 ### 1.3 ArgoCD UI
 
@@ -715,7 +721,7 @@ kubectl -n <ns> get pod <파드> -o jsonpath="{.spec.serviceAccountName}"
 | Redis 엔드포인트 | `kubectl -n gochuchamchi get cm gochuchamchi-config -o jsonpath='{.data.SPRING_DATA_REDIS_HOST}'` |
 | Redis AUTH 토큰 | `kubectl -n gochuchamchi get secret gochuchamchi-redis-secret -o jsonpath='{.data.SPRING_DATA_REDIS_PASSWORD}' \| base64 -d` |
 | RDS 시크릿 ARN | `terraform output -raw rds_secret_arn` (로컬) |
-| 배스천 IP / ID | `terraform output bastion_ip` / `terraform output bastion_id` (로컬) |
+| 배스천 사설 IP / ID | `terraform output bastion_private_ip` / `terraform output bastion_id` (로컬) — 공인 IP 없음 |
 | ALB 주소 | `kubectl -n gochuchamchi get ingress` |
 | Grafana 비밀번호 | `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String((kubectl -n monitoring get secret grafana -o jsonpath='{.data.admin-password}')))` — **terraform output에는 없습니다** (§8.1) |
 
