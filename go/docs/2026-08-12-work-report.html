@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>작업 보고서 — 2026-08-12</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  p { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .node small { font-weight: 500; color: var(--sub); }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .kpi div { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+             padding: 14px 12px; text-align: center; }
+  .kpi .n { font-size: 24px; font-weight: 700; color: var(--accent); display: block; }
+  .kpi .t { font-size: 12.5px; color: var(--sub); }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .kpi { grid-template-columns: 1fr 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>작업 보고서</h1>
+  <div class="meta">2026-08-12 · gochuchamchi 3계정(workload 828885965304 / log 564186750363 / management 307223751140)
+  · 모든 상태는 <code>describe-*</code> 실물 조회로 확인</div>
+</header>
+
+<h2>1. 요약</h2>
+
+<p>멘토링 지적 사항을 인프라에 반영하는 것이 이날의 목표였다. 결과적으로 <strong>세 가지</strong>를 했다 —
+보안 통제를 실제로 배포했고, 검토 끝에 <strong>도입하지 않기로 결정한 것</strong>이 하나 있으며,
+그 과정에서 <strong>운영을 위협하던 구조적 문제</strong>를 발견해 정리했다.</p>
+
+<div class="kpi">
+  <div><span class="n">9</span><span class="t">배포한 보안 통제</span></div>
+  <div><span class="n">4</span><span class="t">발견·수정한 실제 장애</span></div>
+  <div><span class="n">1</span><span class="t">검토 후 미채택</span></div>
+  <div><span class="n">1</span><span class="t">미해결 위험</span></div>
+</div>
+
+<div class="callout info"><strong>이날 가장 값이 나간 산출물은 코드가 아니라 판단이다.</strong>
+&ldquo;Log 계정이 안 해줘서 막혔다&rdquo;고 적혀 있던 두 항목은 실제로는 우리 쪽 미적용이었고,
+AI 트리아지는 구현을 끝낸 뒤 <em>도입하지 않는 것</em>이 맞다고 결론 냈다.
+근거는 모두 API 조회로 확인했다.</p></div>
+
+<h2>2. 배포한 것</h2>
+
+<h3>2-1. 데이터 계층</h3>
+<table>
+  <tr><th>항목</th><th>내용</th><th>확인</th></tr>
+  <tr><td>IAM 토큰 인증</td>
+      <td>MariaDB에 <code>iam_database_authentication_enabled</code> 활성화.
+          <code>AWSAuthenticationPlugin</code> 전용 계정 생성, 15분 토큰 발급 정책 부여</td>
+      <td><code>IAMDatabaseAuthenticationEnabled: True</code></td></tr>
+  <tr><td>DML 감사</td>
+      <td>감사 플러그인 이벤트에 <code>QUERY_DML_NO_SELECT</code> 추가 — 누가 무엇을 바꿨는지 남는다</td>
+      <td><code>CONNECT,QUERY_DDL,QUERY_DCL,QUERY_DML_NO_SELECT</code></td></tr>
+  <tr><td>스키마 복원</td>
+      <td>누락됐던 <code>audit_logs</code>·<code>user_behavior_logs</code> 복원 + CI 동기화 검사 추가</td>
+      <td>앱 INSERT 실패 해소</td></tr>
+</table>
+
+<div class="callout danger"><strong>감시를 켜자마자 실제 장애가 드러났다.</strong>
+DML 감사를 활성화한 직후 감사 로그에 실패한 INSERT가 쏟아졌다 — <strong>5분에 266건</strong>,
+표본 400건 중 <strong>358건</strong>. 원인은 Terraform이 적용하는 <code>schema.sql</code>에
+테이블 2개가 빠져 있던 것이었고, 애플리케이션이 <code>200</code>을 반환해 지금까지 은폐돼 있었다.
+<strong>감시 축을 세운 행위 자체가 진단이 됐다.</strong></p></div>
+
+<h3>2-2. 관제 · 자동대응</h3>
+<table>
+  <tr><th>항목</th><th>내용</th></tr>
+  <tr><td>선별 방식 전환</td>
+      <td>GuardDuty 통보를 <strong>심각도 숫자 → 타입 기반</strong>으로. 루트 자격증명 사용(severity 2)이
+          하한에 걸려 버려지고 포트 스캔은 통과하던 구조를 뒤집었다</td></tr>
+  <tr><td>IAM 활동 감시</td>
+      <td>루트 사용 · IAM 변경 · 콘솔 로그인 실패를 us-east-1에서 포착해 서울로 중계 → 이메일/Discord</td></tr>
+  <tr><td>자동대응 확장</td>
+      <td>기존 네트워크 격리에 더해 <strong>액세스키 무효화</strong>, 격리 이력 보존(DynamoDB),
+          <strong>오격리 원상복구</strong>, 장기 미복구 감시(<code>rate(1 hour)</code>) 추가</td></tr>
+  <tr><td>앱 보안 탐지</td>
+      <td>로그인 실패 · 5xx · 4xx · 권한 거부 · 고위험 이벤트 → 메트릭 필터 10 + 알람 5.
+          네임스페이스 <code>Gochuchamchi/ApplicationSecurity</code></td></tr>
+</table>
+
+<h3>2-3. 증적 중앙화</h3>
+<pre><code>rds-audit 구독 필터   → arn:aws:logs:ap-northeast-2:564186750363:destination:gochuchamchi-rds-audit-log-archive
+ALB 액세스 로그       → access_logs.s3.enabled=true / gochuchamchi-alb-access-logs-564186750363 / prefix=alb
+기존 3축(application · control-plane · waf) 정상 동작 확인</code></pre>
+
+<p>RDS 감사 로그가 워크로드 계정을 떠나 <strong>Log 계정의 불변 버킷</strong>(Object Lock)으로 간다.
+침해된 계정이 자기 흔적을 지울 수 없게 하는 것이 목적이다.</p>
+
+<h3>2-4. 알림 파이프라인 결함 수정</h3>
+<table>
+  <tr><th>결함</th><th>영향</th><th>검증</th></tr>
+  <tr><td>평문 SNS 메시지에 <code>json.loads</code></td>
+      <td>IAM 활동 알림이 Discord에서만 죽고 DLQ로 적재. 이메일은 정상이라 은폐됨</td>
+      <td>합성 이벤트 직접 호출 → <code>{"plaintext": true}</code> + 200, DLQ 0</td></tr>
+  <tr><td>신규 action 5종 렌더러 부재</td>
+      <td>자격증명 무효화가 <code>❓ key-disabled</code> 회색으로 표시 — 가장 강한 대응이 가장 안 보임</td>
+      <td>action 11종 + <code>none</code> 커버리지 확인</td></tr>
+</table>
+
+<h3>2-5. 팀 작업 병합·배포</h3>
+<p>같은 날 팀원이 올린 작업을 병합해 함께 배포했다. 겹치는 파일 3개가 있었으나
+변경 영역이 달라 충돌 없이 병합됐고, 병합 후 양쪽 기능 생존과 구문·<code>validate</code>를 확인했다.</p>
+<ul>
+  <li>크로스 계정 보안 대시보드(Log 계정 측 + OAM Sink)</li>
+  <li>침해 대응 런북</li>
+  <li>알림 등급화(P1~P4) 및 EKS 자동격리 보호</li>
+</ul>
+
+<h2>3. 검토 후 채택하지 않은 것 — GuardDuty AI 트리아지</h2>
+
+<p>멘토 지적(&ldquo;GuardDuty는 오탐이 많아 현업에서 안 쓴다 / AI로 걸러내는 도구는 니즈가 있다.
+단 전량 분석 시 토큰 비용이 관건&rdquo;)에 대한 답으로 구현을 완료했으나,
+<strong>도입하지 않기로 결정했다.</strong> 구현물은 <code>feat/guardduty-ai-triage</code> 브랜치에 보존돼 있다.</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>설계상 해결한 것</h4>
+    <ul>
+      <li>원시 로그를 모델에 넣지 않는다 — 탐지는 GuardDuty가 끝내고 모델은 finding 1건만 판정</li>
+      <li>비용 게이트 5중(타입 필터 · severity · 억제 룰 · 판정 캐시 · 일일 상한)</li>
+      <li>AI에게 <strong>억제 권한 없음</strong> — 어떤 판정이든 알림은 발송</li>
+      <li>프롬프트 인젝션 방어 4겹(화이트리스트 · 델리미터 · 구조화 출력 · 인젝션 탐지 시 등급 상향)</li>
+      <li>API 키 없음 — Bedrock IAM 인증만 사용</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>도입하지 않은 이유</h4>
+    <ul>
+      <li><strong>관문 3단</strong> — 모델 액세스 자동화 이후에도 사용 사례 양식 + Marketplace 구독 계약이 필요</li>
+      <li><strong>데이터 반출</strong> — 서울에서 4.6+ 세대는 전부 <code>global.*</code> 라우팅. APAC 최신은 deprecated 모델뿐</li>
+      <li>코드가 adaptive thinking · effort · 구조화 출력 · 캐싱을 전제 → 구세대로 낮추면 인젝션 방어 한 축을 잃음</li>
+      <li>운영비 대비 이득이 현 단계에서 불확실</li>
+    </ul>
+  </div>
+</div>
+
+<p>검토 과정에서 확인한 실제 Bedrock 단가와 추정 비용이다. 발표에서 &ldquo;토큰 비용&rdquo; 질문에 대한 근거로 쓸 수 있다.</p>
+
+<table>
+  <tr><th>모델</th><th>입력 / 출력 (1M 토큰)</th><th>건당</th><th>평상시 월(30건/일)</th><th>일일 상한 200건</th></tr>
+  <tr><td>Claude Opus 5</td><td>$5 / $25</td><td>약 $0.060</td><td>약 $54</td><td>약 $360</td></tr>
+  <tr><td>Claude Sonnet 5</td><td>$2 / $10</td><td>약 $0.025</td><td>약 $23</td><td>약 $150</td></tr>
+</table>
+
+<div class="callout warn"><strong>상한의 성격.</strong> 일일 호출 상한은 <strong>횟수</strong> 상한이지 토큰 상한이 아니다.
+하드 실링은 <code>200 × 건당 최악 비용</code>이므로, &ldquo;상한이 걸려 있다&rdquo;고 설명할 때 이 구분이 필요하다.
+또한 비용의 60% 이상이 출력(thinking)이라 <strong>건당 비용을 줄이는 가장 큰 레버는 게이트가 아니라 <code>effort</code></strong>였다.</p></div>
+
+<h2>4. 운영 구조 정리</h2>
+
+<h3>4-1. 작업 사본 일원화</h3>
+<p>같은 저장소의 사본이 둘 있었고 <strong>양방향으로 갈라져</strong> 있었다.
+운영 도메인(<code>kycj.click</code>)은 비-git 사본에만, 그날 만든 신규 기능은 저장소에만 있었다.
+<code>daily-up.ps1</code>이 자기 위치 기준으로 apply하므로 <strong>어느 사본에서 돌리느냐로 결과가 갈리는</strong> 상태였다.</p>
+
+<div class="flow">
+  <div class="lane-title">이전</div>
+  <div class="lane">
+    <span class="node bad">비-git 사본<br><small>kycj.click · 신규 기능 없음</small></span>
+    <span class="node bad">git 사본<br><small>옛 도메인 · 신규 기능 있음</small></span>
+    <span class="arrow">→</span>
+    <span class="node bad">돌린 쪽에 따라 결과가 다름</span>
+  </div>
+  <div class="lane-title">이후</div>
+  <div class="lane">
+    <span class="node good">저장소 사본 단일<br><small>도메인·기능 통합</small></span>
+    <span class="arrow">→</span>
+    <span class="node neutral">비-git 사본<br><small>.RETIRED-20260812 로 은퇴</small></span>
+  </div>
+</div>
+
+<p>전수 대조 결과 원본에만 있던 실질 내용은 <strong>도메인 2줄</strong>과
+<strong><code>daily-down.ps1</code>의 PS 5.1 수정</strong>뿐이었다. 나머지는 저장소가 앞서거나,
+줄바꿈(CRLF/LF) 차이거나, 스크립트가 매번 만드는 산출물이었다.</p>
+
+<h3>4-2. 문서 기준 변경</h3>
+<p>아키텍처 문서의 상태 표가 &ldquo;Log 계정 대기 2건&rdquo;으로 적고 있었으나 사실이 아니었다.
+Log 계정은 이미 apply를 마친 상태였고 막힌 쪽은 워크로드였다 — 해당 코드가 그날 아침
+apply보다 <strong>늦게 커밋</strong>됐을 뿐이다. 표를 정정하고,
+문서의 기준을 <strong>저장소가 아니라 실물 조회</strong>로 고정했다.</p>
+
+<h2>5. 현재 상태</h2>
+
+<table>
+  <tr><th>축</th><th>내용</th><th>상태</th></tr>
+  <tr><td>엣지</td><td>WAF 규칙 4종 · 관리 알람 4종 · Origin 검증 헤더 · CloudFront 전환</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>DB 승인</td><td>최소권한 계정 · TLS 강제 · IAM 토큰 인증</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>DB 감시</td><td>감사 이벤트에 DML 추가</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>스키마</td><td>누락 테이블 복원 + CI 동기화 검사</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>IAM 감시</td><td>루트 사용 · IAM 변경 · 콘솔 로그인 실패</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>선별</td><td>타입 기반 통보 전환</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>자동 대응</td><td>격리 · 키 무효화 · 이력 · 복구 · 미복구 감시 · 등급화</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>중앙 로그</td><td>RDS 감사 → Log 계정 불변 버킷</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>앱 보안 로그</td><td>ALB 액세스 로그 · 메트릭 필터 10 · 알람 5</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>AI 트리아지</td><td>구현 완료, 브랜치 보존</td>
+      <td><span class="badge todo">미채택</span></td></tr>
+  <tr><td>토큰 전환</td><td>앱이 15분 토큰을 발급받도록 변경</td>
+      <td><span class="badge todo">앱 저장소</span></td></tr>
+</table>
+
+<h2>6. 남은 작업</h2>
+
+<div class="callout danger"><strong>먼저 처리해야 할 위험.</strong>
+<code>account-baseline</code> state에 <code>aws_cloudwatch_log_group.ssm_sessions</code>와
+<code>aws_ssm_document.session_manager_prefs</code>가 남아 있는데
+<strong>어느 코드에도 선언이 없다</strong>(전 스택 grep 0건, git 이력 0건).
+이대로 apply하면 <strong>SSM 세션 로깅이 삭제</strong>된다 — SSH가 없는 이 환경의 유일한 접속 감사 증적이다.
+OAM Link도 같은 스택이라 이걸 먼저 풀어야 한다.</p></div>
+
+<table>
+  <tr><th>#</th><th>작업</th><th>담당·의존</th></tr>
+  <tr><td>1</td><td><span class="badge risk">위험</span> <code>account-baseline</code>의 SSM 세션 로깅 리소스를 코드로 복원</td>
+      <td>워크로드 · 즉시</td></tr>
+  <tr><td>2</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
+  <tr><td>3</td><td>보안 대시보드 OAM Link apply</td><td>Log 담당이 Sink ARN 2개 전달 후</td></tr>
+  <tr><td>4</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
+  <tr><td>5</td><td>차단 시연 시나리오 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+</table>
+
+<p>배스천은 진단해 본 결과 IMDSv2 강제 · 인바운드 0 · SSM 세션 로깅이 이미 적용돼 있고,
+남은 갭은 공용 서브넷의 공인 IP 하나다. 재구축 영향 검증 없이 손대지 않는 편이 안전하다.</p>
+
+<h2>7. 발표에 쓸 만한 지점</h2>
+
+<div class="grid2">
+  <div class="card">
+    <h4>&ldquo;감시를 켜니 장애가 나왔다&rdquo;</h4>
+    <ul>
+      <li>DML 감사 활성화 → 5분에 266건 INSERT 실패 발견</li>
+      <li>앱은 200을 반환하고 있었다 — 관측이 없으면 영원히 몰랐을 고장</li>
+      <li>보안 통제가 <strong>품질 문제</strong>를 잡아낸 사례</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>&ldquo;심각도 숫자를 믿지 않는다&rdquo;</h4>
+    <ul>
+      <li>루트 자격증명 사용이 severity 2로 버려지고 있었다</li>
+      <li>타입 기반으로 전환 — 벤더 점수가 아니라 우리 환경 기준</li>
+      <li>멘토 지적(&ldquo;의미 있는 필드값에만 경고&rdquo;)에 대한 직접적인 답</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>&ldquo;AI를 검토하고 안 쓰기로 했다&rdquo;</h4>
+    <ul>
+      <li>구현·비용 산정·데이터 반출 분석까지 끝낸 뒤의 결정</li>
+      <li>월 $23~54, 하드 실링 $360 — 숫자로 답할 수 있다</li>
+      <li>&ldquo;안 해봐서 모른다&rdquo;가 아니라 <strong>&ldquo;해보고 안 쓴다&rdquo;</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>&ldquo;책임을 잘못 귀속했던 것을 바로잡았다&rdquo;</h4>
+    <ul>
+      <li>문서엔 &ldquo;Log 계정 대기&rdquo;, 실제로는 우리 쪽 미적용</li>
+      <li>실물 조회로 확인하고 문서 기준 자체를 바꿨다</li>
+      <li>협업에서 &ldquo;코드에 있음 ≠ 배포됨&rdquo;</li>
+    </ul>
+  </div>
+</div>
+
+<footer>
+  gochuchamchi 보안 인프라 · 작업 보고서 · 2026-08-12<br>
+  관련 문서: <code>2026-08-12-security-architecture.html</code> ·
+  <code>2026-08-12-troubleshooting.html</code> ·
+  <code>2026-08-12-ai-triage.md</code> · <code>2026-08-11-log-account-handoff.md</code>
+</footer>
+
+</div>
+</body>
+</html>
