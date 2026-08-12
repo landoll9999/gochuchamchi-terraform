@@ -41,14 +41,28 @@ $planOut | Select-String "Plan:" | ForEach-Object { $_.Line }
 # log.archive는 패턴에서 뺀다 — aws_cloudwatch_log_subscription_filter.cloudwatch_log_archive[*]
 # 는 이 스택의 정상 구성원이라 매일 밤 같이 지워지는 게 맞는데, 그걸 유출로 오탐해
 # destroy를 막아 버린다.
-$leak = $planOut | Select-String `
-    -Pattern "guardduty|cloudtrail|aws_config|security.?hub|sns_topic" `
-    -CaseSensitive:$false
+#
+# 검사 대상은 plan 본문 전체가 아니라 "리소스 주소"뿐이다(2026-08-12 수정).
+#   전문을 훑으면 속성 "값"에 걸려서 오탐이 난다. 실제로 iam-activity-monitoring.tf의
+#   EventBridge 규칙이 event_pattern 안에 detail-type "AWS API Call via CloudTrail"과
+#   "AWS Console Sign In via CloudTrail"을 담고 있어서, CloudTrail 리소스가 단 하나도
+#   지워지지 않는데 destroy가 막혔다. 그 규칙은 매일 밤 같이 지워지고 아침에 다시
+#   만들어지는 이 스택의 정상 구성원이다.
+#   terraform은 지울 리소스마다 "  # <주소> will be destroyed" 한 줄을 찍으므로 그 줄만 본다.
+$destroyTargets = $planOut |
+    Select-String -Pattern '^\s*#\s+(\S+)\s+will be destroyed' |
+    ForEach-Object { $_.Matches[0].Groups[1].Value }
+$leak = $destroyTargets | Where-Object {
+    $_ -imatch "guardduty|cloudtrail|aws_config|security.?hub|sns_topic"
+}
 if ($leak) {
-    Write-Host "✖ destroy 계획에 상시 계층 키워드가 보입니다 — 중단. 아래 항목 확인:" -ForegroundColor Red
-    $leak | Select-Object -First 5 | ForEach-Object { Write-Host "   $($_.Line)" }
+    Write-Host "✖ destroy 계획에 상시 계층 리소스가 섞였습니다 — 중단. 아래 항목 확인:" -ForegroundColor Red
+    $leak | Select-Object -First 5 | ForEach-Object { Write-Host "   $_" }
     exit 1
 }
+# 조용히 통과하면 "파싱이 깨져서 통과"와 "진짜 깨끗해서 통과"를 구분할 수 없다.
+# 개수를 찍어 위의 "Plan:" 줄과 대조 가능하게 한다.
+Write-Host "상시 계층 리소스 없음 — destroy 대상 $($destroyTargets.Count)개 전부 일일 계층"
 
 $answer = Read-Host "`n위 계획대로 destroy할까요? (y/N)"
 if ($answer -ne "y") { Write-Host "취소됨"; exit 0 }
