@@ -241,6 +241,31 @@ def severity_color(severity: float) -> int:
     return 9807270  # 회색
 
 
+def incident_tier_for_guardduty(detail: dict[str, Any], severity: float) -> str:
+    """Map GuardDuty findings to the operator-facing P1-P4 response tier."""
+    finding_type = str(detail.get("type", ""))
+    p1_prefixes = (
+        "Policy:IAMUser/Root", "CredentialAccess:", "Exfiltration:",
+        "Backdoor:", "Trojan:", "CryptoCurrency:", "Impact:",
+    )
+    if severity >= 7 or finding_type.startswith(p1_prefixes):
+        return "P1"
+    if severity >= 4:
+        return "P2"
+    return "P3"
+
+
+def incident_tier_for_alarm(alarm_name: str) -> str:
+    """Classify CloudWatch security alarms without turning routine signals into P1."""
+    if "high-security-event" in alarm_name:
+        return "P2"
+    if any(marker in alarm_name for marker in ("http-5xx", "login-failure", "access-denied", "waf-sqli")):
+        return "P2"
+    if any(marker in alarm_name for marker in ("waf-", "http-4xx", "target-4xx", "firehose")):
+        return "P3"
+    return "P4"
+
+
 def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
     """GuardDuty finding 1건을 Discord 메시지로 변환·전송합니다."""
     detail = event.get("detail", {})
@@ -259,7 +284,8 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
     )
 
     label = severity_label(severity)
-    will_isolate = severity >= 7 and resource_type == "Instance"
+    incident_tier = incident_tier_for_guardduty(detail, severity)
+    will_isolate = severity >= 7
 
     discord_payload = {
         "username": "Gochuchamchi GuardDuty",
@@ -276,6 +302,11 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
                     {
                         "name": "Severity",
                         "value": f"`{severity}` ({label})",
+                        "inline": True,
+                    },
+                    {
+                        "name": "Incident tier",
+                        "value": f"`{incident_tier}`",
                         "inline": True,
                     },
                     {
@@ -307,7 +338,7 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
 
     send_discord_message(get_discord_webhook_url(), discord_payload)
 
-    return {"findingType": finding_type, "severity": severity}
+    return {"findingType": finding_type, "severity": severity, "incidentTier": incident_tier}
 
 
 def handle_plaintext_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -354,6 +385,7 @@ def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
         target = instance_id
 
     action_render = {
+        "manual-review": ("P1 manual containment required", 15158332),
         "isolated": ("🔒 격리 완료", 10038562),
         "already-isolated": ("🔒 이미 격리됨", 9807270),
         "dry-run": ("🧪 드라이런 (실제 미실행)", 15105570),
@@ -408,6 +440,7 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
     previous_state = detail.get("previousState", {})
 
     alarm_name = detail.get("alarmName", "알 수 없는 CloudWatch Alarm")
+    incident_tier = incident_tier_for_alarm(alarm_name)
     new_state = current_state.get("value", "UNKNOWN")
     old_state = previous_state.get("value", "UNKNOWN")
     reason = current_state.get("reason", "상태 변경 원인 없음")
@@ -422,7 +455,7 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
             {
                 "title": (
                     f"{state_icon(new_state)} "
-                    f"CloudWatch Alarm: {alarm_name}"
+                    f"[{incident_tier}] CloudWatch Alarm: {alarm_name}"
                 ),
                 "color": state_color(new_state),
                 "fields": [
@@ -472,4 +505,5 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "alarmName": alarm_name,
         "state": new_state,
+        "incidentTier": incident_tier,
     }

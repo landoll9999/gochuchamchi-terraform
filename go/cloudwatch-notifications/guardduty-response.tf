@@ -33,6 +33,15 @@ variable "isolation_enabled" {
   default     = true
 }
 
+variable "protected_instance_tag_keys" {
+  description = "자동 격리에서 제외할 EC2 인스턴스 태그 키 또는 접두사 목록. EKS 워커 노드는 서비스 전체 영향 방지를 위해 기본적으로 제외하고 P1 수동 대응으로 전환합니다."
+  type        = list(string)
+  default = [
+    "eks:cluster-name",
+    "kubernetes.io/cluster/",
+  ]
+}
+
 # ---------------------------------------------------------------------------
 # (2026-08-12) 자동대응 3종 확장: 자격증명 대응 / 이력 보존 / 미복구 감시
 # ---------------------------------------------------------------------------
@@ -494,10 +503,11 @@ resource "aws_lambda_function" "guardduty_isolation" {
 
   environment {
     variables = {
-      SNS_TOPIC_ARN      = aws_sns_topic.alerts.arn
-      MIN_SEVERITY       = tostring(var.guardduty_isolate_min_severity)
-      QUARANTINE_SG_NAME = "gochuchamchi-quarantine"
-      ISOLATION_ENABLED  = var.isolation_enabled ? "true" : "false"
+      SNS_TOPIC_ARN               = aws_sns_topic.alerts.arn
+      MIN_SEVERITY                = tostring(var.guardduty_isolate_min_severity)
+      QUARANTINE_SG_NAME          = "gochuchamchi-quarantine"
+      ISOLATION_ENABLED           = var.isolation_enabled ? "true" : "false"
+      PROTECTED_INSTANCE_TAG_KEYS = join(",", var.protected_instance_tag_keys)
 
       # (2026-08-12) 자동대응 확장
       HISTORY_TABLE               = aws_dynamodb_table.isolation_history.name
