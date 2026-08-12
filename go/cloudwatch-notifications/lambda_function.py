@@ -143,11 +143,34 @@ def unwrap_events(event: dict[str, Any]) -> list[dict[str, Any]]:
     if "Records" not in event:
         return [event]
 
-    return [
-        json.loads(record["Sns"]["Message"])
-        for record in event["Records"]
-        if record.get("EventSource") == "aws:sns"
-    ]
+    events: list[dict[str, Any]] = []
+
+    for record in event["Records"]:
+        if record.get("EventSource") != "aws:sns":
+            continue
+
+        message = record["Sns"]["Message"]
+
+        try:
+            events.append(json.loads(message))
+        except json.JSONDecodeError:
+            # 모든 발행자가 JSON을 보내는 건 아니다. iam-activity.tf의
+            # input_transformer는 이메일 가독성을 위해 평문 여러 줄을 보내는데,
+            # 예전 구현은 여기서 JSONDecodeError로 죽었다 → SNS 3회 재시도 →
+            # DLQ 적재 → DLQ 알람. 이메일 구독자는 멀쩡히 받는데 Discord만
+            # 조용히 실패하는, 알아채기 가장 어려운 형태의 고장이었다.
+            # 평문은 평문대로 렌더링하도록 봉투를 씌워 넘긴다.
+            events.append(
+                {
+                    "source": "gochuchamchi.plaintext",
+                    "detail": {
+                        "subject": record["Sns"].get("Subject") or "알림",
+                        "message": message,
+                    },
+                }
+            )
+
+    return events
 
 
 def lambda_handler(
@@ -191,6 +214,12 @@ def route_event(event: dict[str, Any]) -> dict[str, Any]:
 
     if source == "gochuchamchi.isolation":
         return handle_isolation_event(event)
+
+    if source == "gochuchamchi.ai-triage":
+        return handle_triage_event(event)
+
+    if source == "gochuchamchi.plaintext":
+        return handle_plaintext_event(event)
 
     return handle_alarm_event(event)
 
@@ -284,6 +313,156 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
     return {"findingType": finding_type, "severity": severity}
 
 
+def handle_triage_event(event: dict[str, Any]) -> dict[str, Any]:
+    """AI 트리아지 판정을 Discord 메시지로 변환·전송합니다.
+
+    GuardDuty 원본 렌더러(handle_guardduty_event)와 다른 점은 severity가 아니라
+    **판정**으로 색과 제목을 정한다는 것이다. Rule 1의 타입 필터가 "무엇을 알릴지"를
+    이미 정했으므로, 여기서 severity로 다시 색을 칠하면 severity 2로 오는 루트
+    자격증명 사용이 회색으로 묻힌다.
+
+    판정이 어디서 왔는지(source)를 항상 같이 보여준다 — 모델이 실제로 돌았는지,
+    캐시였는지, 상한에 걸려 판정 없이 온 건지 구분되지 않으면 사람이 판정을
+    신뢰할 수 없다.
+    """
+    detail = event.get("detail", {})
+
+    verdict = detail.get("verdict", "needs_review")
+    confidence = detail.get("confidence", "low")
+    origin = detail.get("source", "none")
+
+    verdict_render = {
+        "real_threat": ("🔴 실제 위협 의심", 10038562),
+        "needs_review": ("🟡 확인 필요", 15105570),
+        "likely_benign": ("⚪ 정상 패턴으로 보임", 9807270),
+    }
+    verdict_text, color = verdict_render.get(verdict, (f"❓ {verdict}", 9807270))
+
+    origin_text = {
+        "ai": f"모델 판정 ({trim_text(detail.get('model', '-'), 60)})",
+        "cache": "이전 동일 finding 판정 재사용 (모델 미호출)",
+        "rule": "결정적 억제 룰 (모델 미호출)",
+        "gate-severity": "severity 하한 미달 — 판정 생략",
+        "gate-quota": "일일 호출 상한 초과 — 판정 없이 통보",
+        "error": "판정 실패 — 원문만 통보",
+        "none": "판정 없음",
+    }.get(origin, origin)
+
+    fields = [
+        {
+            "name": "판정 근거 출처",
+            "value": f"`{origin_text}` / 확신도 `{confidence}`",
+            "inline": False,
+        },
+        {
+            "name": "Finding 유형",
+            "value": f"`{trim_text(detail.get('findingType', '-'), 200)}`",
+            "inline": False,
+        },
+        {
+            "name": "Severity",
+            "value": f"`{detail.get('severity', '-')}` (GuardDuty 원본값)",
+            "inline": True,
+        },
+        {
+            "name": "대상 리소스",
+            "value": f"`{trim_text(detail.get('resource', '-'), 100)}`",
+            "inline": True,
+        },
+        {
+            "name": "공격 단계 추정",
+            "value": f"`{detail.get('attack_stage', 'unknown')}`",
+            "inline": True,
+        },
+    ]
+
+    if detail.get("reasoning"):
+        fields.append(
+            {"name": "판단 근거", "value": trim_text(detail["reasoning"]), "inline": False}
+        )
+
+    actions = detail.get("recommended_actions") or []
+    if actions:
+        fields.append(
+            {
+                "name": "권장 확인 절차",
+                "value": trim_text("\n".join(f"• {a}" for a in actions)),
+                "inline": False,
+            }
+        )
+
+    if detail.get("prompt_injection_suspected"):
+        # finding 필드에 모델 지시를 조작하려는 문구가 있었다는 뜻 — 판정 자체보다
+        # 이 사실이 더 중요한 신호다.
+        fields.append(
+            {
+                "name": "⚠️ 프롬프트 인젝션 의심",
+                "value": (
+                    "finding 내용에 모델 지시를 조작하려는 문구가 포함돼 있습니다. "
+                    "판정과 무관하게 원본을 직접 확인하세요."
+                ),
+                "inline": False,
+            }
+        )
+
+    if detail.get("description"):
+        fields.append(
+            {
+                "name": "GuardDuty 원문 설명",
+                "value": trim_text(detail["description"]),
+                "inline": False,
+            }
+        )
+
+    discord_payload = {
+        "username": "Gochuchamchi AI Triage",
+        "embeds": [
+            {
+                "title": f"{verdict_text}: {trim_text(detail.get('headline', '-'), 180)}",
+                "color": color,
+                "fields": fields,
+                "footer": {
+                    "text": (
+                        "GuardDuty → EventBridge → AI 트리아지 → SNS → Discord "
+                        "· finding 원본은 GuardDuty 콘솔에 보존됩니다"
+                    )
+                },
+            }
+        ],
+    }
+
+    send_discord_message(get_discord_webhook_url(), discord_payload)
+
+    return {"verdict": verdict, "findingId": detail.get("findingId", "-")}
+
+
+def handle_plaintext_event(event: dict[str, Any]) -> dict[str, Any]:
+    """JSON이 아닌 SNS 메시지를 그대로 보여줍니다.
+
+    EventBridge input_transformer로 사람이 읽을 문장을 만들어 보내는 발행자
+    (iam-activity.tf)를 위한 경로. 파싱할 구조가 없으니 꾸미지 않고 원문을
+    그대로 싣는다 — 여기서 정규식으로 필드를 뽑으려 들면 발행자 템플릿이
+    바뀔 때마다 조용히 깨진다.
+    """
+    detail = event.get("detail", {})
+
+    discord_payload = {
+        "username": "Gochuchamchi Alert",
+        "embeds": [
+            {
+                "title": f"📣 {trim_text(detail.get('subject', '알림'), 180)}",
+                "color": 15105570,
+                "description": trim_text(detail.get("message", ""), 3800),
+                "footer": {"text": "EventBridge → SNS → Discord (평문 메시지)"},
+            }
+        ],
+    }
+
+    send_discord_message(get_discord_webhook_url(), discord_payload)
+
+    return {"plaintext": True}
+
+
 def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
     """격리 Lambda의 실행 결과를 Discord 메시지로 변환·전송합니다."""
     detail = event.get("detail", {})
@@ -293,6 +472,13 @@ def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
     finding_type = detail.get("findingType", "-")
     action_detail = detail.get("detail", "")
 
+    # 자격증명 대응 경로는 인스턴스가 아니라 액세스키가 대상이라 instanceId가 없다.
+    # 그대로 두면 제목이 "🔑 ...: -"가 되어 무엇에 대한 조치인지 안 보인다.
+    if detail.get("accessKeyId"):
+        target = f"{detail.get('userName', '?')} / {detail['accessKeyId']}"
+    else:
+        target = instance_id
+
     action_render = {
         "isolated": ("🔒 격리 완료", 10038562),
         "already-isolated": ("🔒 이미 격리됨", 9807270),
@@ -300,6 +486,14 @@ def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
         "skipped": ("⏭️ 격리 생략", 9807270),
         "failed": ("❌ 격리 실패 — 수동 개입 필요", 15158332),
         "none": ("ℹ️ 조치 없음", 9807270),
+        # (2026-08-12) 자동대응 3종 확장이 내보내는 action들.
+        # 없으면 "❓ key-disabled" 회색으로 떠서, 가장 강한 대응인 자격증명
+        # 무효화가 가장 눈에 안 띄는 알림이 된다.
+        "recovered": ("♻️ 격리 원상복구 완료", 3066993),
+        "manual-required": ("🛠️ 자동 복구 불가 — 수동 확인 필요", 15105570),
+        "key-disabled": ("🔑 탈취 의심 액세스키 비활성화됨", 10038562),
+        "stale-quarantine": ("⏰ 격리 후 장기 미복구 — 정리 필요", 15105570),
+        "audit-clean": ("✅ 격리 감사 이상 없음", 3066993),
     }
     action_text, color = action_render.get(action, (f"❓ {action}", 9807270))
 
@@ -307,7 +501,7 @@ def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
         "username": "Gochuchamchi Isolation",
         "embeds": [
             {
-                "title": f"{action_text}: {instance_id}",
+                "title": f"{action_text}: {target}",
                 "color": color,
                 "fields": [
                     {
