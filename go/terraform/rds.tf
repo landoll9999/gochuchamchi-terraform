@@ -63,9 +63,17 @@ module "rds" {
   #   - 접속하는 쪽도 전부 TLS로 맞춰둠: 앱은 SPRING_DATASOURCE_URL의 sslMode
   #     (k8s-deploy.tf), 배스천 스크립트는 [client] ssl (rds-schema-init.tf,
   #     db-zero-trust.tf), 앱 계정은 REQUIRE SSL로 이중 강제.
-  #   * IAM DB 인증(iam_database_authentication_enabled)은 MariaDB 미지원이라 제외.
-  #     MySQL/PostgreSQL이었다면 비밀번호 대신 15분짜리 IAM 토큰 인증까지 가능했음
-  #     — "왜 안 켰나"를 물어보면 엔진 제약이라고 답하면 되는 면접 포인트.
+  #   * IAM DB 인증: 아래 iam_database_authentication_enabled 로 활성화.
+  #
+  # (2026-08-12 정정) 이 자리에는 "MariaDB 미지원이라 제외"라고 적혀 있었으나 사실이
+  # 아니다. AWS API로 우리가 쓰는 엔진·버전·클래스를 직접 조회해 확인했다:
+  #   aws rds describe-orderable-db-instance-options --engine mariadb \
+  #     --engine-version 10.11.18 --db-instance-class db.t3.small \
+  #     --query "OrderableDBInstanceOptions[0].SupportsIAMDatabaseAuthentication"
+  #   -> true  (같은 조건의 mysql 8.4.10 도 true 로, 둘 사이에 차이가 없다)
+  # Aurora가 MySQL/PostgreSQL만 지원하는 것과 혼동한 것으로 보인다. 잘못된 근거로
+  # 배제돼 있었으므로 활성화한다. 같은 오류가 docs/2026-08-04.md 와
+  # docs/2026-08-04-zero-trust-db-report.html 에도 있어 함께 정정했다.
   # ---------------------------------------------------------------------------
   parameters = [
     {
@@ -77,10 +85,19 @@ module "rds" {
 
   # ---------------------------------------------------------------------------
   # (2026-08-04 제로트러스트) 접속/변경 감사 로그 — "모든 접근을 기록"하는 축.
-  #   MARIADB_AUDIT_PLUGIN: 누가/어느 IP에서 접속(실패 포함)했고 어떤 DDL/DCL을
-  #   실행했는지 남김. QUERY 전체(모든 SELECT/DML)까지 켜면 로그량·비용이 커져서
-  #   접속 이벤트 + 스키마/권한 변경만 기록 (운영 전환 시 QUERY_DML 추가 검토).
-  #   rdsadmin(AWS 내부 헬스체크 계정)은 노이즈라 제외.
+  #   MARIADB_AUDIT_PLUGIN: 누가/어느 IP에서 접속(실패 포함)했고 어떤 명령을
+  #   실행했는지 남김. rdsadmin(AWS 내부 헬스체크 계정)은 노이즈라 제외.
+  #
+  # (2026-08-12) QUERY_DML_NO_SELECT 추가 — 82행에 남겨둔 "운영 전환 시 검토" 항목.
+  #   그전까지는 CONNECT + DDL/DCL 만 켜져 있어서 "누가 들어왔다"까지만 보이고
+  #   "들어와서 뭘 했다"가 안 보였다. 앱 계정 gochuchamchi_app은 최소권한이라
+  #   DML만 가능하므로(db-zero-trust.tf) DDL/DCL 로그는 사실상 비어 있었다.
+  #   침해 시 실제로 남는 흔적은 DML이므로 이걸 켜야 감사 축이 완성된다.
+  #
+  #   SELECT를 뺀 이유: 앱 파드가 상시 조회를 날려 로그량·비용이 급증하는 데 비해,
+  #   "누가 데이터를 바꿨는가"라는 감사 질문에는 기여하지 않는다. 데이터 유출
+  #   탐지(대량 SELECT 추적)까지 필요해지면 QUERY_DML 로 올린다.
+  #   쿼리 텍스트는 SERVER_AUDIT_QUERY_LOG_LIMIT(기본 1024자)까지만 기록된다.
   # ---------------------------------------------------------------------------
   options = [
     {
@@ -88,7 +105,7 @@ module "rds" {
       option_settings = [
         {
           name  = "SERVER_AUDIT_EVENTS"
-          value = "CONNECT,QUERY_DDL,QUERY_DCL"
+          value = "CONNECT,QUERY_DDL,QUERY_DCL,QUERY_DML_NO_SELECT"
         },
         {
           name  = "SERVER_AUDIT_EXCL_USERS"
@@ -109,6 +126,23 @@ module "rds" {
 
   # 기존과 동일하게 비밀번호를 직접 넣지 않고 Secrets Manager가 자동 생성/관리하도록 함
   manage_master_user_password = true
+
+  # ---------------------------------------------------------------------------
+  # (2026-08-12) IAM DB 인증 활성화 — §전송 암호화 주석의 정정 참조.
+  #
+  # 켜는 것만으로는 기존 접속에 아무 영향이 없다. 비밀번호 인증은 그대로 동작하고,
+  # IAM 토큰 인증이 "추가로 가능해질 뿐"이다. 실제로 토큰을 쓰려면 DB 계정을
+  #   CREATE USER '<user>'@'%' IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+  # 로 만들어야 하는데, 그렇게 만든 계정은 비밀번호 인증이 불가능해진다.
+  # 즉 gochuchamchi_app 을 그대로 전환하면 앱이 토큰을 발급받도록 고쳐지기 전까지
+  # 즉시 접속 실패한다. 전환은 반드시 "IAM 전용 계정 추가 -> 앱 전환 -> 구계정 제거"
+  # 순서로 할 것 (db-zero-trust.tf 참조).
+  #
+  # 토큰 수명은 15분 고정(AWS 사양, 조정 불가). 앱은 커넥션을 새로 열 때마다
+  # generate-db-auth-token 으로 재발급해야 하며, IAM 인증 연결은 SSL이 필수다
+  # (이미 require_secure_transport=1 이라 조건은 충족).
+  # ---------------------------------------------------------------------------
+  iam_database_authentication_enabled = true
 
   vpc_security_group_ids = [module.rds_sg.id]
 

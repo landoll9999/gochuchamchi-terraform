@@ -146,7 +146,10 @@ data 소스로 읽어 K8s Secret을 만들면서 <strong>tfstate에 평문으로
       ② <code>MARIADB_AUDIT_PLUGIN</code> — 접속(실패 포함)/DDL/DCL 기록, CloudWatch
       <code>/aws/rds/instance/gochuchamchi-db/audit</code>로 export.
       ③ SG egress 전면 제거(DB는 아웃바운드를 시작할 일 없음).
-      ④ <code>storage_encrypted=true</code> 명시. ⑤ IAM DB 인증은 <strong>MariaDB 미지원이라 제외</strong>(주석 기록)</td></tr>
+      ④ <code>storage_encrypted=true</code> 명시.
+      ⑤ <del>IAM DB 인증은 <strong>MariaDB 미지원이라 제외</strong>(주석 기록)</del>
+      <strong>(2026-08-12 정정)</strong> 사실이 아님 — RDS for MariaDB는 IAM DB 인증을
+      지원한다. <code>iam_database_authentication_enabled = true</code>로 활성화함</td></tr>
   <tr><td><code>redis.tf</code></td><td><span class="badge done">수정</span></td>
       <td><code>aws_elasticache_cluster</code>(암호화/AUTH 미지원) → <code>aws_elasticache_replication_group</code>
       단일 노드 교체. 전송/저장 암호화 + AUTH 토큰. 1노드 유지라 비용 동일. SG egress 제거.
@@ -230,7 +233,13 @@ terraform state pull | Select-String "password"</code></pre>
   </div>
   <div class="card"><h4>남긴 한계 (사유 문서화)</h4>
     <ul>
-      <li><strong>IAM DB 인증 미적용</strong> — MariaDB 엔진 미지원. MySQL/PG였다면 15분 IAM 토큰 인증까지 가능</li>
+      <li><del><strong>IAM DB 인증 미적용</strong> — MariaDB 엔진 미지원. MySQL/PG였다면 15분 IAM 토큰 인증까지 가능</del><br>
+      <strong>(2026-08-12 정정)</strong> 이 한계는 <strong>잘못된 근거로 기록된 것</strong>이다.
+      AWS API 조회 결과 <code>SupportsIAMDatabaseAuthentication = true</code>(mariadb 10.11.18 /
+      db.t3.small, 동일 조건 mysql 8.4.10과 차이 없음). Aurora가 MySQL/PostgreSQL만 지원하는 것과
+      혼동한 것으로 보인다. 2026-08-12에 활성화했으며, 남은 실제 한계는 <em>"계정과 앱이 아직
+      비밀번호 방식"</em>이라는 점이다 — DB 계정을 <code>AWSAuthenticationPlugin</code>으로 만들고
+      앱이 15분마다 토큰을 재발급하도록 고쳐야 전환이 완료된다</li>
       <li><strong>Redis auth_token은 state에 남음</strong> — 리소스 인자라 불가피. S3 암호화+잠금 뒤라 등급은 낮고, ESO 도입 시 최우선 이관</li>
       <li><strong>앱 비번 자동 로테이션 없음</strong> — 운영 기준은 rotation Lambda/ESO. 현재는 taint 재실행으로 수동 로테이션 가능 구조까지만</li>
       <li><strong>비용 증가 ≈ $0</strong> — 감사 로그 CloudWatch 수집만 소액(트래픽 소량 기준 $1 미만)</li>
@@ -245,8 +254,16 @@ REQUIRE SSL과 서버측 require_secure_transport로 TLS를 이중 강제했습�
 생성해 Secrets Manager와 K8s Secret으로 직접 주입하므로 Terraform state에 비밀번호가 남지 않고 — 실제로
 기존 구조에서 마스터 비밀번호가 state에 평문으로 들어가 있던 것을 발견해 제거했습니다. 접근 기록은 MariaDB
 감사 플러그인을 CloudWatch로 내보내 확보했고, 세션 스토어(Redis)도 전송 암호화와 AUTH로 전환해 'VPC 내부라서
-신뢰한다'는 가정을 데이터 계층 전체에서 제거했습니다. IAM DB 인증은 MariaDB 엔진 제약으로 제외했다는 것,
+신뢰한다'는 가정을 데이터 계층 전체에서 제거했습니다.
 남은 state 내 시크릿(Redis 토큰)은 ESO 도입 시 이관한다는 것까지 한계와 다음 단계를 함께 관리하고 있습니다."
+</div>
+<div class="callout warn">
+<strong>(2026-08-12 정정)</strong> 위 문단에는 원래 <em>"IAM DB 인증은 MariaDB 엔진 제약으로
+제외했다는 것"</em>이 포함돼 있었으나 사실이 아니어서 삭제했습니다. 이대로 말하면 틀린 근거를
+근거로 제시하게 됩니다. 지금 상태를 말한다면 이렇게 이어가는 편이 정확합니다 —
+<em>"IAM DB 인증은 엔진이 지원하는데도 '미지원'이라는 잘못된 근거로 빠져 있던 것을 AWS API로
+확인해 바로잡고 활성화했으며, 계정과 앱을 토큰 방식으로 전환하는 것은 다음 단계로 남겨뒀습니다."</em>
+스스로 적은 근거를 다시 검증해 뒤집었다는 점이 오히려 더 나은 이야기가 됩니다.
 </div>
 
 <h2>9. 남은 작업</h2>
