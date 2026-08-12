@@ -22,6 +22,15 @@ locals {
   cloudwatch_log_archive_sources = {
     application   = aws_cloudwatch_log_group.container_insights_application.name
     control-plane = module.eks.cloudwatch_log_group_name
+    # (2026-08-12) RDS 감사 로그 중앙화 — "누가 들어와 무엇을 실행했나"의 증적을
+    # 불변 중앙 버킷(Log 계정)에 보관한다. rds.tf 에서 QUERY_DML_NO_SELECT 까지 켠 뒤,
+    # 이 감사 축을 workload 계정에만 두지 않고 다른 계정이 변조·삭제할 수 없는 곳으로
+    # 보낸다(제로트러스트 감사의 핵심 — 침해된 계정이 자기 흔적을 못 지우게).
+    # 로그 그룹은 AWS 가 만드는 것이라 리소스 참조가 아니라 이름을 조립한다.
+    # 수신 Destination(gochuchamchi-rds-audit-log-archive)은 Log 계정에서 먼저
+    # apply 되어 있어야 한다 — ../log-archive/log-archive.tf 의 archive_sources 에
+    # "rds-audit" 를 추가하는 짝 커밋이 선행되어야 이 구독 필터 생성이 성공한다.
+    rds-audit = "/aws/rds/instance/${data.aws_db_instance.this.db_instance_identifier}/audit"
   }
 }
 

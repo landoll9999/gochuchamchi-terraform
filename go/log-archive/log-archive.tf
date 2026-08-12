@@ -13,7 +13,12 @@
 # =============================================================================
 
 locals {
-  cloudwatch_log_archive_sources = toset(["application", "control-plane"])
+  # (2026-08-12) "rds-audit" 추가 — RDS 감사 로그(누가 접속해 어떤 DML/DDL/DCL 을
+  # 실행했나)를 workload 계정에서 이 불변 중앙 버킷으로 받는다. 서울 리전이라
+  # application/control-plane 과 같은 그룹에 둔다(WAF 만 us-east-1). 이 한 줄이
+  # Firehose·S3 배송·서울 Destination·Destination 정책을 기존 for_each 패턴으로
+  # 자동 생성한다. 짝: ../terraform/log-archive-subscriptions.tf 의 구독 필터.
+  cloudwatch_log_archive_sources = toset(["application", "control-plane", "rds-audit"])
   # Firehose/S3에는 WAF까지 보관하지만, application/control-plane의 Logs
   # Destination은 서울이고 WAF Destination만 us-east-1이라 provider를 분리한다.
   cloudwatch_log_delivery_sources = setunion(
