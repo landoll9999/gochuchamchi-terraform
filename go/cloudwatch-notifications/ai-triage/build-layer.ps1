@@ -11,10 +11,83 @@
     Windows 바이너리가 들어가서 import 시점에 죽는다.
 
 .NOTES
-    요구사항: python3 + pip (PATH에 있어야 함). 네트워크 접근 필요(PyPI).
+    요구사항: Python 3 + pip, 네트워크 접근(PyPI).
+
+    PATH의 python을 그대로 쓰지 않고 Resolve-Python으로 검증해서 고른다.
+    이유는 그 함수 주석 참고.
 #>
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-Python {
+    <#
+    .SYNOPSIS
+        실제로 동작하는 Python 3 + pip 조합을 찾아 돌려준다.
+
+    .DESCRIPTION
+        PATH의 python을 믿지 않는다. Windows는
+        %LOCALAPPDATA%\Microsoft\WindowsApps 에 Microsoft Store로 유도하는
+        python.exe 스텁을 두는데, 이게 실제 설치본보다 PATH 앞에 오는 일이 흔하다.
+        스텁을 부르면 "Python was not found..."만 찍히고 pip install이 실패하는데,
+        메시지가 파이썬이 없다고만 말해서 실제로는 설치돼 있는 상황과 구분이 안 된다.
+
+        스텁은 경로로 걸러낸다. 실행해서 판별하려면 네이티브 stderr 리다이렉션이
+        필요한데, PS 5.1에서 그건 $ErrorActionPreference="Stop"과 만나
+        NativeCommandError를 일으켜 정상 종료까지 실패로 뒤집는다.
+
+        설치 직후처럼 PATH가 아직 갱신되지 않은 셸에서도 동작하도록 표준 설치
+        경로까지 훑는다 — 그 덕에 앱을 재시작하지 않고도 빌드가 된다.
+    #>
+    $candidates = New-Object System.Collections.ArrayList
+
+    # py 런처가 가장 신뢰할 만하다. 스텁과 무관하게 실제 설치본을 가리킨다.
+    $launcher = Get-Command py -ErrorAction SilentlyContinue
+    if ($launcher) { [void]$candidates.Add(@($launcher.Source, "-3")) }
+
+    foreach ($name in @("python3", "python")) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) { [void]$candidates.Add(@($cmd.Source)) }
+    }
+
+    $roots = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Python"),
+        (Join-Path $env:ProgramFiles "Python312"),
+        (Join-Path $env:ProgramFiles "Python311")
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        @(Get-ChildItem -Path $root -Filter "python.exe" -Recurse -Depth 1 -ErrorAction SilentlyContinue) |
+            ForEach-Object { [void]$candidates.Add(@($_.FullName)) }
+    }
+
+    foreach ($candidate in $candidates) {
+        $exe = $candidate[0]
+        if ($exe -like "*\Microsoft\WindowsApps\*") { continue }   # 스토어 스텁
+        if (-not (Test-Path $exe)) { continue }
+
+        $prefix = @()
+        if ($candidate.Count -gt 1) { $prefix = $candidate[1..($candidate.Count - 1)] }
+
+        $probe = & $exe @prefix -c "import sys; sys.stdout.write(sys.version.split()[0])"
+        if ($LASTEXITCODE -ne 0 -or -not $probe) { continue }
+
+        & $exe @prefix -m pip --version | Out-Null
+        if ($LASTEXITCODE -ne 0) { continue }
+
+        Write-Host "[ai-triage] Python $probe 사용 → $exe $($prefix -join ' ')"
+        return @{ Exe = $exe; Prefix = $prefix }
+    }
+
+    throw @"
+동작하는 Python 3 + pip 을 찾지 못했다.
+
+    winget install Python.Python.3.12
+
+설치했는데도 이 오류가 나면 PATH가 갱신되지 않은 셸일 수 있다. 이 스크립트는
+표준 설치 경로까지 훑으므로 보통은 그래도 찾아내지만, 비표준 위치에 설치했다면
+셸(또는 이 스크립트를 호출한 앱)을 다시 띄울 것.
+"@
+}
 
 $BuildRoot = Join-Path $PSScriptRoot "build"
 $LayerRoot = Join-Path $BuildRoot "layer"
@@ -28,9 +101,11 @@ if (Test-Path $BuildRoot) {
 }
 New-Item -ItemType Directory -Force -Path $SitePackages | Out-Null
 
+$python = Resolve-Python
+
 # --only-binary=:all: 는 소스 배포판 폴백을 막는다. 로컬에서 컴파일되면
 # Windows 바이너리가 섞여 들어가므로 조용히 실패하는 것보다 낫다.
-python -m pip install `
+& $python.Exe @($python.Prefix) -m pip install `
     --target $SitePackages `
     --requirement (Join-Path $PSScriptRoot "requirements.txt") `
     --platform manylinux2014_x86_64 `
