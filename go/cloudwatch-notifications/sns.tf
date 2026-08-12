@@ -44,6 +44,7 @@ resource "aws_sns_topic_policy" "alerts" {
             "aws:SourceArn" = [
               aws_cloudwatch_event_rule.cloudwatch_alarm_state_change.arn,
               aws_cloudwatch_event_rule.guardduty_finding.arn,
+              aws_cloudwatch_event_rule.iam_activity_forwarded.arn,
             ]
           }
         }
