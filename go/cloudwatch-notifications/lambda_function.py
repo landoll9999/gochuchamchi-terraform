@@ -215,9 +215,6 @@ def route_event(event: dict[str, Any]) -> dict[str, Any]:
     if source == "gochuchamchi.isolation":
         return handle_isolation_event(event)
 
-    if source == "gochuchamchi.ai-triage":
-        return handle_triage_event(event)
-
     if source == "gochuchamchi.plaintext":
         return handle_plaintext_event(event)
 
@@ -311,129 +308,6 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
     send_discord_message(get_discord_webhook_url(), discord_payload)
 
     return {"findingType": finding_type, "severity": severity}
-
-
-def handle_triage_event(event: dict[str, Any]) -> dict[str, Any]:
-    """AI 트리아지 판정을 Discord 메시지로 변환·전송합니다.
-
-    GuardDuty 원본 렌더러(handle_guardduty_event)와 다른 점은 severity가 아니라
-    **판정**으로 색과 제목을 정한다는 것이다. Rule 1의 타입 필터가 "무엇을 알릴지"를
-    이미 정했으므로, 여기서 severity로 다시 색을 칠하면 severity 2로 오는 루트
-    자격증명 사용이 회색으로 묻힌다.
-
-    판정이 어디서 왔는지(source)를 항상 같이 보여준다 — 모델이 실제로 돌았는지,
-    캐시였는지, 상한에 걸려 판정 없이 온 건지 구분되지 않으면 사람이 판정을
-    신뢰할 수 없다.
-    """
-    detail = event.get("detail", {})
-
-    verdict = detail.get("verdict", "needs_review")
-    confidence = detail.get("confidence", "low")
-    origin = detail.get("source", "none")
-
-    verdict_render = {
-        "real_threat": ("🔴 실제 위협 의심", 10038562),
-        "needs_review": ("🟡 확인 필요", 15105570),
-        "likely_benign": ("⚪ 정상 패턴으로 보임", 9807270),
-    }
-    verdict_text, color = verdict_render.get(verdict, (f"❓ {verdict}", 9807270))
-
-    origin_text = {
-        "ai": f"모델 판정 ({trim_text(detail.get('model', '-'), 60)})",
-        "cache": "이전 동일 finding 판정 재사용 (모델 미호출)",
-        "rule": "결정적 억제 룰 (모델 미호출)",
-        "gate-severity": "severity 하한 미달 — 판정 생략",
-        "gate-quota": "일일 호출 상한 초과 — 판정 없이 통보",
-        "error": "판정 실패 — 원문만 통보",
-        "none": "판정 없음",
-    }.get(origin, origin)
-
-    fields = [
-        {
-            "name": "판정 근거 출처",
-            "value": f"`{origin_text}` / 확신도 `{confidence}`",
-            "inline": False,
-        },
-        {
-            "name": "Finding 유형",
-            "value": f"`{trim_text(detail.get('findingType', '-'), 200)}`",
-            "inline": False,
-        },
-        {
-            "name": "Severity",
-            "value": f"`{detail.get('severity', '-')}` (GuardDuty 원본값)",
-            "inline": True,
-        },
-        {
-            "name": "대상 리소스",
-            "value": f"`{trim_text(detail.get('resource', '-'), 100)}`",
-            "inline": True,
-        },
-        {
-            "name": "공격 단계 추정",
-            "value": f"`{detail.get('attack_stage', 'unknown')}`",
-            "inline": True,
-        },
-    ]
-
-    if detail.get("reasoning"):
-        fields.append(
-            {"name": "판단 근거", "value": trim_text(detail["reasoning"]), "inline": False}
-        )
-
-    actions = detail.get("recommended_actions") or []
-    if actions:
-        fields.append(
-            {
-                "name": "권장 확인 절차",
-                "value": trim_text("\n".join(f"• {a}" for a in actions)),
-                "inline": False,
-            }
-        )
-
-    if detail.get("prompt_injection_suspected"):
-        # finding 필드에 모델 지시를 조작하려는 문구가 있었다는 뜻 — 판정 자체보다
-        # 이 사실이 더 중요한 신호다.
-        fields.append(
-            {
-                "name": "⚠️ 프롬프트 인젝션 의심",
-                "value": (
-                    "finding 내용에 모델 지시를 조작하려는 문구가 포함돼 있습니다. "
-                    "판정과 무관하게 원본을 직접 확인하세요."
-                ),
-                "inline": False,
-            }
-        )
-
-    if detail.get("description"):
-        fields.append(
-            {
-                "name": "GuardDuty 원문 설명",
-                "value": trim_text(detail["description"]),
-                "inline": False,
-            }
-        )
-
-    discord_payload = {
-        "username": "Gochuchamchi AI Triage",
-        "embeds": [
-            {
-                "title": f"{verdict_text}: {trim_text(detail.get('headline', '-'), 180)}",
-                "color": color,
-                "fields": fields,
-                "footer": {
-                    "text": (
-                        "GuardDuty → EventBridge → AI 트리아지 → SNS → Discord "
-                        "· finding 원본은 GuardDuty 콘솔에 보존됩니다"
-                    )
-                },
-            }
-        ],
-    }
-
-    send_discord_message(get_discord_webhook_url(), discord_payload)
-
-    return {"verdict": verdict, "findingId": detail.get("findingId", "-")}
 
 
 def handle_plaintext_event(event: dict[str, Any]) -> dict[str, Any]:
