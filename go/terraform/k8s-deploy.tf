@@ -107,8 +107,11 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
     DB_HOST = data.aws_db_instance.this.address
     DB_PORT = "3306"
     # (2026-08-04 제로트러스트) 마스터(admin) -> 앱 전용 최소권한 계정.
-    # 계정 생성/비밀번호 주입은 db-zero-trust.tf가 배스천에서 수행.
-    DB_USER = "gochuchamchi_app"
+    # (2026-08-12) 고정 비밀번호 계정 -> IAM 토큰 계정. 이 계정은 AWSAuthenticationPlugin 으로
+    # 만들어져서 비밀번호가 아예 없다. 접속마다 15분짜리 토큰을 새로 받아야 하고,
+    # 토큰을 받을 수 있는 것은 rds-db:connect 가 붙은 파드 역할(gochuchamchi-app-role)뿐이다.
+    # 정책 Resource 에 유저명이 박혀 있어(db-zero-trust.tf) 이 이름을 바꾸면 즉시 권한이 끊긴다.
+    DB_USER = "gochuchamchi_app_iam"
 
     # (2026-08-04 제로트러스트) JDBC TLS — 환경변수 SPRING_DATASOURCE_URL은 이미지 안
     # application.yml의 spring.datasource.url보다 우선 적용됨(Spring 프로퍼티 우선순위)
@@ -116,7 +119,22 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
     #   sslMode=trust  : 1단계 — 암호화만 하고 서버 인증서 검증은 생략.
     #   sslMode=verify-full : 2단계 — RDS CA 번들을 파드에 넣은 뒤 서버 신원까지 검증(운영 기준).
     # (mariadb-java-client 3.x 문법. 만약 2.x면 ?useSsl=true&trustServerCertificate=true)
-    SPRING_DATASOURCE_URL = "jdbc:mariadb://${data.aws_db_instance.this.address}:3306/gochuchamchi?sslMode=trust"
+    #
+    # (2026-08-12) 2단계 + IAM 토큰으로 전환. 각 파라미터가 왜 있는지:
+    #   credentialType=AWS-IAM
+    #     드라이버의 AwsIamCredentialPlugin 이 접속마다 rds:generate-db-auth-token 을 호출해
+    #     비밀번호 자리에 토큰을 넣는다. 토큰 유효 15분 / 드라이버 내부 캐시 10분이라
+    #     앱 코드도 HikariCP 갱신 로직도 필요 없다. 대신 이미지에
+    #     software.amazon.awssdk:rds 가 들어 있어야 한다(pom.xml). v1(com.amazonaws)은 안 된다.
+    #     -> 그래서 이미지 배포가 이 ConfigMap 변경보다 반드시 먼저다.
+    #   region
+    #     안 주면 DefaultAwsRegionProviderChain 으로 떨어진다. EKS Pod Identity 는 자격증명만
+    #     주입하고 리전을 보장하지 않으므로 명시한다.
+    #   serverSslCert=/app/rds-ca.pem
+    #     verify-full 은 서버 인증서를 검증하는데, ap-northeast-2 RDS 는 자체 서명 리전 루트
+    #     3장으로 서명돼 있고 JDK cacerts(amazonrootca1~4)에 없다. 번들을 안 주면 verify-full 이
+    #     반드시 실패한다. 경로는 Dockerfile 이 이미지에 구워 넣은 위치다.
+    SPRING_DATASOURCE_URL = "jdbc:mariadb://${data.aws_db_instance.this.address}:3306/gochuchamchi?credentialType=AWS-IAM&region=${var.region}&sslMode=verify-full&serverSslCert=/app/rds-ca.pem"
 
     SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "5"
     SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "2"
