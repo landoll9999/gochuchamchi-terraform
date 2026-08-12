@@ -39,9 +39,29 @@ QUARANTINE_SG_NAME = os.environ.get("QUARANTINE_SG_NAME", "gochuchamchi-quaranti
 ISOLATION_ENABLED = os.environ.get("ISOLATION_ENABLED", "true").lower() == "true"
 
 
+# 격리 직전 각 ENI의 원래 SG 목록을 이 태그에 저장한다. 복구는 이 값만 보고
+# 원상복구하므로, 이 태그가 없으면(=격리 이력이 없거나 인스턴스가 재생성됨)
+# 복구할 게 없다고 판단한다.
+PRE_QUARANTINE_TAG = "gochuchamchi:pre-quarantine-sgs"
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """EventBridge가 직접 호출한 GuardDuty finding 1건을 처리합니다."""
+    """GuardDuty finding(격리) 또는 수동 복구 요청을 처리합니다.
+
+    격리:  EventBridge 가 GuardDuty finding 으로 직접 호출 (기존 경로).
+    복구:  사람이 오격리를 확인한 뒤 아래처럼 수동 호출 (멘토: 오격리 원상복구):
+      aws lambda invoke --function-name gochuchamchi-guardduty-isolation \\
+        --payload '{"action":"recover","instanceId":"i-xxxx"}' \\
+        --cli-binary-format raw-in-base64-out out.json --region ap-northeast-2 \\
+        --profile workload-admin
+    복구를 자동화하지 않는 이유: "정말 오탐인가"의 판단은 사람이 해야 한다.
+    자동 원복은 진짜 침해를 자동으로 풀어주는 역방향 위험을 만든다.
+    """
     logger.info("수신 이벤트: %s", json.dumps(event, ensure_ascii=False))
+
+    # ── 수동 복구 분기 ────────────────────────────────────────────────
+    if event.get("action") == "recover":
+        return recover_instance(event.get("instanceId", ""))
 
     detail = event.get("detail", {})
     finding_id = detail.get("id", "unknown")
@@ -109,12 +129,24 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return finish(result)
 
         # ── 6. 격리 실행: ENI 단위로 SG 전량 교체 ───────────────────
-        for eni_id in enis:
+        #     교체 전에 각 ENI의 원래 SG를 그 ENI 태그에 기록한다 — 복구의 유일한
+        #     근거다. 인스턴스 태그 하나에 몰아넣지 않는 이유: ENI가 여러 개면
+        #     JSON이 태그값 256자 한도를 넘을 수 있어서. ENI별로 나누면 각 값이 작다.
+        for ni in instance["NetworkInterfaces"]:
+            eni_id = ni["NetworkInterfaceId"]
+            original_sgs = [g["GroupId"] for g in ni.get("Groups", [])]
+            # 이미 검역 SG만 있는 ENI는 원본을 덮어쓰지 않는다(재실행 안전 —
+            # 5번에서 걸러지지만 ENI별 부분 격리 상태도 방어)
+            if original_sgs and original_sgs != [quarantine_sg]:
+                ec2.create_tags(
+                    Resources=[eni_id],
+                    Tags=[{"Key": PRE_QUARANTINE_TAG, "Value": ",".join(original_sgs)}],
+                )
             ec2.modify_network_interface_attribute(
                 NetworkInterfaceId=eni_id,
                 Groups=[quarantine_sg],
             )
-            logger.info("ENI %s → 검역 SG %s 교체 완료", eni_id, quarantine_sg)
+            logger.info("ENI %s → 검역 SG %s 교체 완료 (원본 %s 기록)", eni_id, quarantine_sg, original_sgs)
 
         # ── 7. 포렌식 태깅 ──────────────────────────────────────────
         ec2.create_tags(
@@ -143,6 +175,79 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         finish(result)
         # EventBridge 재시도가 동작하도록 예외를 다시 던진다
         raise
+
+
+def recover_instance(instance_id: str) -> dict[str, Any]:
+    """오격리된 인스턴스를 원래 SG로 되돌립니다(멘토: 오격리 원상복구).
+
+    각 ENI의 pre-quarantine 태그에 저장된 원본 SG를 읽어 복원하고, 격리
+    태그를 지운다. 태그가 없으면 복구할 근거가 없으므로 그 사실을 통보한다.
+    """
+    result: dict[str, Any] = {
+        "action": "recover",
+        "instanceId": instance_id,
+        "detail": "",
+    }
+
+    if not instance_id:
+        result["action"] = "failed"
+        result["detail"] = "instanceId 가 비어 있음 — {\"action\":\"recover\",\"instanceId\":\"i-...\"} 형식으로 호출"
+        return finish(result)
+
+    try:
+        instance = describe_instance(instance_id)
+        if instance is None:
+            result["action"] = "skipped"
+            result["detail"] = "인스턴스가 이미 없음 — 복구 불필요(일일 destroy 환경에선 다음 재구축이 정상 SG로 생성)"
+            return finish(result)
+
+        restored: list[str] = []
+        missing: list[str] = []
+        for ni in instance["NetworkInterfaces"]:
+            eni_id = ni["NetworkInterfaceId"]
+            tags = {t["Key"]: t["Value"] for t in ni.get("TagSet", [])}
+            original = tags.get(PRE_QUARANTINE_TAG)
+            if not original:
+                missing.append(eni_id)
+                continue
+            original_sgs = [s for s in original.split(",") if s]
+            ec2.modify_network_interface_attribute(
+                NetworkInterfaceId=eni_id,
+                Groups=original_sgs,
+            )
+            ec2.delete_tags(Resources=[eni_id], Tags=[{"Key": PRE_QUARANTINE_TAG}])
+            restored.append(f"{eni_id}→{original_sgs}")
+            logger.info("ENI %s 원본 SG %s 복원", eni_id, original_sgs)
+
+        if not restored:
+            result["action"] = "skipped"
+            result["detail"] = (
+                f"복원할 pre-quarantine 태그가 없음(ENI: {missing}) — "
+                "이 인스턴스는 격리 이력이 없거나 이미 복구됨"
+            )
+            return finish(result)
+
+        # 인스턴스의 격리 포렌식 태그 제거
+        ec2.delete_tags(
+            Resources=[instance_id],
+            Tags=[
+                {"Key": "gochuchamchi:quarantined"},
+                {"Key": "gochuchamchi:quarantine-finding"},
+                {"Key": "gochuchamchi:quarantine-time"},
+            ],
+        )
+
+        result["action"] = "recovered"
+        result["detail"] = f"복원 {len(restored)}개 ENI: {restored}"
+        if missing:
+            result["detail"] += f" / 태그 없어 건너뜀: {missing}"
+        return finish(result)
+
+    except Exception as error:  # noqa: BLE001 — 복구 실패도 반드시 통보
+        logger.exception("복구 실행 실패")
+        result["action"] = "failed"
+        result["detail"] = f"{type(error).__name__}: {error}"
+        return finish(result)
 
 
 def extract_instance_id(detail: dict[str, Any]) -> str | None:

@@ -281,6 +281,31 @@ data "aws_iam_policy_document" "guardduty_isolation" {
     ]
   }
 
+  # --- 격리 시 각 ENI에 원본 SG를 기록(복구의 근거). ENI 태그 생성 허용 ---
+  statement {
+    sid    = "TagEniPreQuarantine"
+    effect = "Allow"
+
+    actions = ["ec2:CreateTags"]
+
+    resources = [
+      "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:network-interface/*",
+    ]
+  }
+
+  # --- 복구(오격리 원상복구): ENI 원본 SG 복원 후 격리 태그 제거 ---
+  statement {
+    sid    = "DeleteQuarantineTags"
+    effect = "Allow"
+
+    actions = ["ec2:DeleteTags"]
+
+    resources = [
+      "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*",
+      "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:network-interface/*",
+    ]
+  }
+
   # --- 결과 통보: 알림 허브로만 발행 가능 ---
   statement {
     sid    = "PublishResult"
