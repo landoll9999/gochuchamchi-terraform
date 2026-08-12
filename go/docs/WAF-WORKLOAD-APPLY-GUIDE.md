@@ -175,8 +175,8 @@ No changes. Your infrastructure matches the configuration.
 ## 7. 정상 접속 확인
 
 ```powershell
-curl.exe -I https://gochuchamchi.shop
-curl.exe -I https://www.gochuchamchi.shop
+curl.exe -I https://kycj.click
+curl.exe -I https://www.kycj.click
 ```
 
 정상적인 HTTP 응답이 와야 한다. CloudFront 변경 전파 중에는 잠시 기다린 뒤 다시
@@ -201,7 +201,7 @@ aws elbv2 describe-load-balancers `
 
 ```powershell
 curl.exe -k -I `
-  -H "Host: gochuchamchi.shop" `
+  -H "Host: kycj.click" `
   https://<ALB-DNS-NAME>
 ```
 
@@ -213,11 +213,11 @@ curl.exe -k -I `
 
 ## 9. WAF 차단 시험
 
-본인들이 관리하는 `gochuchamchi.shop`에 SQLi 형태의 쿼리스트링을 1회만 보내
+본인들이 관리하는 `kycj.click`에 SQLi 형태의 쿼리스트링을 1회만 보내
 AWS Managed SQLi 규칙이 차단하는지 확인한다.
 
 ```powershell
-curl.exe -I "https://gochuchamchi.shop/?q=%27%20OR%201%3D1--"
+curl.exe -I "https://kycj.click/?q=%27%20OR%201%3D1--"
 ```
 
 예상 결과는 `403`이다. 부하 테스트가 아니므로 반복 호출하지 않는다.

@@ -79,7 +79,7 @@ terraform plan
 ### 1. 정상 사용자 경로
 
 ```powershell
-curl.exe -I https://gochuchamchi.shop
+curl.exe -I https://kycj.click
 ```
 
 정상 응답이 와야 한다.
@@ -90,7 +90,7 @@ curl.exe -I https://gochuchamchi.shop
 CloudFront Origin 검증 헤더가 없으므로 앱 Target Group으로 전달되지 않아야 한다.
 
 ```powershell
-curl.exe -k -I -H "Host: gochuchamchi.shop" https://<ALB-DNS-NAME>
+curl.exe -k -I -H "Host: kycj.click" https://<ALB-DNS-NAME>
 ```
 
 `403` 또는 listener 기본 응답이 나오고 애플리케이션 `200`이 나오지 않아야 한다.
@@ -100,7 +100,7 @@ curl.exe -k -I -H "Host: gochuchamchi.shop" https://<ALB-DNS-NAME>
 우리 도메인에 SQLi 형태의 쿼리스트링을 1회만 보내 차단 여부를 확인한다.
 
 ```powershell
-curl.exe -I "https://gochuchamchi.shop/?q=%27%20OR%201%3D1--"
+curl.exe -I "https://kycj.click/?q=%27%20OR%201%3D1--"
 ```
 
 예상 결과는 WAF `403`이다. 반복 실행하지 않는다.
