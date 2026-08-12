@@ -79,14 +79,20 @@
 
 <h2>1. 요약</h2>
 
-<p>멘토링 지적 사항을 인프라에 반영하는 것이 이날의 목표였다. 결과적으로 <strong>세 가지</strong>를 했다 —
-보안 통제를 실제로 배포했고, 검토 끝에 <strong>도입하지 않기로 결정한 것</strong>이 하나 있으며,
+<p>멘토링 지적 사항을 인프라에 반영하는 것이 이날의 목표였다. 결과적으로 <strong>네 가지</strong>를 했다 —
+보안 통제를 <strong>배포</strong>했고, 검토 끝에 <strong>방향을 정한 것</strong>이 둘 있으며
+(AI 트리아지는 도입하지 않기로, 앱 토큰 전환은 드라이버 플러그인 방식으로),
 그 과정에서 <strong>운영을 위협하던 구조적 문제</strong>를 발견해 정리했다.</p>
 
+<p>배포한 통제는 데이터 계층(IAM 토큰 인증·DML 감사)부터 관제(타입 기반 선별·자동대응 확장),
+증적(RDS 감사 중앙화·ALB 로그), 관측(크로스 계정 OAM), 접근 경로(배스천 공인 IP 제거)까지
+네 축을 모두 건드렸다. 상태는 전부 <code>describe-*</code> 실물 조회로 확인했고,
+문서의 상태 표 기준 자체를 저장소가 아니라 실물로 바꿨다.</p>
+
 <div class="kpi">
-  <div><span class="n">11</span><span class="t">배포한 보안 통제</span></div>
+  <div><span class="n">12</span><span class="t">배포한 보안 통제</span></div>
   <div><span class="n">5</span><span class="t">발견·수정한 실제 장애</span></div>
-  <div><span class="n">1</span><span class="t">검토 후 미채택</span></div>
+  <div><span class="n">2</span><span class="t">검토 후 방향 결정</span></div>
   <div><span class="n">0</span><span class="t">미해결 위험</span></div>
 </div>
 
@@ -182,6 +188,50 @@ Firehose 알람은 Log 계정이 <strong>보내는</strong> 쪽, 워크로드가
 받는 쪽 권한이 없으면 <code>PutEvents</code>가 AccessDenied로 조용히 유실되고,
 반대로 워크로드만 먼저 열어두는 것은 무해하다. 처음엔 &ldquo;팀원 쪽 순서가 있을 수 있다&rdquo;고
 판단했으나 의존 방향을 코드로 확인하니 <strong>워크로드가 선행</strong>이었다.</p></div>
+
+<h3>2-7. 배스천 하드닝 — 공인 IP 제거</h3>
+
+<p>배스천이 퍼블릭 서브넷에 공인 IP를 달고 있었다. 조사해 보니 그 IP가 하던 일은
+<strong>하나뿐</strong>이었다 — SSM 접속을 위한 아웃바운드 인터넷.</p>
+
+<table>
+  <tr><th>확인한 것</th><th>결과</th></tr>
+  <tr><td>SG 인바운드</td><td>규칙 <strong>0건</strong> — 공인 IP가 있어도 붙을 수 있는 게 없었다</td></tr>
+  <tr><td>EKS API 허용 CIDR</td><td>관리자 IP 2개뿐. 배스천 IP 없음</td></tr>
+  <tr><td><code>bastion_ip</code> output</td><td>런북 3곳에서만 참조. 리소스 의존 없음</td></tr>
+</table>
+
+<p>즉 인바운드 표면이 아니라 <strong>아웃바운드 경로</strong> 문제였고, 프라이빗 서브넷의
+NAT 인스턴스 경로로 대체 가능했다. 서브넷 변경은 인스턴스 교체를 부르므로 도달성을 실제로 확인했다.</p>
+
+<div class="flow">
+  <div class="lane-title">이전</div>
+  <div class="lane">
+    <span class="node bad">public-2a<br><small>공인 IP 3.38.212.33</small></span>
+    <span class="arrow">→</span><span class="node neutral">IGW</span>
+    <span class="arrow">→</span><span class="node">SSM</span>
+  </div>
+  <div class="lane-title">이후</div>
+  <div class="lane">
+    <span class="node good">private-2a<br><small>공인 IP 없음</small></span>
+    <span class="arrow">→</span><span class="node">NAT 인스턴스</span>
+    <span class="arrow">→</span><span class="node good">SSM · 15초 만에 Online</span>
+  </div>
+</div>
+
+<pre><code>SSM 등록    Online (agent 3.3.4624.0)
+실제 명령   AWS-RunShellScript → Success
+            aws-api:302                                  <span class="cmt"># AWS API 도달</span>
+            1.1.1.1 via 172.30.40.1 src 172.30.41.94      <span class="cmt"># NAT 경유 확인</span></code></pre>
+
+<p>에이전트 핑만 보지 않고 명령을 실제로 실행해 AWS API 도달과 라우팅까지 확인했다.
+IMDSv2 강제는 유지했다 — SSRF로 인스턴스 크리덴셜을 긁는 경로는 서브넷 위치와 무관하다.</p>
+
+<div class="callout warn"><strong>남긴 트레이드오프.</strong> 배스천 도달성이 NAT에 묶였다.
+배스천은 비상 진입 경로라 이건 실제 비용이다. 다만 <strong>EKS 노드가 이미 같은 NAT에 의존</strong>하므로
+NAT 장애 시점에는 클러스터가 이미 정상이 아니고, 배스천으로 들어가 할 수 있는 일도 제한적이다 —
+한계 손실이 작다고 판단했다. 이 의존까지 끊으려면 SSM 3종 엔드포인트를 켜면 되지만
+현재 코드는 7종 일괄 구조라 별도 변수가 필요하고 시간당 비용이 붙는다(가동 10시간/일 기준 월 $20 안팎).</p></div>
 
 <h2>3. 검토 후 채택하지 않은 것 — GuardDuty AI 트리아지</h2>
 
@@ -284,6 +334,8 @@ apply보다 <strong>늦게 커밋</strong>됐을 뿐이다. 표를 정정하고,
       <td><span class="badge done">적용</span></td></tr>
   <tr><td>전송 상태 감시</td><td>Log 계정 Firehose 알람 수신 권한 · 등급 렌더러</td>
       <td><span class="badge done">워크로드 완료</span></td></tr>
+  <tr><td>배스천</td><td>프라이빗 서브넷 이전 · 공인 IP 제거 (SSM 은 NAT 경유)</td>
+      <td><span class="badge done">적용</span></td></tr>
   <tr><td>AI 트리아지</td><td>구현 완료, 브랜치 보존</td>
       <td><span class="badge todo">미채택</span></td></tr>
   <tr><td>토큰 전환</td><td>앱이 15분 토큰을 발급받도록 변경</td>
@@ -307,12 +359,46 @@ SSH가 없는 이 환경에서 유일한 접속 감사 증적이고, OAM Link가
 
 <table>
   <tr><th>#</th><th>작업</th><th>담당·의존</th></tr>
-  <tr><td>1</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
-  <tr><td>2</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
-  <tr><td>3</td><td>차단 시연 시나리오 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
-  <tr><td>4</td><td>Log 계정 <code>go/log-archive</code> apply — Firehose 알람 · rds-audit Athena</td>
+  <tr><td>1</td><td>앱이 15분 IAM 토큰으로 붙도록 전환 → 구 계정 제거 <em>(방식 결정 완료 — 아래)</em></td><td>앱 저장소</td></tr>
+  <tr><td>2</td><td>Log 계정 <code>go/log-archive</code> apply — Firehose 알람 · rds-audit Athena</td>
       <td>Log 담당 · 워크로드 선행 완료</td></tr>
+  <tr><td>3</td><td>차단 시연 시나리오 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+  <tr><td>4</td><td>SSM 3종 엔드포인트로 배스천의 NAT 의존 제거</td><td>선택 · 월 $20 안팎</td></tr>
 </table>
+
+<h3>6-1. 앱 토큰 전환 — 방식 결정</h3>
+
+<p>인프라 쪽은 전부 준비돼 있다. 남은 것은 앱 저장소뿐이고, <strong>두 방식을 비교해 드라이버
+플러그인 쪽으로 정했다.</strong></p>
+
+<table>
+  <tr><th></th><th>앱 코드 방식</th><th>드라이버 플러그인 방식 <span class="badge done">채택</span></th></tr>
+  <tr><td>Java 코드</td><td>DataSource 커스터마이징 필요</td><td><strong>없음</strong></td></tr>
+  <tr><td>토큰 갱신</td><td><code>@Scheduled</code> + <code>setPassword()</code> + <code>maxLifetime</code> 튜닝</td>
+      <td><strong>드라이버가 처리</strong> (15분 유효 / 10분 캐시)</td></tr>
+  <tr><td>실패 모드</td><td>15분 뒤 새 커넥션에서 인증 실패 — 지연 발현이라 잡기 어렵다</td><td>해당 없음</td></tr>
+  <tr><td>변경 범위</td><td>코드 + 설정 + 의존성</td><td>의존성 1줄 + JDBC URL + 계정명</td></tr>
+</table>
+
+<p>앱이 MariaDB 드라이버(<code>jdbc:mariadb://</code>)를 쓰기 때문에 가능한 선택이다.
+Connector/J에 <code>credentialType=AWS-IAM</code>이 내장돼 있고 토큰 발급·캐시·갱신을 드라이버가 맡는다.
+자격증명은 AWS SDK provider 체인이 Pod Identity를 자동으로 집어간다.</p>
+
+<pre><code>build.gradle   implementation 'software.amazon.awssdk:rds'
+ConfigMap      DB_USER = gochuchamchi_app_iam
+               SPRING_DATASOURCE_URL ...?credentialType=AWS-IAM
+                 &amp;sslMode=verify-full
+                 &amp;serverSslCert=https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem
+Secret         DB_PASS / gochuchamchi-db-app 제거</code></pre>
+
+<p><code>sslMode</code>도 <code>trust</code> → <code>verify-full</code>로 올린다. 지금은 암호화는 되지만
+서버 인증서를 검증하지 않는다. 서버가 <code>require_secure_transport = 1</code>이라 SSL 자체는 어차피 강제된다.</p>
+
+<div class="callout warn"><strong>전환 시 주의 2가지.</strong>
+<strong>순서</strong> — <code>build.gradle</code>(드라이버 의존성)이 먼저 배포돼야 한다.
+드라이버가 <code>credentialType</code>을 모르는 상태에서 URL만 바뀌면 기동에 실패한다.
+<strong>검증</strong> — 전환 후 반드시 <strong>15분을 넘겨서</strong> 관찰한다.
+토큰 재발급 구간을 지나지 않으면 검증이 아니다.</p></div>
 
 <p>배스천은 진단해 본 결과 IMDSv2 강제 · 인바운드 0 · SSM 세션 로깅이 이미 적용돼 있고,
 남은 갭은 공용 서브넷의 공인 IP 하나다. 재구축 영향 검증 없이 손대지 않는 편이 안전하다.</p>
