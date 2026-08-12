@@ -5,3 +5,7 @@ crash.log
 *.pem
 tfplan*
 gochuchamchi-gitops/
+
+# archive_file이 apply마다 다시 만드는 Lambda 배포 패키지
+*.zip
+__pycache__/
