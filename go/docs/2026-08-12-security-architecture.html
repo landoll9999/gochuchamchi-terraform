@@ -69,7 +69,7 @@
 <header>
   <h1>보안 아키텍처 종합</h1>
   <div class="meta">작성일 2026-08-12 · gochuchamchi 3계정(workload 828885965304 / log 564186750363 / management 307223751140)
-  · 실제 배포 상태 확인 기준 · 대기 항목은 Log 계정·앱 저장소 선행 작업에 의존</div>
+  · 상태 표는 저장소가 아니라 <code>describe-*</code> 실물 조회 기준 · 남은 대기는 앱 저장소 한 건</div>
 </header>
 
 <h2>1. 개요 — 이 문서가 답하는 것</h2>
@@ -143,7 +143,7 @@ WAF를 건너뛰고 직접 때리는 경로</strong>였다. 8/12에 검증 헤�
     <span class="node">RDS</span><span class="arrow">→</span>
     <span class="node good">MariaDB 감사 플러그인<br><small>CONNECT · DDL · DCL <strong>+ QUERY_DML_NO_SELECT</strong></small></span><span class="arrow">→</span>
     <span class="node">CloudWatch Logs<br><small>/aws/rds/instance/&hellip;/audit</small></span><span class="arrow">→</span>
-    <span class="node neutral">Log 계정 중앙 보관<br><small>코드 완료 · apply 대기</small></span>
+    <span class="node good">Log 계정 중앙 보관<br><small>구독 필터 적용됨 · 불변 버킷</small></span>
   </div>
 </div>
 
@@ -238,7 +238,7 @@ aws lambda invoke --function-name gochuchamchi-guardduty-isolation \
     <span class="node">앱 로그</span>
     <span class="node">EKS 컨트롤플레인</span>
     <span class="node">WAF (us-east-1)</span>
-    <span class="node neutral">RDS 감사<br><small>대기 중</small></span>
+    <span class="node good">RDS 감사<br><small>적용됨</small></span>
     <span class="arrow">→</span>
     <span class="node good">Log Destination → Firehose<br><small>GZIP · 5분 버퍼</small></span><span class="arrow">→</span>
     <span class="node good">중앙 S3<br><small>KMS CMK · Object Lock COMPLIANCE</small></span><span class="arrow">→</span>
@@ -246,8 +246,8 @@ aws lambda invoke --function-name gochuchamchi-guardduty-isolation \
   </div>
   <div class="lane-title">별도 경로</div>
   <div class="lane">
-    <span class="node neutral">ALB 액세스 로그</span><span class="arrow">→</span>
-    <span class="node neutral">ALB 전용 버킷<br><small>SSE-S3 · 생성 대기</small></span>
+    <span class="node good">ALB 액세스 로그<br><small>enabled=true</small></span><span class="arrow">→</span>
+    <span class="node good">ALB 전용 버킷<br><small>SSE-S3 · Log 계정</small></span>
     <span class="node neutral">VPC Flow Logs · CloudTrail<br><small>중앙 버킷 직행</small></span>
   </div>
 </div>
@@ -275,18 +275,23 @@ aws lambda invoke --function-name gochuchamchi-guardduty-isolation \
       <td><span class="badge done">적용</span></td></tr>
   <tr><td>자동 대응</td><td>네트워크 격리 · 액세스키 무효화 · 이력 보존 · 오격리 복구 · 미복구 감시</td>
       <td><span class="badge done">적용</span></td></tr>
-  <tr><td>중앙 로그</td><td>RDS 감사 로그를 Log 계정으로 (코드 완료)</td>
-      <td><span class="badge todo">Log 계정 대기</span></td></tr>
-  <tr><td>앱 보안 로그</td><td>ALB 액세스 로그 · 앱 메트릭 필터 10 · 알람 7</td>
-      <td><span class="badge todo">Log 계정 대기</span></td></tr>
+  <tr><td>중앙 로그</td><td>RDS 감사 로그를 Log 계정 불변 버킷으로</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>앱 보안 로그</td><td>ALB 액세스 로그 · 앱 메트릭 필터 10 · 알람 5</td>
+      <td><span class="badge done">적용</span></td></tr>
   <tr><td>토큰 전환</td><td>앱이 15분 토큰을 발급받도록 변경</td>
       <td><span class="badge todo">앱 저장소</span></td></tr>
 </table>
 
-<div class="callout warn"><strong>대기 항목이 한 곳에 몰려 있다.</strong> Log 계정에서 <code>go/log-archive</code>를
-한 번 apply하면 중앙 로그와 앱 보안 로그 두 건이 동시에 풀린다.
-ALB 로그를 켜려면 대상 버킷이 먼저 있어야 하고(없는 상태로 workload를 apply하면 LB Controller가
-Ingress 재조정에 실패한다), RDS 감사 전송도 수신 Destination이 먼저 있어야 한다.</p></div>
+<div class="callout warn"><strong>정정 (2026-08-12 재확인).</strong> 이 표는 원래 중앙 로그와 앱 보안 로그를
+&ldquo;Log 계정 대기&rdquo;로 적고 있었다. <strong>사실이 아니었다.</strong> AWS 실물을 조회해 보니 Log 계정은
+<code>go/log-archive</code>를 이미 apply해 둔 상태였다 &mdash; 서울·버지니아 Destination 3개가 살아 있었고
+ALB 로그 버킷도 존재했다. 막혀 있던 쪽은 <strong>워크로드였다.</strong> 두 기능의 코드가 그날 아침
+daily-up이 돈 <em>뒤에</em> 커밋돼(09:47 배포 / 10:55·12:21 커밋) 인프라에 반영될 기회가 없었을 뿐이다.
+그 상태에서 apply하니 두 건 모두 즉시 붙었다.</p>
+
+<p>남은 교훈은 대기처를 잘못 지목했다는 것보다, <strong>&ldquo;코드에 있음&rdquo;을 &ldquo;배포됨&rdquo;으로 읽었다</strong>는
+데 있다. 이 문서의 상태 표는 저장소가 아니라 <code>describe-*</code> 조회 결과를 기준으로 유지한다.</p></div>
 
 <h2>7. 설계에서 반복된 판단</h2>
 <div class="grid2">
@@ -323,11 +328,11 @@ Ingress 재조정에 실패한다), RDS 감사 전송도 수신 Destination이 �
 <h2>8. 남은 작업</h2>
 <table>
   <tr><th>#</th><th>작업</th><th>담당·의존</th></tr>
-  <tr><td>1</td><td><code>go/log-archive</code> apply — ALB 버킷 + Athena 테이블 + rds-audit 수신부</td><td>Log 계정 담당</td></tr>
-  <tr><td>2</td><td>workload에서 앱 보안 로그(21개) + RDS 감사 구독 필터 apply</td><td>1 완료 후</td></tr>
-  <tr><td>3</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
-  <tr><td>4</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
-  <tr><td>5</td><td>차단 시연 시나리오 준비 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+  <tr><td>1</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
+  <tr><td>2</td><td>보안 대시보드 OAM Link apply — Log 담당이 Sink ARN 2개를 전달한 뒤</td><td>Log 계정 담당 선행</td></tr>
+  <tr><td>3</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
+  <tr><td>4</td><td>차단 시연 시나리오 준비 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+  <tr><td>5</td><td>작업 사본 일원화 — 비-git 사본을 은퇴시켰다. daily-up은 저장소 사본에서만 돌 것</td><td>완료</td></tr>
 </table>
 
 <div class="callout info"><strong>배스천 하드닝 진단 결과(4번 관련).</strong> 점검해보니 이미 상당히 단단하다 —
