@@ -84,10 +84,10 @@
 그 과정에서 <strong>운영을 위협하던 구조적 문제</strong>를 발견해 정리했다.</p>
 
 <div class="kpi">
-  <div><span class="n">9</span><span class="t">배포한 보안 통제</span></div>
-  <div><span class="n">4</span><span class="t">발견·수정한 실제 장애</span></div>
+  <div><span class="n">11</span><span class="t">배포한 보안 통제</span></div>
+  <div><span class="n">5</span><span class="t">발견·수정한 실제 장애</span></div>
   <div><span class="n">1</span><span class="t">검토 후 미채택</span></div>
-  <div><span class="n">1</span><span class="t">미해결 위험</span></div>
+  <div><span class="n">0</span><span class="t">미해결 위험</span></div>
 </div>
 
 <div class="callout info"><strong>이날 가장 값이 나간 산출물은 코드가 아니라 판단이다.</strong>
@@ -153,14 +153,35 @@ ALB 액세스 로그       → access_logs.s3.enabled=true / gochuchamchi-alb-ac
       <td>action 11종 + <code>none</code> 커버리지 확인</td></tr>
 </table>
 
-<h3>2-5. 팀 작업 병합·배포</h3>
-<p>같은 날 팀원이 올린 작업을 병합해 함께 배포했다. 겹치는 파일 3개가 있었으나
-변경 영역이 달라 충돌 없이 병합됐고, 병합 후 양쪽 기능 생존과 구문·<code>validate</code>를 확인했다.</p>
+<h3>2-5. 크로스 계정 관측 연결 (OAM)</h3>
+<p>Log 계정이 모니터링 계정이 되어 워크로드 메트릭을 자기 것처럼 조회한다.
+<strong>숫자 지표만</strong> 공유하고 로그 본문은 보내지 않는다 —
+증적(로그)은 이미 불변 S3 + Athena 경로로 가고 있어 중복하면 비용과 복잡도만 는다.</p>
+<pre><code>서울     AWS/ApplicationELB · Gochuchamchi/ApplicationSecurity
+버지니아  AWS/WAFV2
+공유 범위 AWS::CloudWatch::Metric  <span class="cmt"># 로그·트레이스는 제외</span></code></pre>
+<p>서울 Link가 공유하는 <code>Gochuchamchi/ApplicationSecurity</code>가 이날 배포한
+앱 보안 메트릭 필터의 네임스페이스라, 로그인 실패·5xx·권한 거부 신호가 Log 계정 대시보드로 흐른다.
+메트릭 필터는 매칭 로그가 실제로 발생해야 데이터포인트를 만들므로 초기에는 그래프가 비어 있을 수 있다.</p>
+
+<h3>2-6. 팀 작업 병합·배포</h3>
+<p>같은 날 팀원이 올린 작업을 세 차례에 걸쳐 병합해 함께 배포했다.
+겹치는 파일이 있었으나 변경 영역이 달라 충돌 없이 병합됐고,
+매 병합 후 양쪽 기능 생존과 구문·<code>validate</code>를 확인했다.</p>
 <ul>
-  <li>크로스 계정 보안 대시보드(Log 계정 측 + OAM Sink)</li>
+  <li>크로스 계정 보안 대시보드(Log 계정 측 Sink + 워크로드 측 Link)</li>
   <li>침해 대응 런북</li>
   <li>알림 등급화(P1~P4) 및 EKS 자동격리 보호</li>
+  <li>중앙 Firehose 전송 상태 알람 — 워크로드 이벤트 버스에 Log 계정 <code>PutEvents</code> 권한 개방
+      (<code>delivery-error</code> P2 / <code>delivery-delay</code>·<code>throttled-records</code> P3)</li>
+  <li>RDS 감사 로그 Athena 쿼리 — 이날 시작한 rds-audit 중앙화 위에 얹힌 작업</li>
 </ul>
+
+<div class="callout info"><strong>적용 순서를 뒤집을 뻔했다.</strong>
+Firehose 알람은 Log 계정이 <strong>보내는</strong> 쪽, 워크로드가 <strong>받는</strong> 쪽이다.
+받는 쪽 권한이 없으면 <code>PutEvents</code>가 AccessDenied로 조용히 유실되고,
+반대로 워크로드만 먼저 열어두는 것은 무해하다. 처음엔 &ldquo;팀원 쪽 순서가 있을 수 있다&rdquo;고
+판단했으나 의존 방향을 코드로 확인하니 <strong>워크로드가 선행</strong>이었다.</p></div>
 
 <h2>3. 검토 후 채택하지 않은 것 — GuardDuty AI 트리아지</h2>
 
@@ -257,6 +278,12 @@ apply보다 <strong>늦게 커밋</strong>됐을 뿐이다. 표를 정정하고,
       <td><span class="badge done">적용</span></td></tr>
   <tr><td>앱 보안 로그</td><td>ALB 액세스 로그 · 메트릭 필터 10 · 알람 5</td>
       <td><span class="badge done">적용</span></td></tr>
+  <tr><td>크로스 계정 관측</td><td>OAM Link 2개(서울·버지니아) — 메트릭만 Log 계정으로</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>세션 감사</td><td>SSM 세션 전사 로깅을 코드로 복원 — 삭제 위험 해소</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>전송 상태 감시</td><td>Log 계정 Firehose 알람 수신 권한 · 등급 렌더러</td>
+      <td><span class="badge done">워크로드 완료</span></td></tr>
   <tr><td>AI 트리아지</td><td>구현 완료, 브랜치 보존</td>
       <td><span class="badge todo">미채택</span></td></tr>
   <tr><td>토큰 전환</td><td>앱이 15분 토큰을 발급받도록 변경</td>
@@ -265,21 +292,26 @@ apply보다 <strong>늦게 커밋</strong>됐을 뿐이다. 표를 정정하고,
 
 <h2>6. 남은 작업</h2>
 
-<div class="callout danger"><strong>먼저 처리해야 할 위험.</strong>
-<code>account-baseline</code> state에 <code>aws_cloudwatch_log_group.ssm_sessions</code>와
-<code>aws_ssm_document.session_manager_prefs</code>가 남아 있는데
-<strong>어느 코드에도 선언이 없다</strong>(전 스택 grep 0건, git 이력 0건).
-이대로 apply하면 <strong>SSM 세션 로깅이 삭제</strong>된다 — SSH가 없는 이 환경의 유일한 접속 감사 증적이다.
-OAM Link도 같은 스택이라 이걸 먼저 풀어야 한다.</p></div>
+<div class="callout info"><strong>당일 해소.</strong> 이 자리에는 원래 미해결 위험이 하나 있었다 —
+<code>account-baseline</code> state에 SSM 세션 로깅 리소스(<code>ssm_sessions</code> 로그 그룹,
+<code>session_manager_prefs</code> 문서)가 남아 있는데 <strong>어느 코드에도 선언이 없어</strong>
+(전 스택 grep 0건, git 이력 0건) 그 스택을 apply하는 순간 삭제될 상태였다.
+SSH가 없는 이 환경에서 유일한 접속 감사 증적이고, OAM Link가 같은 스택이라
+대시보드 연결을 하려다 로깅을 지울 뻔했다.</p>
+
+<p><code>terraform state show</code>로 읽은 실물을 그대로 코드로 옮겨 IaC 관리로 되돌렸다.
+<code>terraform state rm</code>은 쓰지 않았다 — 실물은 살아남아도 관리 대상 밖으로 밀려나
+같은 사고가 반복된다. 결과적으로 plan에서 destroy가 사라진 뒤 OAM Link를 적용했다.</p>
+<pre><code>이전   2 to add, 0 to change, <span class="cmt">2 to destroy</span>
+이후   2 to add, 0 to change, 0 to destroy</code></pre></div>
 
 <table>
   <tr><th>#</th><th>작업</th><th>담당·의존</th></tr>
-  <tr><td>1</td><td><span class="badge risk">위험</span> <code>account-baseline</code>의 SSM 세션 로깅 리소스를 코드로 복원</td>
-      <td>워크로드 · 즉시</td></tr>
-  <tr><td>2</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
-  <tr><td>3</td><td>보안 대시보드 OAM Link apply</td><td>Log 담당이 Sink ARN 2개 전달 후</td></tr>
-  <tr><td>4</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
-  <tr><td>5</td><td>차단 시연 시나리오 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+  <tr><td>1</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
+  <tr><td>2</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
+  <tr><td>3</td><td>차단 시연 시나리오 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+  <tr><td>4</td><td>Log 계정 <code>go/log-archive</code> apply — Firehose 알람 · rds-audit Athena</td>
+      <td>Log 담당 · 워크로드 선행 완료</td></tr>
 </table>
 
 <p>배스천은 진단해 본 결과 IMDSv2 강제 · 인바운드 0 · SSM 세션 로깅이 이미 적용돼 있고,

@@ -329,10 +329,13 @@ daily-up이 돈 <em>뒤에</em> 커밋돼(09:47 배포 / 10:55·12:21 커밋) �
 <table>
   <tr><th>#</th><th>작업</th><th>담당·의존</th></tr>
   <tr><td>1</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
-  <tr><td>2</td><td>보안 대시보드 OAM Link apply — Log 담당이 Sink ARN 2개를 전달한 뒤</td><td>Log 계정 담당 선행</td></tr>
-  <tr><td>3</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
-  <tr><td>4</td><td>차단 시연 시나리오 준비 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
-  <tr><td>5</td><td>작업 사본 일원화 — 비-git 사본을 은퇴시켰다. daily-up은 저장소 사본에서만 돌 것</td><td>완료</td></tr>
+  <tr><td>2</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
+  <tr><td>3</td><td>차단 시연 시나리오 준비 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+  <tr><td>4</td><td>Log 계정 <code>go/log-archive</code> apply — Firehose 알람 · rds-audit Athena</td>
+      <td>Log 담당 · 워크로드 선행 완료</td></tr>
+  <tr><td>5</td><td>보안 대시보드 OAM Link — 서울·버지니아 Sink 연결, 메트릭만 공유</td><td>완료</td></tr>
+  <tr><td>6</td><td>SSM 세션 로깅을 코드로 복원 — apply 시 삭제되던 상태를 해소</td><td>완료</td></tr>
+  <tr><td>7</td><td>작업 사본 일원화 — 비-git 사본을 은퇴시켰다. daily-up은 저장소 사본에서만 돌 것</td><td>완료</td></tr>
 </table>
 
 <div class="callout info"><strong>배스천 하드닝 진단 결과(4번 관련).</strong> 점검해보니 이미 상당히 단단하다 —
