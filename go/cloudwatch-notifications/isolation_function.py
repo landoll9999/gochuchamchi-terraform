@@ -1,6 +1,19 @@
-"""GuardDuty High 이상 finding에 대한 EC2 네트워크 자동 격리.
+"""GuardDuty High 이상 finding에 대한 자동 대응 (격리 / 자격증명 무효화 / 감사).
 
-동작:
+진입점은 셋이다:
+    - EventBridge(GuardDuty finding)  → 격리 또는 액세스키 비활성화
+    - 수동 invoke {"action":"recover"} → 오격리 원상복구
+    - EventBridge(rate 1 hour) {"action":"audit"} → 미복구 격리 재통보
+
+대응 유형이 대상에 따라 갈리는 이유:
+    EC2 대상이면 네트워크를 끊는 것(SG 교체)이 유효하지만, 자격증명(AccessKey)
+    대상이면 탈취된 키를 "어디서든" 쓸 수 있어 인스턴스를 가둬도 소용이 없다.
+    그래서 키 자체를 Inactive 로 무효화한다.
+
+모든 대응 결과는 DynamoDB 이력 테이블에 남는다 — SNS 통보는 흘러가면 사라지고
+인스턴스 포렌식 태그는 인스턴스가 destroy 되면 함께 사라지기 때문이다.
+
+동작(격리 경로):
     1. finding에서 대상 인스턴스 ID를 꺼낸다 (EC2 대상 finding만 격리 가능)
     2. 인스턴스가 속한 VPC에서 검역 SG를 찾고, 없으면 만든다
        (인바운드 0 + 기본 아웃바운드 규칙 제거 = 전면 차단)
@@ -22,7 +35,7 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import boto3
@@ -32,11 +45,27 @@ logger.setLevel(logging.INFO)
 
 ec2 = boto3.client("ec2")
 sns = boto3.client("sns")
+iam = boto3.client("iam")
+dynamodb = boto3.client("dynamodb")
 
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 MIN_SEVERITY = float(os.environ.get("MIN_SEVERITY", "7"))
 QUARANTINE_SG_NAME = os.environ.get("QUARANTINE_SG_NAME", "gochuchamchi-quarantine")
 ISOLATION_ENABLED = os.environ.get("ISOLATION_ENABLED", "true").lower() == "true"
+
+# --- (2026-08-12) 자동대응 확장 설정 -----------------------------------------
+HISTORY_TABLE = os.environ.get("HISTORY_TABLE", "")
+HISTORY_RETENTION_DAYS = int(os.environ.get("HISTORY_RETENTION_DAYS", "90"))
+CREDENTIAL_RESPONSE_ENABLED = (
+    os.environ.get("CREDENTIAL_RESPONSE_ENABLED", "true").lower() == "true"
+)
+PROTECTED_ACCESS_KEY_IDS = {
+    k.strip() for k in os.environ.get("PROTECTED_ACCESS_KEY_IDS", "").split(",") if k.strip()
+}
+QUARANTINE_STALE_HOURS = float(os.environ.get("QUARANTINE_STALE_HOURS", "12"))
+
+QUARANTINE_TAG = "gochuchamchi:quarantined"
+QUARANTINE_TIME_TAG = "gochuchamchi:quarantine-time"
 
 
 # 격리 직전 각 ENI의 원래 SG 목록을 이 태그에 저장한다. 복구는 이 값만 보고
@@ -63,6 +92,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if event.get("action") == "recover":
         return recover_instance(event.get("instanceId", ""))
 
+    # ── 미복구 격리 감시 분기 (EventBridge 스케줄이 매시간 호출) ──────
+    if event.get("action") == "audit":
+        return audit_stale_quarantines()
+
     detail = event.get("detail", {})
     finding_id = detail.get("id", "unknown")
     finding_type = detail.get("type", "unknown")
@@ -84,11 +117,19 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             result["detail"] = f"severity {severity} < 기준 {MIN_SEVERITY}"
             return finish(result)
 
+        # ── 1-b. 자격증명 대상 finding: 액세스키 비활성화로 대응 ─────
+        #     네트워크 격리(SG 교체)가 통하지 않는 유형이다. 탈취된 키는
+        #     "어디서든" 쓸 수 있어 인스턴스를 가둬도 소용이 없으므로,
+        #     자격증명 자체를 무효화하는 것이 유일한 실효 대응이다.
+        access_key_id, key_user, user_type = extract_access_key(detail)
+        if access_key_id:
+            return disable_access_key(access_key_id, key_user, user_type, result)
+
         instance_id = extract_instance_id(detail)
         if not instance_id:
-            # IAM/S3/EKS 컨트롤플레인 대상 finding — SG 격리로 대응 불가.
+            # S3/EKS 컨트롤플레인 등 — SG 격리로도 키 무효화로도 대응 불가.
             # 통보 경로(Rule 1)가 이미 Discord로 알렸으므로 여기선 기록만.
-            result["detail"] = "EC2 인스턴스 대상 finding이 아님 — 격리 생략, 수동 대응 필요"
+            result["detail"] = "EC2·자격증명 대상이 아닌 finding — 자동대응 불가, 수동 확인 필요"
             return finish(result)
 
         result["instanceId"] = instance_id
@@ -250,6 +291,133 @@ def recover_instance(instance_id: str) -> dict[str, Any]:
         return finish(result)
 
 
+def extract_access_key(detail: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """자격증명 대상 finding 에서 (액세스키ID, 사용자명, 주체유형)을 꺼냅니다.
+
+    GuardDuty 는 resource.accessKeyDetails 에 이 정보를 담는다. userType 이
+    IAMUser 일 때만 정적 액세스키라 비활성화가 가능하고, AssumedRole/Root 는
+    임시 자격증명이거나 루트라 이 API 로 끌 수 없다.
+    """
+    resource = detail.get("resource", {})
+    if resource.get("resourceType") != "AccessKey":
+        return None, None, None
+
+    details = resource.get("accessKeyDetails", {})
+    return (
+        details.get("accessKeyId"),
+        details.get("userName"),
+        details.get("userType"),
+    )
+
+
+def disable_access_key(
+    access_key_id: str,
+    user_name: str | None,
+    user_type: str | None,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """탈취 의심 액세스키를 Inactive 로 전환합니다(삭제하지 않음).
+
+    삭제가 아니라 비활성화인 이유: 즉시 효력이 있으면서 되돌릴 수 있고, 키
+    메타데이터가 남아 포렌식(언제 만들어졌고 마지막에 언제 쓰였나)이 가능하다.
+    """
+    result["accessKeyId"] = access_key_id
+    result["userName"] = user_name or "(unknown)"
+    result["userType"] = user_type or "(unknown)"
+
+    # 정적 키가 아니면 이 API 로 손댈 수 없다 — SSO/AssumedRole 이 여기 해당.
+    if user_type != "IAMUser" or not user_name:
+        result["action"] = "manual-required"
+        result["detail"] = (
+            f"userType={user_type} — 정적 IAM 액세스키가 아니라 자동 비활성화 불가. "
+            "임시 자격증명이면 원 주체(역할/SSO 세션) 차단이 필요하다."
+        )
+        return finish(result)
+
+    if access_key_id in PROTECTED_ACCESS_KEY_IDS:
+        result["action"] = "skipped"
+        result["detail"] = f"보호 목록(PROTECTED_ACCESS_KEY_IDS)에 있는 키 — 자동 비활성화 생략, 수동 판단 필요"
+        return finish(result)
+
+    if not CREDENTIAL_RESPONSE_ENABLED:
+        result["action"] = "dry-run"
+        result["detail"] = (
+            f"CREDENTIAL_RESPONSE_ENABLED=false — 실제였다면 {user_name} 의 "
+            f"{access_key_id} 를 Inactive 로 전환했음"
+        )
+        return finish(result)
+
+    try:
+        iam.update_access_key(
+            UserName=user_name,
+            AccessKeyId=access_key_id,
+            Status="Inactive",
+        )
+    except iam.exceptions.NoSuchEntityException:
+        result["action"] = "skipped"
+        result["detail"] = "키 또는 사용자가 이미 없음 — 대응 불필요"
+        return finish(result)
+
+    result["action"] = "key-disabled"
+    result["detail"] = f"IAM 사용자 {user_name} 의 액세스키 {access_key_id} 를 Inactive 로 전환"
+    logger.info("액세스키 %s 비활성화 완료 (user=%s)", access_key_id, user_name)
+    return finish(result)
+
+
+def audit_stale_quarantines() -> dict[str, Any]:
+    """격리된 채 오래 방치된 인스턴스를 찾아 재통보합니다.
+
+    격리는 서비스 중단을 동반하므로(노드가 NotReady 로 빠짐) 사람이 잊으면
+    안 된다. 매시간 깨어나 quarantine 태그의 격리 시각을 보고 임계를 넘긴
+    것만 알린다. 넘긴 게 없으면 조용히 끝난다 — 알림 피로를 만들지 않는다.
+    """
+    result: dict[str, Any] = {"action": "audit", "detail": ""}
+
+    try:
+        response = ec2.describe_instances(
+            Filters=[
+                {"Name": f"tag:{QUARANTINE_TAG}", "Values": ["true"]},
+                {"Name": "instance-state-name", "Values": ["running", "stopping", "stopped"]},
+            ]
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.exception("격리 인스턴스 조회 실패")
+        result["action"] = "failed"
+        result["detail"] = f"{type(error).__name__}: {error}"
+        return finish(result)
+
+    now = datetime.now(timezone.utc)
+    stale: list[str] = []
+
+    for reservation in response.get("Reservations", []):
+        for instance in reservation.get("Instances", []):
+            tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
+            quarantined_at = tags.get(QUARANTINE_TIME_TAG)
+            if not quarantined_at:
+                continue
+            try:
+                started = datetime.fromisoformat(quarantined_at)
+            except ValueError:
+                continue
+            hours = (now - started).total_seconds() / 3600
+            if hours >= QUARANTINE_STALE_HOURS:
+                stale.append(f"{instance['InstanceId']}({hours:.1f}h)")
+
+    if not stale:
+        # 정상 상태 — SNS 로 알리지 않는다(매시간 "이상 없음"은 소음이다)
+        result["action"] = "audit-clean"
+        result["detail"] = "임계를 넘긴 격리 인스턴스 없음"
+        logger.info("격리 감사: 이상 없음")
+        return result
+
+    result["action"] = "stale-quarantine"
+    result["detail"] = (
+        f"{QUARANTINE_STALE_HOURS}시간 이상 격리된 채 방치된 인스턴스 {len(stale)}대: "
+        f"{', '.join(stale)} — 조사 후 복구하거나(recover) 종료할 것"
+    )
+    return finish(result)
+
+
 def extract_instance_id(detail: dict[str, Any]) -> str | None:
     """finding의 resource 블록에서 EC2 인스턴스 ID를 꺼냅니다."""
     resource = detail.get("resource", {})
@@ -321,12 +489,52 @@ def ensure_quarantine_sg(vpc_id: str) -> str:
     return sg_id
 
 
+def record_history(result: dict[str, Any]) -> None:
+    """격리/복구/자격증명 대응 이력을 DynamoDB 에 적재합니다.
+
+    통보(SNS)는 흘러가면 사라진다. "언제 무엇을 왜 격리·복구했는가"가 남아야
+    사후 조사와 감사가 가능하다. 적재 실패가 대응 자체를 뒤집으면 안 되므로
+    예외는 로그만 남기고 삼킨다.
+    """
+    if not HISTORY_TABLE:
+        return
+
+    now = datetime.now(timezone.utc)
+    target = (
+        result.get("instanceId")
+        or result.get("accessKeyId")
+        or result.get("findingId")
+        or "unknown"
+    )
+
+    item: dict[str, Any] = {
+        "targetId": {"S": str(target)},
+        "eventTime": {"S": now.isoformat()},
+        "action": {"S": str(result.get("action", "none"))},
+        "detail": {"S": str(result.get("detail", ""))[:1024]},
+        # TTL: 보존 기간이 지나면 DynamoDB 가 자동 삭제 (비용 무한 증가 방지)
+        "expiresAt": {"N": str(int((now + timedelta(days=HISTORY_RETENTION_DAYS)).timestamp()))},
+    }
+    for key in ("findingId", "findingType", "severity", "instanceId", "accessKeyId", "userName"):
+        value = result.get(key)
+        if value is None:
+            continue
+        item[key] = {"N": str(value)} if key == "severity" else {"S": str(value)}
+
+    try:
+        dynamodb.put_item(TableName=HISTORY_TABLE, Item=item)
+    except Exception:  # noqa: BLE001 — 이력 적재 실패가 대응을 뒤집지 않는다
+        logger.exception("격리 이력 적재 실패 (대응 자체는 이미 수행됨)")
+
+
 def finish(result: dict[str, Any]) -> dict[str, Any]:
-    """결과를 SNS 허브로 발행합니다. Discord Lambda가 렌더링합니다.
+    """결과를 이력에 남기고 SNS 허브로 발행합니다. Discord Lambda가 렌더링합니다.
 
     lambda_function.py의 unwrap_events가 SNS Message를 EventBridge 이벤트로
     해석하므로, 같은 봉투 형식(source/detail-type/detail)으로 발행한다.
     """
+    record_history(result)
+
     synthetic_event = {
         "source": "gochuchamchi.isolation",
         "detail-type": "GuardDuty Isolation Result",

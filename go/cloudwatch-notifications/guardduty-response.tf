@@ -33,6 +33,128 @@ variable "isolation_enabled" {
   default     = true
 }
 
+# ---------------------------------------------------------------------------
+# (2026-08-12) 자동대응 3종 확장: 자격증명 대응 / 이력 보존 / 미복구 감시
+# ---------------------------------------------------------------------------
+
+variable "credential_response_enabled" {
+  description = "탈취 의심 IAM 액세스키 자동 비활성화 스위치. false면 통보만(드라이런)"
+  type        = bool
+  default     = true
+}
+
+variable "protected_access_key_ids" {
+  description = <<-EOT
+    자동 비활성화에서 제외할 액세스키 ID 목록(최후의 안전장치).
+    비워두는 것이 기본이다 — GuardDuty 자격증명 finding 은 "비정상 사용"을 탐지한
+    것이라, 정상 사용 중인 키는 애초에 탐지되지 않는다. 여기에 키를 넣으면 그 키가
+    실제로 탈취돼도 자동 대응이 안 되므로, 넣는 순간 그 위험을 감수하는 것이다.
+    (이 계정의 IAM 사용자: terra-user — SSO 가 아닌 정적 키 주체)
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "quarantine_stale_hours" {
+  description = "격리 후 이 시간이 지나도록 복구/정리되지 않으면 재통보 (일일 재구축 환경이라 24h 이상은 비정상)"
+  type        = number
+  default     = 12
+}
+
+variable "isolation_history_retention_days" {
+  description = "격리/복구 이력 보존 일수 (DynamoDB TTL). 지나면 자동 삭제되어 비용이 무한 증가하지 않음"
+  type        = number
+  default     = 90
+}
+
+# ============================================================
+# 격리/복구 이력 저장소 (2026-08-12)
+#
+# 왜 필요한가: 지금까지 격리 결과는 SNS 로 흘러가고 사라졌다(인스턴스 포렌식
+# 태그만 남는데, 인스턴스가 destroy 되면 그것도 없어진다). "언제 무엇을 왜
+# 격리/복구했는가"가 남지 않으면 사후 조사도, 제로트러스트가 요구하는 행위
+# 감사도 불가능하다.
+#
+# DynamoDB 를 쓰는 이유: 조회가 쉽고(인스턴스별/시간별), TTL 로 자동 정리되며,
+# on-demand 과금이라 이 정도 쓰기량(격리 이벤트 = 드묾)에서는 사실상 무료다.
+# S3 는 append 조회가 번거롭고 Athena 를 또 붙여야 한다.
+# ============================================================
+
+resource "aws_dynamodb_table" "isolation_history" {
+  name         = "gochuchamchi-isolation-history"
+  billing_mode = "PAY_PER_REQUEST"
+
+  # 파티션 키: 대상 리소스(인스턴스 ID 또는 액세스키 ID) — "이 자원에 무슨 일이
+  # 있었나"가 가장 흔한 조회다. 정렬 키로 시각을 두어 시간순 이력이 된다.
+  hash_key  = "targetId"
+  range_key = "eventTime"
+
+  attribute {
+    name = "targetId"
+    type = "S"
+  }
+
+  attribute {
+    name = "eventTime"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true # AWS 관리형 키 — 이력에 비밀값은 안 들어간다
+  }
+
+  tags = {
+    Name = "gochuchamchi-isolation-history"
+  }
+}
+
+# ============================================================
+# 미복구 격리 감시 — 매시간 점검 (2026-08-12)
+#
+# 격리해두고 사람이 잊으면 노드가 계속 죽어 있다. 매시간 Lambda 를 audit 모드로
+# 깨워 "격리된 지 quarantine_stale_hours 시간이 지난 인스턴스"를 다시 통보한다.
+# 별도 Lambda 를 만들지 않고 같은 함수의 action 분기를 쓰는 이유: 격리/복구/감사가
+# 같은 태그·같은 이력 테이블을 다루므로 로직이 한 곳에 있는 편이 어긋나지 않는다.
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "quarantine_audit" {
+  name                = "gochuchamchi-quarantine-audit"
+  description         = "격리 후 미복구 상태가 오래된 인스턴스를 주기적으로 재통보합니다."
+  schedule_expression = "rate(1 hour)"
+  state               = "ENABLED"
+
+  tags = {
+    Name = "gochuchamchi-quarantine-audit"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "quarantine_audit_lambda" {
+  rule      = aws_cloudwatch_event_rule.quarantine_audit.name
+  target_id = "InvokeIsolationAudit"
+  arn       = aws_lambda_function.guardduty_isolation.arn
+
+  # 같은 Lambda 를 audit 모드로 호출 (격리 경로와 구분되는 유일한 신호)
+  input = jsonencode({ action = "audit" })
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_audit" {
+  statement_id = "AllowExecutionFromEventBridgeAudit"
+
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.guardduty_isolation.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.quarantine_audit.arn
+}
+
 # ============================================================
 # Rule 1: 통보 — 타입 기반 필터 (2026-08-12 개편)
 #
@@ -306,6 +428,38 @@ data "aws_iam_policy_document" "guardduty_isolation" {
     ]
   }
 
+  # --- 자격증명 대응: 탈취 의심 액세스키 비활성화 ---
+  #     ListAccessKeys 는 대상 사용자 확인용. UpdateAccessKey 로 Inactive 전환한다.
+  #     삭제(DeleteAccessKey)는 주지 않는다 — 되돌릴 수 없고, 포렌식 증적도 사라진다.
+  #     비활성화는 즉시 효력이 있으면서 되돌릴 수 있다.
+  statement {
+    sid    = "DisableCompromisedAccessKey"
+    effect = "Allow"
+
+    actions = [
+      "iam:ListAccessKeys",
+      "iam:UpdateAccessKey",
+    ]
+
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/*"]
+  }
+
+  # --- 미복구 감시(audit 모드)가 격리 태그로 인스턴스를 찾는다 ---
+  #     ec2:DescribeInstances 는 위 DescribeTargets 에 이미 있음.
+
+  # --- 격리/복구/자격증명 대응 이력 적재 ---
+  statement {
+    sid    = "WriteIsolationHistory"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [aws_dynamodb_table.isolation_history.arn]
+  }
+
   # --- 결과 통보: 알림 허브로만 발행 가능 ---
   statement {
     sid    = "PublishResult"
@@ -344,6 +498,13 @@ resource "aws_lambda_function" "guardduty_isolation" {
       MIN_SEVERITY       = tostring(var.guardduty_isolate_min_severity)
       QUARANTINE_SG_NAME = "gochuchamchi-quarantine"
       ISOLATION_ENABLED  = var.isolation_enabled ? "true" : "false"
+
+      # (2026-08-12) 자동대응 확장
+      HISTORY_TABLE               = aws_dynamodb_table.isolation_history.name
+      HISTORY_RETENTION_DAYS      = tostring(var.isolation_history_retention_days)
+      CREDENTIAL_RESPONSE_ENABLED = var.credential_response_enabled ? "true" : "false"
+      PROTECTED_ACCESS_KEY_IDS    = join(",", var.protected_access_key_ids)
+      QUARANTINE_STALE_HOURS      = tostring(var.quarantine_stale_hours)
     }
   }
 
