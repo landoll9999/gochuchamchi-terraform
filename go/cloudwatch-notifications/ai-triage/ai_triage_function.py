@@ -327,8 +327,16 @@ def invoke_model(detail: dict[str, Any]) -> dict[str, Any]:
         model=MODEL_ID,
         max_tokens=MAX_TOKENS,
         # 고정 컨텍스트를 앞에 두고 마지막 블록에 캐시 breakpoint를 건다.
-        # finding별로 바뀌는 내용은 전부 user 턴 뒤쪽에 있으므로 프리픽스가
-        # 매번 동일 → 두 번째 호출부터 캐시 읽기(정가의 0.1배).
+        # finding별로 바뀌는 내용은 전부 user 턴 뒤쪽에 있으므로 프리픽스가 매번 동일.
+        #
+        # ※ ephemeral 기본 TTL은 5분이다. finding이 몇 시간씩 벌어져 오는
+        #   평상시에는 거의 매번 미스이고, 미스면 캐시 쓰기(정가 1.25배)를 문다
+        #   — 캐싱을 안 걸었을 때(1.0배)보다 오히려 25% 비싸다. 프리픽스가
+        #   4천 토큰 남짓이라 건당 +$0.005 수준이라 감수하는 것이고, 진짜
+        #   효과는 finding이 쏟아질 때(= 일일 상한을 태우는 바로 그 상황)
+        #   5분 안에 2건 이상이 걸리면서 나온다. 손익분기가 2건이기 때문.
+        #   며칠 뒤 CacheReadTokens 지표가 계속 0이면 버스트 보험으로 남길지
+        #   떼어낼지 판단할 것. ttl:"1h"는 쓰기가 2배라 더 나쁘다.
         system=[
             {"type": "text", "text": TRIAGE_RULES},
             {
@@ -562,8 +570,12 @@ def log_usage(response: Any) -> None:
     cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
     cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
 
+    # 캐시 토큰은 정가로 과금되지 않는다 — 읽기 0.1배, 쓰기 1.25배.
+    # 셋을 그냥 더하면 캐시가 맞을 때 입력 비용을 최대 10배 부풀린다.
     cost = (
-        (usage.input_tokens + cache_read + cache_write) / 1_000_000 * PRICE_IN_PER_MTOK
+        (usage.input_tokens + cache_read * 0.1 + cache_write * 1.25)
+        / 1_000_000
+        * PRICE_IN_PER_MTOK
         + usage.output_tokens / 1_000_000 * PRICE_OUT_PER_MTOK
     )
 
