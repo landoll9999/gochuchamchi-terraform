@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>보안 아키텍처 종합 — 2026-08-12</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  p { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .node small { font-weight: 500; color: var(--sub); }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>보안 아키텍처 종합</h1>
+  <div class="meta">작성일 2026-08-12 · gochuchamchi 3계정(workload 828885965304 / log 564186750363 / management 307223751140)
+  · 실제 배포 상태 확인 기준 · 대기 항목은 Log 계정·앱 저장소 선행 작업에 의존</div>
+</header>
+
+<h2>1. 개요 — 이 문서가 답하는 것</h2>
+<p>요청이 들어오는 지점부터 데이터에 닿기까지 <strong>무엇이 검문하는가</strong>, 무슨 일이 있었는지
+<strong>어디에 남는가</strong>, 이상이 생기면 <strong>무엇이 자동으로 움직이는가</strong>. 세 질문에 대한 현재 구조를 정리한다.</p>
+<p>2026-08-12 작업으로 제로트러스트의 두 축이 데이터 계층에서 모두 채워졌다 —
+<strong>승인</strong>(누가 들어올 수 있는가)은 8/4에 구축돼 있었고, 이번에 <strong>감시</strong>(들어와서 무엇을 했는가)를 붙였다.
+멘토링에서 지적된 "접근통제에 행위 감시를 더하면 완성도가 오른다"가 이 부분이다.</p>
+
+<div class="callout info"><strong>이 문서의 범위.</strong> 엣지(WAF/CloudFront) → 데이터 계층(RDS) → 관제(탐지·대응) → 증적(중앙 로그)의
+보안 축만 다룬다. EKS·ArgoCD·CI 파이프라인 등 배포 구조는 <code>architecture.md</code>와 일자별 작업 기록을 참고한다.</p></div>
+
+<h2>2. 요청 경로와 검문소</h2>
+<p>외부 요청은 CloudFront와 WAF를 반드시 통과해야 애플리케이션에 닿는다. 문제는 <strong>ALB 주소를 알아낸 공격자가
+WAF를 건너뛰고 직접 때리는 경로</strong>였다. 8/12에 검증 헤더를 추가해 두 겹으로 막았다.</p>
+
+<div class="flow">
+  <div class="lane-title">정상 경로 — WAF를 경유해야만 앱에 도달</div>
+  <div class="lane">
+    <span class="node">사용자<br><small>kycj.click</small></span><span class="arrow">→</span>
+    <span class="node good">CloudFront<br><small>E1NNZIW6ZHJDT2 · 검증 헤더 주입</small></span><span class="arrow">→</span>
+    <span class="node good">WAF<br><small>us-east-1 · 규칙 4종</small></span><span class="arrow">→</span>
+    <span class="node good">ALB<br><small>listener: 헤더 일치해야 전달</small></span><span class="arrow">→</span>
+    <span class="node">EKS 앱 파드<br><small>private subnet</small></span>
+  </div>
+
+  <div class="lane-title">우회 시도 — ALB DNS 직접 호출</div>
+  <div class="lane">
+    <span class="node bad">공격자<br><small>ALB DNS 직접</small></span><span class="arrow">→</span>
+    <span class="node neutral">WAF 미경유</span><span class="arrow">→</span>
+    <span class="node bad">① SG 차단<br><small>CloudFront 대역만 허용</small></span><span class="arrow">→</span>
+    <span class="node bad">② 헤더 없음<br><small>listener 기본 응답으로 낙하</small></span>
+  </div>
+</div>
+
+<div class="callout info"><strong>왜 두 겹인가.</strong> 보안그룹(prefix list)만으로는 <em>"CloudFront 서비스에서 왔다"</em>까지만 증명된다 —
+다른 사람의 CloudFront 배포도 같은 대역이다. 이 배포만 아는 헤더
+<code>X-Gochuchamchi-Origin-Verify</code>(48자 난수)를 ALB listener 조건에서 검사해야
+<em>"우리 배포에서 왔다"</em>가 증명된다.</p></div>
+
+<h3>WAF 기본 규칙 4종 (실측 확인)</h3>
+<table>
+  <tr><th>규칙</th><th>역할</th></tr>
+  <tr><td><code>rate-limit-per-ip</code></td><td>IP당 요청 속도 제한 — 무차별 대입·스크래핑 완화</td></tr>
+  <tr><td><code>aws-managed-common</code></td><td>AWS 관리형 공통 규칙셋 (XSS, LFI 등 범용 패턴)</td></tr>
+  <tr><td><code>aws-managed-known-bad-inputs</code></td><td>알려진 악성 입력 패턴</td></tr>
+  <tr><td><code>aws-managed-sqli</code></td><td>SQL 인젝션 시그니처</td></tr>
+</table>
+<p>각 규칙의 차단 건수에 CloudWatch 알람 4종이 걸려 있고, us-east-1 알람은 EventBridge로 서울 알림 허브에 전달된다.</p>
+
+<h2>3. 데이터 계층 제로트러스트 — 승인과 감시</h2>
+
+<div class="flow">
+  <div class="lane-title">승인 — 누가 들어올 수 있는가 (8/4 구축, 8/12 토큰 계정 추가)</div>
+  <div class="lane">
+    <span class="node">앱 파드<br><small>Pod Identity</small></span><span class="arrow">→ TLS 강제 →</span>
+    <span class="node good">gochuchamchi_app<br><small>DML만 · DDL/DCL 불가 · REQUIRE SSL</small></span><span class="arrow">→</span>
+    <span class="node">RDS MariaDB<br><small>database subnet</small></span>
+  </div>
+  <div class="lane">
+    <span class="node neutral">배스천<br><small>SSM 전용 · 인바운드 0 · IMDSv2</small></span><span class="arrow">→ 런타임 생성·주입 →</span>
+    <span class="node good">Secrets Manager + K8s Secret<br><small>tfstate 미경유</small></span>
+  </div>
+  <div class="lane">
+    <span class="node new" style="background:var(--accent-soft);border-color:var(--accent)">gochuchamchi_app_iam
+      <br><small>IAM 토큰 인증 · 15분 · 앱 전환 대기</small></span>
+  </div>
+
+  <div class="lane-title">감시 — 들어와서 무엇을 했는가 (8/12 추가)</div>
+  <div class="lane">
+    <span class="node">RDS</span><span class="arrow">→</span>
+    <span class="node good">MariaDB 감사 플러그인<br><small>CONNECT · DDL · DCL <strong>+ QUERY_DML_NO_SELECT</strong></small></span><span class="arrow">→</span>
+    <span class="node">CloudWatch Logs<br><small>/aws/rds/instance/&hellip;/audit</small></span><span class="arrow">→</span>
+    <span class="node neutral">Log 계정 중앙 보관<br><small>코드 완료 · apply 대기</small></span>
+  </div>
+</div>
+
+<div class="callout danger"><strong>감시 축을 켜자마자 실제 장애가 드러났다.</strong> 쓰기 쿼리 기록을 추가한 직후,
+앱이 존재하지 않는 테이블 <code>user_behavior_logs</code>에 INSERT하다 에러 1146으로 실패하는 것이 보였다 —
+로그 400건 중 358건이 이 실패였다. 앱이 예외를 삼키고 200을 반환해 화면상 정상이라
+<strong>행동 로그 기능이 통째로 죽은 채 운영되고 있었다.</strong> 원인은 <code>schema.sql</code>과 spring 원본의 동기화 누락이었고,
+대조 과정에서 <code>audit_logs</code>도 함께 빠져 있는 것을 확인해 둘 다 복원했다.
+재발 방지로 CI 동기화 검사를 추가했다(<code>go/scripts/verify-schema-sync.ps1</code>).</p></div>
+
+<div class="grid2">
+  <div class="card">
+    <h4>승인 — 비밀번호가 어디에도 남지 않는다</h4>
+    <ul>
+      <li>앱 계정 자격증명은 배스천 런타임에서 생성 → Secrets Manager → K8s Secret 직접 주입</li>
+      <li>terraform state 미경유, 프로세스 인자(argv)로도 넘기지 않음</li>
+      <li>마스터 시크릿은 AWS 관리형 7일 자동 회전</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>승인 — 토큰 인증 계정 (다음 단계)</h4>
+    <ul>
+      <li><code>AWSAuthenticationPlugin</code> 계정, 토큰 수명 15분(AWS 고정)</li>
+      <li>IAM 정책 리소스 ARN에 <strong>DB 유저명까지</strong> 명시 — 이 역할로는 이 유저만</li>
+      <li>앱(Spring) 전환은 별도 저장소 작업으로 남음</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn"><strong>정정 기록.</strong> <code>rds.tf</code>와 8/4 문서 2곳에
+"IAM DB 인증은 MariaDB 미지원이라 제외"라고 적혀 있었으나 <strong>사실이 아니다.</strong>
+AWS API로 우리 엔진·버전·클래스를 직접 조회해 확인했다 —
+<code>SupportsIAMDatabaseAuthentication = true</code>(mariadb 10.11.18 / db.t3.small, 동일 조건 mysql과 차이 없음).
+Aurora가 MySQL/PostgreSQL만 지원하는 것과 혼동한 것으로 보인다. 잘못된 근거로 배제돼 있었으므로 활성화하고 문서를 정정했다.</p></div>
+
+<h2>4. 탐지에서 대응까지</h2>
+<p>관제의 핵심은 <strong>무엇을 올릴지 고르는 일</strong>이다. 심각도 숫자만으로 거르면 루트 계정 사용 같은
+저심각도 신호를 놓치고, 포트 스캔 같은 배경소음은 그대로 통과한다. 8/12에 타입 기반 필터로 전환했다.</p>
+
+<div class="flow">
+  <div class="lane-title">탐지 → 선별 → 통보</div>
+  <div class="lane">
+    <span class="node">GuardDuty finding</span>
+    <span class="node">CloudTrail<br><small>IAM · 루트 · 로그인 실패</small></span><span class="arrow">→</span>
+    <span class="node good">EventBridge 타입 필터<br><small>항상: 루트·자격증명·유출·백도어 / 제외: 스캔·무차별대입</small></span><span class="arrow">→</span>
+    <span class="node">SNS 알림 허브<br><small>Discord + 이메일</small></span>
+  </div>
+
+  <div class="lane-title">대응 — 대상에 따라 갈라짐 (severity ≥ 7)</div>
+  <div class="lane">
+    <span class="node good">자동 대응 Lambda<br><small>드라이런 스위치 보유</small></span><span class="arrow">→</span>
+    <span class="node">EC2 대상 → 네트워크 격리<br><small>ENI의 SG를 검역 SG로 교체 · 포렌식 태깅</small></span>
+  </div>
+  <div class="lane">
+    <span class="arrow" style="visibility:hidden">→</span>
+    <span class="node">자격증명 대상 → 키 무효화<br><small>액세스키 Inactive · 삭제하지 않음</small></span>
+  </div>
+
+  <div class="lane-title">사후 — 이력·복구·감시</div>
+  <div class="lane">
+    <span class="node neutral">DynamoDB 이력<br><small>언제·무엇을·왜 · TTL 90일</small></span>
+    <span class="node neutral">수동 복구<br><small>오격리 원상복구</small></span>
+    <span class="node neutral">미복구 감시<br><small>매시간 · 12h 초과 재통보</small></span>
+  </div>
+</div>
+
+<div class="callout info"><strong>왜 심각도가 아니라 타입인가 (실측 근거).</strong>
+현재 detector의 finding 3건이 전부 severity 2(Low)였고 그중 <code>Policy:IAMUser/RootCredentialUsage</code>(루트 사용)가 있었다.
+기존 기준은 severity ≥ 4라 <strong>가장 중요한 신호가 통보에서 누락</strong>되고 있었다.
+반대로 Medium 이상으로 올라오는 PortProbe·BruteForce는 공인 IP라면 항상 쏟아지는 배경소음이고,
+배스천은 SSH/RDP 인바운드가 0개라 무차별 대입은 성공 자체가 불가능하다.
+<code>aws events test-event-pattern</code>으로 6개 시나리오를 검증했다.</p></div>
+
+<div class="callout warn"><strong>복구를 자동화하지 않은 것은 의도다.</strong>
+"정말 오탐인가"의 판단은 사람이 해야 한다 — 자동 원복은 진짜 침해를 자동으로 풀어주는 역방향 위험이 된다.
+대신 격리 시점에 각 ENI의 원래 SG를 태그(<code>gochuchamchi:pre-quarantine-sgs</code>)에 기록해두어,
+사람이 판단한 뒤에는 한 번의 호출로 되돌릴 수 있게 했다.</p></div>
+
+<pre><code><span class="cmt"># 오격리 복구 (수동)</span>
+aws lambda invoke --function-name gochuchamchi-guardduty-isolation \
+  --payload '{"action":"recover","instanceId":"i-xxxx"}' \
+  --cli-binary-format raw-in-base64-out out.json \
+  --region ap-northeast-2 --profile workload-admin</code></pre>
+
+<h2>5. 증적은 다른 계정에 남는다</h2>
+<p>침해된 계정이 자기 흔적을 지울 수 있으면 그건 감사가 아니다. 로그는 workload를 떠나 Log 계정의
+불변 버킷에 쌓인다 — Object Lock COMPLIANCE라 workload 권한으로는 지울 수도 고칠 수도 없다.</p>
+
+<div class="flow">
+  <div class="lane-title">workload → log 계정 (구독 필터 경유)</div>
+  <div class="lane">
+    <span class="node">앱 로그</span>
+    <span class="node">EKS 컨트롤플레인</span>
+    <span class="node">WAF (us-east-1)</span>
+    <span class="node neutral">RDS 감사<br><small>대기 중</small></span>
+    <span class="arrow">→</span>
+    <span class="node good">Log Destination → Firehose<br><small>GZIP · 5분 버퍼</small></span><span class="arrow">→</span>
+    <span class="node good">중앙 S3<br><small>KMS CMK · Object Lock COMPLIANCE</small></span><span class="arrow">→</span>
+    <span class="node">Athena</span>
+  </div>
+  <div class="lane-title">별도 경로</div>
+  <div class="lane">
+    <span class="node neutral">ALB 액세스 로그</span><span class="arrow">→</span>
+    <span class="node neutral">ALB 전용 버킷<br><small>SSE-S3 · 생성 대기</small></span>
+    <span class="node neutral">VPC Flow Logs · CloudTrail<br><small>중앙 버킷 직행</small></span>
+  </div>
+</div>
+
+<div class="callout info"><strong>ALB 로그만 버킷이 분리된 이유.</strong> AWS 문서상 ALB 액세스 로그는
+<strong>SSE-S3만 지원</strong>해 KMS로 암호화된 중앙 버킷에 기록할 수 없다.
+중앙 버킷의 암호화를 낮추면 CloudTrail·VPC Flow까지 보호 수준이 함께 떨어지므로,
+버킷만 나누고 불변성(Object Lock COMPLIANCE + 버저닝)은 동일하게 유지한다.
+중앙집중의 본질은 "Log 계정으로 모으는 것"이지 "버킷 한 개"가 아니다.</p></div>
+
+<h2>6. 현재 상태</h2>
+<table>
+  <tr><th>영역</th><th>내용</th><th>상태</th></tr>
+  <tr><td>엣지</td><td>WAF 규칙 4종 · 차단 알람 4종 · Origin 검증 헤더 · CloudFront 전환</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>DB 승인</td><td>최소권한 계정 · TLS 이중 강제 · state 미경유 자격증명 · IAM 토큰 계정 추가</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>DB 감시</td><td>감사 이벤트에 <code>QUERY_DML_NO_SELECT</code> 추가</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>스키마</td><td>누락된 <code>audit_logs</code> · <code>user_behavior_logs</code> 복원 + CI 동기화 검사</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>IAM 감시</td><td>루트 사용 · IAM 변경 · 콘솔 로그인 실패 → 이메일/Discord</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>선별</td><td>GuardDuty 통보를 심각도 숫자 → 타입 기반으로 전환</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>자동 대응</td><td>네트워크 격리 · 액세스키 무효화 · 이력 보존 · 오격리 복구 · 미복구 감시</td>
+      <td><span class="badge done">적용</span></td></tr>
+  <tr><td>중앙 로그</td><td>RDS 감사 로그를 Log 계정으로 (코드 완료)</td>
+      <td><span class="badge todo">Log 계정 대기</span></td></tr>
+  <tr><td>앱 보안 로그</td><td>ALB 액세스 로그 · 앱 메트릭 필터 10 · 알람 7</td>
+      <td><span class="badge todo">Log 계정 대기</span></td></tr>
+  <tr><td>토큰 전환</td><td>앱이 15분 토큰을 발급받도록 변경</td>
+      <td><span class="badge todo">앱 저장소</span></td></tr>
+</table>
+
+<div class="callout warn"><strong>대기 항목이 한 곳에 몰려 있다.</strong> Log 계정에서 <code>go/log-archive</code>를
+한 번 apply하면 중앙 로그와 앱 보안 로그 두 건이 동시에 풀린다.
+ALB 로그를 켜려면 대상 버킷이 먼저 있어야 하고(없는 상태로 workload를 apply하면 LB Controller가
+Ingress 재조정에 실패한다), RDS 감사 전송도 수신 Destination이 먼저 있어야 한다.</p></div>
+
+<h2>7. 설계에서 반복된 판단</h2>
+<div class="grid2">
+  <div class="card">
+    <h4>증명의 층위를 구분한다</h4>
+    <ul>
+      <li>SG(prefix list)는 출처의 <em>범위</em>만 좁히고, 검증 헤더가 <em>신원</em>을 증명한다</li>
+      <li>같은 논리로 IAM 정책 리소스 ARN에 DB 유저명까지 박아 "이 역할로는 이 유저만" 되게 했다</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>기록은 관측 대상 바깥에 남긴다</h4>
+    <ul>
+      <li>감사 로그가 workload 안에만 있으면 침해 시 함께 사라진다</li>
+      <li>격리 이력도 인스턴스 태그에만 두면 일일 destroy 때 증발하므로 별도 저장소에 남긴다</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>되돌릴 수 있는 대응을 고른다</h4>
+    <ul>
+      <li>액세스키는 삭제가 아니라 비활성화 — IAM에 <code>DeleteAccessKey</code>를 주지 않았다</li>
+      <li>EC2는 종료가 아니라 네트워크만 차단 — EBS·메모리 포렌식이 가능하다</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>판단이 필요한 지점은 자동화하지 않는다</h4>
+    <ul>
+      <li>격리는 자동, 복구는 수동 — 오탐 여부는 사람이 판단한다</li>
+      <li>알림은 고른 것만 — 매시간 "이상 없음"은 보내지 않는다. 소음이 쌓이면 진짜 신호를 못 본다</li>
+    </ul>
+  </div>
+</div>
+
+<h2>8. 남은 작업</h2>
+<table>
+  <tr><th>#</th><th>작업</th><th>담당·의존</th></tr>
+  <tr><td>1</td><td><code>go/log-archive</code> apply — ALB 버킷 + Athena 테이블 + rds-audit 수신부</td><td>Log 계정 담당</td></tr>
+  <tr><td>2</td><td>workload에서 앱 보안 로그(21개) + RDS 감사 구독 필터 apply</td><td>1 완료 후</td></tr>
+  <tr><td>3</td><td>Spring이 15분 IAM 토큰을 발급받도록 전환 → 구 계정 제거</td><td>앱 저장소</td></tr>
+  <tr><td>4</td><td>배스천 공인 IP 제거 검토 (사설 서브넷 이전)</td><td>재구축 영향 검증 필요</td></tr>
+  <tr><td>5</td><td>차단 시연 시나리오 준비 — WAF 403 / DB 토큰 거부 / IAM 알림</td><td>발표</td></tr>
+</table>
+
+<div class="callout info"><strong>배스천 하드닝 진단 결과(4번 관련).</strong> 점검해보니 이미 상당히 단단하다 —
+IMDSv2 강제, SG 인바운드 규칙 0개(SSH 미개방, SSM 전용), AL2023, SSM 세션 로깅 활성
+(<code>/gochuchamchi/ssm-sessions</code>, 사람이 interactive 접속 시 기록).
+남은 실질 갭은 공용 서브넷 + 공인 IP 하나다. 사설 이전은 NAT 경로로 기술적으로 가능하나,
+<strong>인스턴스 교체를 유발하고 daily-up 자동화가 SendCommand로 배스천에 의존</strong>하므로
+NAT 경유 SSM 검증 없이 적용하면 다음 재구축이 통째로 깨질 수 있다. 별도 검증 후 진행할 것.</p></div>
+
+<footer>
+  2026-08-12 작성 · 실제 배포 상태를 AWS API로 확인해 기술함 ·
+  관련 커밋: <code>828c646</code>(daily-up 수정) · <code>b2bb7aa</code>(IAM 인증 정정·활성화, DB 감사 DML) ·
+  <code>1183632</code>(IAM 토큰 계정) · <code>a135a33</code>(스키마 복원) · <code>149d01d</code>(동기화 검사) ·
+  <code>6df8bfc</code>(IAM 활동 감시) · <code>55c06df</code>(RDS 감사 중앙화) · <code>046737c</code>(GuardDuty 타입 필터) ·
+  <code>a428a86</code>(오격리 복구) · <code>7c35c19</code>(자동대응 3종)
+</footer>
+
+</div>
+</body>
+</html>
