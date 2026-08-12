@@ -27,9 +27,23 @@ if ($sg -and $sg -ne "None") {
 Write-Host "검역 SG 없음 — 정상"
 
 Write-Host "`n══ [2/3] destroy 계획 요약 ══" -ForegroundColor Cyan
-terraform plan -destroy -no-color 2>&1 | Tee-Object -Variable planOut | Select-String "Plan:" | ForEach-Object { $_.Line }
+# 2>&1로 네이티브 stderr를 파이프에 섞으면 PS 5.1이 각 줄을 NativeCommandError로
+# 감싸고, 위의 $ErrorActionPreference="Stop" 때문에 plan이 성공해도 스크립트가 죽는다.
+# stdout만 변수로 받고 성패는 $LASTEXITCODE로 판정한다 (stderr는 콘솔로 그냥 흐름).
+$planOut = terraform plan -destroy -no-color
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "✖ plan -destroy 실패 — destroy로 진행하지 않습니다. 위 에러를 확인하세요." -ForegroundColor Red
+    exit 1
+}
+$planOut | Select-String "Plan:" | ForEach-Object { $_.Line }
+
 # 상시 계층 리소스가 섞였는지 키워드 검사 (섞였다면 역참조/state 오염 신호)
-$leak = $planOut | Select-String -Pattern "guardduty|cloudtrail|aws_config|security.?hub|log.archive|sns_topic" -CaseSensitive:$false
+# log.archive는 패턴에서 뺀다 — aws_cloudwatch_log_subscription_filter.cloudwatch_log_archive[*]
+# 는 이 스택의 정상 구성원이라 매일 밤 같이 지워지는 게 맞는데, 그걸 유출로 오탐해
+# destroy를 막아 버린다.
+$leak = $planOut | Select-String `
+    -Pattern "guardduty|cloudtrail|aws_config|security.?hub|sns_topic" `
+    -CaseSensitive:$false
 if ($leak) {
     Write-Host "✖ destroy 계획에 상시 계층 키워드가 보입니다 — 중단. 아래 항목 확인:" -ForegroundColor Red
     $leak | Select-Object -First 5 | ForEach-Object { Write-Host "   $($_.Line)" }
