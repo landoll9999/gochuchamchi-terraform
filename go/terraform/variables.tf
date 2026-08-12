@@ -20,9 +20,9 @@ variable "cluster_name" {
 }
 
 variable "domain_name" {
-  description = "Route53에 이미 등록된 gochuchamchi.shop 도메인"
+  description = "Route53에 이미 등록된 kycj.click 도메인"
   type        = string
-  default     = "gochuchamchi.shop"
+  default     = "kycj.click"
 }
 
 # (2026-08-04 백로그 B2) key_name 변수 제거 — 노드/NAT/배스천 전부 SSM 접속만 사용,
