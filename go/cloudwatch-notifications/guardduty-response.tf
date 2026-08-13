@@ -242,7 +242,13 @@ resource "aws_cloudwatch_event_rule" "guardduty_finding" {
   }
 }
 
+# AI 트리아지가 켜져 있으면 finding은 트리아지 Lambda로 가고, 이 SNS 직결은
+# 사라진다(triage.tf의 aws_cloudwatch_event_target.triage). 여기 남겨 두는 것은
+# **롤백 경로**다 — enable_triage=false 한 번으로 트리아지 도입 전 동작으로
+# 정확히 되돌아간다. 알림이 끊기는 구간이 없다.
 resource "aws_cloudwatch_event_target" "guardduty_sns" {
+  count = var.enable_triage ? 0 : 1
+
   rule      = aws_cloudwatch_event_rule.guardduty_finding.name
   target_id = "SendGuardDutyFindingToSnsHub"
   arn       = aws_sns_topic.alerts.arn

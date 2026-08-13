@@ -209,6 +209,11 @@ def route_event(event: dict[str, Any]) -> dict[str, Any]:
     """
     source = event.get("source", "")
 
+    if source == "gochuchamchi.triage":
+        return handle_triage_event(event)
+
+    # 트리아지가 켜져 있으면 finding은 위 경로로 들어온다. 이 분기는
+    # enable_triage=false 롤백 시(EventBridge → SNS 직결)를 위해 남는다.
     if source == "aws.guardduty":
         return handle_guardduty_event(event)
 
@@ -341,6 +346,118 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
     send_discord_message(get_discord_webhook_url(), discord_payload)
 
     return {"findingType": finding_type, "severity": severity, "incidentTier": incident_tier}
+
+
+def handle_triage_event(event: dict[str, Any]) -> dict[str, Any]:
+    """AI 트리아지를 거친 GuardDuty finding을 렌더링합니다.
+
+    색과 아이콘은 **정책 액션**이 정합니다(판정이 아니라). 받는 사람이 먼저
+    알아야 하는 것은 "이게 얼마나 급한가"이지 "모델이 뭐라 했나"가 아니기
+    때문입니다.
+
+    판정이 없을 때(Groq 장애·한도 초과 등)도 이 렌더러로 옵니다. 그 경우
+    "판정 출처"에 이유가 찍히므로, 판정 없이 온 알림을 "AI가 정상이라고 했다"로
+    오해하지 않습니다.
+    """
+    finding = event.get("finding", {})
+    verdict = event.get("verdict") or {}
+
+    finding_type = finding.get("type", "알 수 없는 finding")
+    severity = finding.get("severity", "-")
+    tier = event.get("tier", "-")
+    action = event.get("action", "-")
+    icon = event.get("icon", "❔")
+    label = event.get("label", action)
+
+    verdict_value = verdict.get("verdict")
+    if verdict_value:
+        source_text = f"모델 판정 ({verdict.get('model', '?')})"
+        if event.get("judged_from") == "cache":
+            source_text = f"이전 동일 finding 판정 재사용 ({verdict.get('model', '?')})"
+    else:
+        source_text = (
+            f"**판정 없음** — {verdict.get('unavailable_reason', '사유 미상')}\n"
+            "판정 없이 그대로 통보했습니다. 내용은 직접 확인하십시오."
+        )
+
+    fields = [
+        {"name": "Finding 유형", "value": f"`{trim_text(finding_type, 200)}`", "inline": False},
+        {"name": "등급 / Severity", "value": f"`{tier}` (severity `{severity}`)", "inline": True},
+        {
+            "name": "AI 판정",
+            "value": (
+                f"`{verdict_value or '없음'}`"
+                + (f" · 확신 {verdict.get('confidence', 0):.0%}" if verdict_value else "")
+            ),
+            "inline": True,
+        },
+        {"name": "위험도", "value": f"`{verdict.get('risk_score', '-')}` / 100", "inline": True},
+    ]
+
+    if verdict.get("reason"):
+        fields.append({"name": "판단", "value": trim_text(verdict["reason"]), "inline": False})
+    if verdict.get("evidence"):
+        fields.append({"name": "근거", "value": trim_text(verdict["evidence"]), "inline": False})
+    if verdict.get("recommended_action"):
+        fields.append({"name": "권장 조치", "value": trim_text(verdict["recommended_action"]), "inline": False})
+
+    # 강등은 반드시 밝힌다 — "모델은 오탐이라 했는데 왜 검토로 왔나"에 답할 수 있어야 한다.
+    if event.get("verdict_demoted"):
+        fields.append({
+            "name": "⚠️ 판정 강등됨",
+            "value": (
+                "모델은 FALSE_POSITIVE로 봤지만 확신이 기준(`triage_suppress_min_confidence`) "
+                "미만이라 UNCERTAIN으로 낮춰 통보했습니다."
+            ),
+            "inline": False,
+        })
+
+    if verdict.get("injection_suspected"):
+        fields.append({
+            "name": "🚨 프롬프트 인젝션 의심",
+            "value": (
+                "finding 값에 판정을 조작하려는 문자열이 있습니다. **그 자체가 침해 신호**이므로 "
+                "룰 내용과 별개로 다루십시오."
+            ),
+            "inline": False,
+        })
+
+    fields.extend([
+        {
+            "name": "대상 / 출발지",
+            "value": f"`{finding.get('resource', '-')}` ← `{finding.get('remote_ip') or '-'}`",
+            "inline": False,
+        },
+        {"name": "판정 출처", "value": trim_text(source_text), "inline": False},
+        {
+            "name": "원본 확인",
+            "value": f"[GuardDuty 콘솔]({event.get('console_url', '')}) · 발생 `{finding.get('count', '-')}`회",
+            "inline": False,
+        },
+    ])
+
+    discord_payload = {
+        "username": "Gochuchamchi GuardDuty",
+        "embeds": [
+            {
+                "title": f"{icon} [{label}] {trim_text(finding.get('title', finding_type), 180)}",
+                "description": trim_text(finding.get("description", ""), 500),
+                "color": event.get("color", 9807270),
+                "fields": fields,
+                "footer": {"text": "GuardDuty → EventBridge → AI 트리아지 → SNS → Discord"},
+                "timestamp": event.get("detected_at"),
+            }
+        ],
+    }
+
+    send_discord_message(get_discord_webhook_url(), discord_payload)
+
+    return {
+        "findingType": finding_type,
+        "tier": tier,
+        "verdict": verdict_value or "none",
+        "action": action,
+    }
 
 
 def handle_plaintext_event(event: dict[str, Any]) -> dict[str, Any]:
