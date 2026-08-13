@@ -106,8 +106,8 @@ module "eso_pod_identity" {
       actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
       resources = [
         data.aws_secretsmanager_secret.argocd_git_pat.arn,
-        # 앱 DB 시크릿도 나중에 ESO로 이관할 수 있게 미리 포함 (DB_SECRET_SETUP.md)
-        aws_secretsmanager_secret.app_db.arn,
+        # (2026-08-13) 앱 DB 시크릿을 뺐다 — IAM 토큰 전환으로 시크릿 자체가 없어졌다.
+        # ESO 로 이관할 대상이 아니라, 존재하지 않는 자격증명이 됐다.
       ]
     }
   ]
