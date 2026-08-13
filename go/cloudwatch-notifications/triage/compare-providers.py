@@ -79,11 +79,13 @@ def _load_sample():
     return module.SAMPLE_FINDING
 
 
-def _judge_with(provider, model, api_key, sample):
+def _judge_with(provider, model, api_key, sample, effort=None):
     """judge.py 를 해당 provider 설정으로 다시 읽어 한 번 태운다.
 
     judge.py 는 환경변수를 import 시점에 읽으므로, provider 를 바꾸려면
-    환경을 세팅한 뒤 reload 해야 한다.
+    환경을 세팅한 뒤 reload 해야 한다. TRIAGE_* 를 먼저 비우는 것은 앞선
+    provider 의 설정이 다음 provider 에 새는 것을 막기 위해서다 — 그래서
+    바꿔 볼 값은 인자로 받아 여기서 다시 넣는다.
     """
     for key in [k for k in os.environ if k.startswith("TRIAGE_")]:
         del os.environ[key]
@@ -91,6 +93,9 @@ def _judge_with(provider, model, api_key, sample):
     os.environ["TRIAGE_PROVIDER"] = provider
     if model:
         os.environ["TRIAGE_MODEL"] = model
+    if effort is not None:
+        # 빈 문자열이면 judge.py 가 파라미터를 아예 안 보낸다.
+        os.environ["TRIAGE_REASONING_EFFORT"] = effort
 
     import judge
     judge = importlib.reload(judge)
@@ -113,6 +118,17 @@ def main():
             name, _, model = pair.partition("=")
             requested[name.strip().lower()] = model.strip()
 
+    # 추론 강도를 바꿔 가며 지연을 재려면 이 값을 쓴다. 지정하지 않으면
+    # judge.py 기본값("low"). 빈 문자열로 주면 파라미터를 아예 안 보낸다.
+    effort = os.environ.get("COMPARE_REASONING_EFFORT")
+
+    # 지연은 한 번 재서는 알 수 없다. Lambda 타임아웃에 걸리는지는 평균이
+    # 아니라 **최댓값**이 정하므로 여러 번 돌려 최악을 본다.
+    try:
+        runs = max(1, int(os.environ.get("COMPARE_RUNS", "1")))
+    except ValueError:
+        runs = 1
+
     targets = [(p, env) for p, env in KEY_ENV.items() if os.environ.get(env, "").strip()]
 
     if not targets:
@@ -132,21 +148,41 @@ def main():
     rows = []
     for provider, env in targets:
         model_override = requested.get(provider)
-        print(f"\n  ── {provider}" + (f" / {model_override}" if model_override else ""))
+        label = f"\n  ── {provider}" + (f" / {model_override}" if model_override else "")
+        if effort is not None:
+            label += f"   (reasoning_effort={effort or '미전송'})"
+        print(label + (f"   x{runs}회" if runs > 1 else ""))
 
-        try:
-            verdict, model = _judge_with(
-                provider, model_override, os.environ[env].strip(), sample
-            )
-        except Exception as error:                      # noqa: BLE001 - 한 provider 실패가 비교 전체를 막으면 안 된다
-            print(f"     호출 자체가 실패했습니다: {type(error).__name__}: {error}")
+        verdict = model = None
+        latencies = []
+        failed = None
+
+        for attempt in range(runs):
+            try:
+                verdict, model = _judge_with(
+                    provider, model_override, os.environ[env].strip(), sample, effort
+                )
+            except Exception as error:                  # noqa: BLE001 - 한 provider 실패가 비교 전체를 막으면 안 된다
+                failed = f"{type(error).__name__}: {error}"
+                break
+
+            if verdict.get("latency_seconds") is not None:
+                latencies.append(verdict["latency_seconds"])
+            if runs > 1:
+                print(f"       {attempt + 1}회: {verdict.get('latency_seconds')}초"
+                      f"  {verdict.get('verdict') or '판정없음'}")
+
+        if failed:
+            print(f"     호출 자체가 실패했습니다: {failed}")
             rows.append((provider, "?", "호출실패", None, None, None, None, None))
             continue
 
+        # 타임아웃에 걸리는지는 최악이 정한다.
+        worst = max(latencies) if latencies else None
+
         if not verdict.get("verdict"):
             print(f"     판정 없음 — {verdict.get('unavailable_reason', '')[:160]}")
-            rows.append((provider, model, "판정없음", None, None, None,
-                         verdict.get("latency_seconds"), None))
+            rows.append((provider, model, "판정없음", None, None, None, worst, None))
             continue
 
         korean = bool(HANGUL.search(verdict.get("reason", "") + verdict.get("evidence", "")))
@@ -159,15 +195,24 @@ def main():
         print(f"     인젝션 감지: {'예' if verdict.get('injection_suspected') else '아니오'}")
         print(f"     토큰       : 입력 {verdict.get('input_tokens')} / 출력 {verdict.get('output_tokens')}"
               + (f" (그중 사고과정 {verdict['reasoning_tokens']})" if verdict.get("reasoning_tokens") else ""))
-        print(f"     응답 시간  : {verdict.get('latency_seconds')}초"
+        spread = ""
+        if len(latencies) > 1:
+            spread = f" (최소 {min(latencies)} / 최대 {worst}, {len(latencies)}회)"
+        print(f"     응답 시간  : {worst}초{spread}"
               + (f"   추정 비용: ${cost:.5f}/건" if cost is not None else ""))
 
+        # Lambda 는 이 시간이 지나면 판정을 포기한다. 여유가 얼마 없으면
+        # 평상시엔 되다가 finding 이 몰릴 때 먼저 무너진다.
+        timeout = float(os.environ.get("TRIAGE_TIMEOUT_SECONDS", "20"))
+        if worst is not None and worst > timeout * 0.6:
+            print(f"     ⚠️ 타임아웃({timeout:.0f}초)까지 여유가 {timeout - worst:.1f}초뿐입니다 — "
+                  "추론 강도를 내리거나 타임아웃을 올려야 합니다")
+
         rows.append((provider, model, verdict["verdict"], verdict["confidence"],
-                     korean, verdict.get("injection_suspected"),
-                     verdict.get("latency_seconds"), cost))
+                     korean, verdict.get("injection_suspected"), worst, cost))
 
     print("\n[3] 요약\n")
-    print(f"    {'provider':<10} {'모델':<24} {'판정':<15} {'확신':>5} {'한글':>4} {'초':>6} {'$/건':>9}")
+    print(f"    {'provider':<10} {'모델':<24} {'판정':<15} {'확신':>5} {'한글':>4} {'최대초':>6} {'$/건':>9}")
     print(f"    {'-'*10} {'-'*24} {'-'*15} {'-'*5} {'-'*4} {'-'*6} {'-'*9}")
     for provider, model, verdict, conf, korean, _inj, secs, cost in rows:
         print(f"    {provider:<10} {str(model)[:24]:<24} {verdict:<15} "
