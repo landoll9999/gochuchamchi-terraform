@@ -78,10 +78,10 @@ resource "null_resource" "wait_for_app_ready" {
     module.eks,
     kubernetes_ingress_v1.gochuchamchi_web,
     kubernetes_network_policy_v1.gochuchamchi_web_allow,
-    null_resource.provision_app_db_user,
-    null_resource.inject_git_pat,       # PAT가 먼저 들어가야 ArgoCD가 저장소에 붙는다
-    null_resource.sync_kubeconfig,      # 아래 kubectl들이 새 클러스터를 보게 한다 (ci-sync.tf)
-    null_resource.verify_ecr_has_image, # 이미지가 없으면 기다려도 안 뜬다 — 먼저 알린다
+    null_resource.provision_app_db_iam_user, # 앱이 토큰으로 붙을 DB 계정이 먼저 있어야 한다
+    null_resource.inject_git_pat,            # PAT가 먼저 들어가야 ArgoCD가 저장소에 붙는다
+    null_resource.sync_kubeconfig,           # 아래 kubectl들이 새 클러스터를 보게 한다 (ci-sync.tf)
+    null_resource.verify_ecr_has_image,      # 이미지가 없으면 기다려도 안 뜬다 — 먼저 알린다
     helm_release.eso_config,
   ]
 
@@ -189,9 +189,9 @@ resource "null_resource" "post_apply_smoke_test" {
     module.eks,
     kubernetes_ingress_v1.gochuchamchi_web,
     kubernetes_network_policy_v1.gochuchamchi_web_allow,
-    null_resource.provision_app_db_user, # gochuchamchi-db-app Secret 주입
-    helm_release.eso_config,             # ExternalSecret CR
-    null_resource.wait_for_app_ready,    # 앱이 뜬 뒤에 검사해야 결과가 의미 있다
+    null_resource.provision_app_db_iam_user, # 앱이 토큰으로 붙을 DB 계정
+    helm_release.eso_config,                 # ExternalSecret CR
+    null_resource.wait_for_app_ready,        # 앱이 뜬 뒤에 검사해야 결과가 의미 있다
   ]
 
   provisioner "local-exec" {
