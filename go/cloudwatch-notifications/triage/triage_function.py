@@ -419,18 +419,49 @@ def lambda_handler(event, context):  # noqa: ARG001
         metric("RiskScore", verdict.get("risk_score", 50), unit="None", Tier=tier),
     ])
 
-    # --- 4. 알림 -------------------------------------------------------------
+    # --- 4. 판정 기록 --------------------------------------------------------
+    # 통보 여부와 무관하게 **모든 finding의 판정을 한 줄로 남긴다.**
+    #
+    # 통보된 건의 판정 근거가 Discord에만 있으면, 메시지가 지워지거나 채널이
+    # 바뀌는 순간 "그때 AI가 왜 그렇게 판단했나"에 답할 수 없다. 사고 조사에서
+    # 그건 치명적이다. 로그 그룹은 30일 보존이고 Logs Insights로 질의된다.
+    #
+    # 접두사 triage_result 로 시작하는 JSON 한 줄 — 사람이 읽기보다 질의를
+    # 전제로 한 형식이다:
+    #   fields @timestamp, @message
+    #   | filter @message like /triage_result/
+    #   | parse @message 'triage_result *' as body
+    LOG.info("triage_result %s", json.dumps({
+        "finding_id": finding_id,
+        "finding_type": finding_type,
+        "severity": detail.get("severity"),
+        "tier": tier,
+        "resource": resource_key(detail),
+        "remote_ip": remote_ip(detail),
+        "action": decision["action"],
+        "notified": decision["notify"],
+        "judged_from": judged_from,
+        "verdict": verdict.get("verdict"),
+        "verdict_used": decision["verdict_used"],
+        "verdict_demoted": decision["verdict_demoted"],
+        "confidence": verdict.get("confidence"),
+        "risk_score": verdict.get("risk_score"),
+        "reason": verdict.get("reason"),
+        "evidence": verdict.get("evidence"),
+        "recommended_action": verdict.get("recommended_action"),
+        "injection_suspected": verdict.get("injection_suspected"),
+        "unavailable_reason": verdict.get("unavailable_reason"),
+        "model": verdict.get("model"),
+        "input_tokens": verdict.get("input_tokens"),
+        "output_tokens": verdict.get("output_tokens"),
+    }, ensure_ascii=False, default=str))
+
+    # --- 5. 알림 -------------------------------------------------------------
     if decision["notify"]:
         publish(detail, decision, verdict, judged_from)
         metrics.append(metric("Notified", 1, Action=decision["action"]))
     else:
-        # 억제된 것도 흔적은 남긴다. "모델이 무엇을 걸러냈나"를 나중에
-        # 되짚을 수 있어야 튜닝이 된다. finding 원본은 GuardDuty에 그대로 있다.
-        LOG.info(
-            "[%s] %s 로 알림 생략 (tier=%s verdict=%s conf=%.2f): %s",
-            finding_type, decision["action"], tier, decision["verdict_used"],
-            verdict.get("confidence", 0.0), verdict.get("reason", ""),
-        )
+        # 억제돼도 증거는 안 사라진다 — 위 로그와 GuardDuty 원본이 남는다.
         metrics.append(metric("Suppressed", 1, Tier=tier))
 
     put_metrics(metrics)
