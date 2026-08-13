@@ -49,10 +49,30 @@ if ($initCode -ne 0) {
 # ── [0.7/4] 코드 변경 게이트 ─────────────────────────────────────────────
 # 마지막으로 성공한 up의 커밋과 비교. 다르거나 워킹트리가 더럽으면 plan 요약 + 승인.
 $lastFile = Join-Path $PSScriptRoot ".last-up-commit"
-$head  = git -C $tfDir rev-parse HEAD 2>$null
-$dirty = git -C $tfDir status --porcelain 2>$null
+
+# stderr 를 리다이렉트하지 않는다 — 2>$null 도 마찬가지다(2026-08-13 실측).
+# PS 5.1 은 native 명령의 stderr 를 "리다이렉트할 때" ErrorRecord 로 감싸고,
+# $ErrorActionPreference="Stop" 과 만나면 그 자리에서 죽는다. ZIP 다운로드본처럼
+# git 저장소가 아닌 폴더에서 "fatal: not a git repository" 한 줄에 스크립트 전체가
+# 멈추던 것이 이 때문이다. 성패는 $LASTEXITCODE 로만 본다.
+$head  = git -C $tfDir rev-parse HEAD
+$gitOk = ($LASTEXITCODE -eq 0)
+$dirty = $null
+if ($gitOk) {
+    $dirty = git -C $tfDir status --porcelain
+    if ($LASTEXITCODE -ne 0) { $gitOk = $false }
+} else {
+    $head = $null
+}
+
 $codeChanged = $false
-if ($dirty) { $codeChanged = $true }
+if (-not $gitOk) {
+    # git 정보를 못 읽었다고 "변경 없음"으로 통과시키지 않는다. 게이트를 조용히
+    # 건너뛰는 쪽이 훨씬 위험하다 — 확인을 받고 간다.
+    Write-Host "   (git 정보를 읽지 못해 변경 여부를 판단할 수 없습니다 — plan 을 보고 갑니다)" -ForegroundColor DarkGray
+    $codeChanged = $true
+}
+elseif ($dirty) { $codeChanged = $true }
 elseif ($head -and (Test-Path $lastFile) -and ($head -ne (Get-Content $lastFile -ErrorAction SilentlyContinue))) { $codeChanged = $true }
 
 if ($codeChanged) {

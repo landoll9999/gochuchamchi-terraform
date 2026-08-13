@@ -15,9 +15,23 @@ $tfDir = Join-Path $PSScriptRoot "..\terraform"
 Set-Location $tfDir
 
 Write-Host "`n══ [1/3] 검역 SG 확인 — 오늘 자동 격리가 발동됐다면 여기 잡힘 ══" -ForegroundColor Cyan
+# stderr 를 리다이렉트하지 않는다 — 2>$null 도 마찬가지다(2026-08-13 실측).
+# PS 5.1 은 native 명령의 stderr 를 "리다이렉트할 때" 각 줄을 ErrorRecord 로 감싸고,
+# 위의 $ErrorActionPreference="Stop" 때문에 aws CLI 가 경고 한 줄만 뱉어도 스크립트가
+# 그 자리에서 죽는다. 리다이렉트를 빼면 stderr 는 콘솔로 그냥 흐르고 종료 코드만 남는다.
+# 아래 33행이 이미 같은 이유로 그렇게 하고 있었는데 여기만 빠져 있었다.
+#
+# 조회에 실패하면 destroy 로 넘어가지 않는다. 검역 SG 가 남아 있는지 확인하지 못한
+# 채로 지우면 VPC 삭제가 막혀 밤중에 반쯤 지워진 상태로 멈춘다.
 $sg = aws ec2 describe-security-groups `
     --filters "Name=group-name,Values=gochuchamchi-quarantine" `
-    --query "SecurityGroups[0].GroupId" --output text 2>$null
+    --query "SecurityGroups[0].GroupId" --output text
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "✖ 검역 SG 조회 실패 — destroy 로 진행하지 않습니다." -ForegroundColor Red
+    Write-Host "   자격증명 만료가 가장 흔한 원인입니다:"
+    Write-Host "     aws sso login --profile workload-admin"
+    exit 1
+}
 if ($sg -and $sg -ne "None") {
     Write-Host "⚠️ 검역 SG($sg)가 존재합니다 — 오늘 격리 이벤트가 있었다는 뜻." -ForegroundColor Yellow
     Write-Host "   Discord 격리 알림을 먼저 확인하세요. 조사할 게 없다면 아래로 정리 후 재실행:"
