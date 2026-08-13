@@ -58,6 +58,17 @@ resource "aws_guardduty_detector_feature" "ebs_malware" {
 # 런타임 모니터링 — 노드에 GuardDuty 에이전트(DaemonSet)를 깔아 프로세스/네트워크
 # 시스콜 수준까지 탐지. t3.small 2대에는 메모리 부담(파드당 ~64Mi+)이 있어 기본 OFF.
 # 켜려면 enable_guardduty_runtime_monitoring = true
+#
+# (2026-08-13) 자동대응 연동: 켜면 파드/컨테이너 수준 런타임 finding 이 추가되고,
+# 그 finding 은 kubernetesWorkloadDetails(네임스페이스/파드)를 담는다. 대응 경로는
+# severity 기반(guardduty_isolate_min_severity=7)이라 별도 배선 없이 자동으로 격리
+# Lambda 로 흐르고, EC2·키 대상이 아닌 파드 finding 은 침해 파드 K8s 격리
+# (cloudwatch-notifications/isolation_function.py 의 isolate_pod → deny-all
+# NetworkPolicy)로 처리된다. 즉 이 스위치가 #5 파드 격리 대응의 주 입력원이다 —
+# 켜야 그 경로가 실제로 도는 finding 을 받는다. EKS_AUDIT_LOGS 도 kube API 이상
+# finding 을 일부 내지만, 역쉘·크립토마이너 같은 런타임 침해는 이 에이전트라야 잡는다.
+# 켤 때 노드 메모리를 확인하고(여유 없으면 노드 타입 상향), 파드 격리 실행은
+# 여전히 workload 의 pod_response_enabled 가 게이트한다.
 resource "aws_guardduty_detector_feature" "runtime_monitoring" {
   count = var.enable_guardduty_runtime_monitoring ? 1 : 0
 

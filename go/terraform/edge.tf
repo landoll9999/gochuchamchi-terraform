@@ -118,6 +118,16 @@ locals {
   }
 }
 
+# ../persistent 가 소유한 자동대응 차단 IP set. 격리 Lambda 가 네트워크 기반
+# GuardDuty finding 의 공격자 IP 를 여기에 넣고, 아래 WAF 가 block rule 로 참조해
+# 엣지에서 막는다. 상시 계층 소유라 이 일일 WAF 가 매일 재생성돼도 차단 목록은
+# 유지된다(한 방향 참조: 일일 → 상시).
+data "aws_wafv2_ip_set" "guardduty_blocklist" {
+  provider = aws.us_east_1
+  name     = "gochuchamchi-guardduty-blocklist"
+  scope    = "CLOUDFRONT"
+}
+
 resource "aws_wafv2_web_acl" "edge" {
   provider = aws.us_east_1
 
@@ -217,6 +227,30 @@ resource "aws_wafv2_web_acl" "edge" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "gochuchamchi-login-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # 격리 Lambda 가 자동으로 채우는 공격자 IP 차단 목록(../persistent 소유).
+  # rate-limit(1,2) 다음, 관리형 룰(5,6,10,20,30) 앞에 둬서 이미 확인된 악성 IP 를
+  # 최우선으로 막는다. IP 추가·만료 해제는 Lambda 가 하고, 이 rule 은 참조만 한다.
+  rule {
+    name     = "guardduty-auto-blocklist"
+    priority = 3
+
+    action {
+      block {}
+    }
+
+    statement {
+      ip_set_reference_statement {
+        arn = data.aws_wafv2_ip_set.guardduty_blocklist.arn
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "gochuchamchi-guardduty-blocklist"
       sampled_requests_enabled   = true
     }
   }

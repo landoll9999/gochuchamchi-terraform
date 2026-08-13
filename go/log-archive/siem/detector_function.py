@@ -52,6 +52,7 @@
        always_alert 룰(권한 상승·감사 무력화)은 benign 판정이 와도 알린다.
 """
 
+import ipaddress
 import json
 import logging
 import os
@@ -114,6 +115,16 @@ JUDGE_DAILY_CALL_LIMIT = int(os.environ.get("JUDGE_DAILY_CALL_LIMIT", "300"))
 # 조용해지는 대신 모델 오판이 곧 미탐이 된다.
 JUDGE_BENIGN_MIN_CONFIDENCE = float(os.environ.get("JUDGE_BENIGN_MIN_CONFIDENCE", "0.7"))
 
+# --- (2026-08-13) 자동대응 연결 (크로스계정) --------------------------------
+# 이 파이프라인은 원래 '알리는 것'까지만 한다(파일 상단 docstring). 이 경로는 그
+# 경계를 넘으므로 문을 좁게 연다: RESPONSE_ENABLED 가 켜져 있고, 룰 severity 가
+# CRITICAL/HIGH 이며, 판정이 malicious 로 확신(>= RESPONSE_MIN_CONFIDENCE)일 때만,
+# 공인 source_ip 를 workload 계정 EventBridge 버스로 넘긴다. 실제 차단은 workload
+# 의 격리 Lambda 가 WAF 24h(자동 만료) 로 수행한다. 기본값 off(드라이런).
+RESPONSE_ENABLED = os.environ.get("RESPONSE_ENABLED", "false").lower() == "true"
+RESPONSE_EVENT_BUS_ARN = os.environ.get("RESPONSE_EVENT_BUS_ARN", "")
+RESPONSE_MIN_CONFIDENCE = float(os.environ.get("RESPONSE_MIN_CONFIDENCE", "0.8"))
+
 _BOTO_CONFIG = Config(retries={"max_attempts": 5, "mode": "standard"})
 
 athena = boto3.client("athena", region_name=REGION, config=_BOTO_CONFIG)
@@ -121,6 +132,7 @@ sns = boto3.client("sns", region_name=REGION, config=_BOTO_CONFIG)
 cloudwatch = boto3.client("cloudwatch", region_name=REGION, config=_BOTO_CONFIG)
 dynamodb = boto3.resource("dynamodb", region_name=REGION, config=_BOTO_CONFIG)
 secretsmanager = boto3.client("secretsmanager", region_name=REGION, config=_BOTO_CONFIG)
+events = boto3.client("events", region_name=REGION, config=_BOTO_CONFIG)
 
 TERMINAL_STATES = ("SUCCEEDED", "FAILED", "CANCELLED")
 
@@ -413,6 +425,72 @@ def publish_rule_hit(rule, columns, rows, total_rows, execution, execution_id, v
     )
 
 
+def _is_public_ip(value):
+    """공인 IPv4/IPv6 인지. 사설·루프백·링크로컬·예약 대역은 대응 대상에서 뺀다."""
+    try:
+        addr = ipaddress.ip_address(str(value))
+    except ValueError:
+        return False
+    return not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved)
+
+
+def dispatch_response(rule, columns, rows, verdict):
+    """urgent 판정을 workload 계정의 자동대응으로 넘긴다(크로스계정 EventBridge).
+
+    SIEM 은 알리는 것까지가 원칙이라 이 문은 좁게 연다 — 아래 넷이 전부 참일 때만
+    공인 source_ip 를 workload 로 보낸다. 실제 차단은 workload 격리 Lambda 가 WAF
+    24h(자동 만료)로 수행하므로, 오탐이어도 하루 뒤 스스로 풀린다. 전송 실패는
+    삼킨다: 알림은 이미 나갔고, 대응 전송 실패가 탐지 주기를 깨면 안 된다.
+    """
+    if not (RESPONSE_ENABLED and RESPONSE_EVENT_BUS_ARN):
+        return
+    if rule.get("severity") not in ("CRITICAL", "HIGH"):
+        return
+    if verdict.get("verdict") != "malicious":
+        return
+    if verdict.get("confidence", 0.0) < RESPONSE_MIN_CONFIDENCE:
+        return
+
+    try:
+        ip_index = columns.index("source_ip")
+    except ValueError:
+        return  # 대응할 IP 축이 없는 룰(예: 감사 무력화)은 넘기지 않는다
+
+    ips = sorted(
+        {
+            str(row[ip_index])
+            for row in rows
+            if ip_index < len(row) and row[ip_index] and _is_public_ip(row[ip_index])
+        }
+    )
+    if not ips:
+        return
+
+    try:
+        events.put_events(
+            Entries=[
+                {
+                    "Source": "gochuchamchi.siem",
+                    "DetailType": "SIEM Response Request",
+                    "EventBusName": RESPONSE_EVENT_BUS_ARN,
+                    "Detail": json.dumps(
+                        {
+                            "responseSource": "siem",
+                            "ruleId": rule["id"],
+                            "severity": rule["severity"],
+                            "verdict": verdict.get("verdict"),
+                            "confidence": verdict.get("confidence"),
+                            "sourceIps": ips,
+                        }
+                    ),
+                }
+            ]
+        )
+        LOG.info("자동대응 요청 전송: rule=%s ips=%s", rule["id"], ips)
+    except Exception:  # noqa: BLE001 — 대응 전송 실패가 탐지 주기를 깨면 안 된다
+        LOG.exception("자동대응 요청 전송 실패 (알림은 이미 나갔음)")
+
+
 def publish_operational(title, detail, hint="", subject="pipeline failure"):
     """탐지 파이프라인 자체의 고장. 이게 조용하면 SIEM이 있으나 마나다.
 
@@ -600,6 +678,8 @@ def lambda_handler(event, context):  # noqa: ARG001 - EventBridge 스케줄 페�
 
         if should_alert(rule, verdict):
             publish_rule_hit(rule, columns, new_rows, len(rows), execution, execution_id, verdict)
+            # 알림 뒤에 자동대응을 시도한다(문이 좁아 대부분 조용히 통과).
+            dispatch_response(rule, columns, new_rows, verdict)
         else:
             # 알림만 생략한다. 원본은 Athena에 그대로 있고, 지표에 남으므로
             # "모델이 무엇을 걸러냈나"를 나중에 되짚을 수 있다.
