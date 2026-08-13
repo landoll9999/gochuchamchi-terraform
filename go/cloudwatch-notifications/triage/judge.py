@@ -710,7 +710,15 @@ def judge(detail, api_key, strict_masking=False):
         # reasoning_effort 허용값은 모델마다 다르다 — gpt-oss는 low/medium/high,
         # qwen3.6은 none/default만 받는다. 모델을 갈아끼울 때 이 파라미터 하나로
         # 판정이 통째로 멈추면 안 되므로, 거부당하면 빼고 한 번만 다시 던진다.
-        if error.code == 400 and "reasoning_effort" in body and "reasoning_effort" in payload:
+        #
+        # ⚠️ 본문에 파라미터 이름이 있는지는 보지 않는다. Groq은 친절하게
+        #   "reasoning_effort"를 적어 주지만 Gemini는 무엇이 문제인지 알려주지
+        #   않는다("Request contains an invalid argument."). 이름으로 거르면
+        #   Gemini에서는 이 폴백이 영원히 안 걸린다(2026-08-13 실측:
+        #   reasoning_effort=none 이 400인데 재시도가 발동하지 않았다).
+        #   400의 원인으로 가장 흔한 후보이고 재시도 비용은 호출 한 번이므로,
+        #   보냈다면 일단 빼고 다시 던져 본다.
+        if error.code == 400 and "reasoning_effort" in payload:
             LOG.info("이 모델이 reasoning_effort='%s'를 거부했습니다. 빼고 재시도합니다.",
                      REASONING_EFFORT)
             payload.pop("reasoning_effort")
