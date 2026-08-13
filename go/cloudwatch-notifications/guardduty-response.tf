@@ -130,6 +130,40 @@ variable "securityhub_response_enabled" {
   default     = false
 }
 
+# ---------------------------------------------------------------------------
+# (2026-08-13) 추가 대응 4종 스위치 (전부 기본 드라이런 — 관찰 후 개별로 켠다)
+# ---------------------------------------------------------------------------
+
+variable "iam_subject_response_enabled" {
+  description = "탈취 의심 IAM 주체(역할/사용자)에 deny-all 정책을 자동 부착할지. 기본 false. 키 비활성화가 못 잡는 AssumedRole/SSO 세션 대응. 정상 역할에 붙으면 서비스가 마비되므로 protected_iam_principals 로 반드시 걸러야 한다."
+  type        = bool
+  default     = false
+}
+
+variable "protected_iam_principals" {
+  description = "IAM 주체 격리에서 제외할 역할/사용자 이름(파드 역할·CI 역할·운영자 등 절대 막으면 안 되는 것). iam_subject_response_enabled 를 켤 때 반드시 채운다."
+  type        = list(string)
+  default     = []
+}
+
+variable "s3_response_enabled" {
+  description = "S3 대상 finding 시 버킷에 PublicAccessBlock 을 자동 강제할지. 기본 false. 퍼블릭 차단은 보수적이라 상대적으로 안전하다."
+  type        = bool
+  default     = false
+}
+
+variable "sg_response_enabled" {
+  description = "격리 시 원본 SG 의 0.0.0.0/0 위험 인그레스(민감포트/광범위)를 자동 제거할지. 기본 false. 대상을 좁혔지만 정상 규칙 오제거 위험이 있으니 관찰 후 켠다."
+  type        = bool
+  default     = false
+}
+
+variable "snapshot_on_isolate_enabled" {
+  description = "EC2 격리 시 EBS 볼륨 포렌식 스냅샷을 자동으로 뜰지. 기본 false. 읽기 전용이라 안전하고 비용만 소폭 든다."
+  type        = bool
+  default     = false
+}
+
 # ============================================================
 # 격리/복구 이력 저장소 (2026-08-12)
 #
@@ -677,6 +711,60 @@ data "aws_iam_policy_document" "guardduty_isolation" {
     resources = ["*"]
   }
 
+  # --- ① IAM 주체 격리: 탈취 의심 역할/사용자에 deny-all 인라인 정책 부착/제거.
+  #     키 비활성화가 못 잡는 AssumedRole/SSO 세션 대응 ---
+  statement {
+    sid    = "QuarantineIamPrincipal"
+    effect = "Allow"
+    actions = [
+      "iam:PutRolePolicy",
+      "iam:PutUserPolicy",
+      "iam:DeleteRolePolicy",
+      "iam:DeleteUserPolicy",
+    ]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/*",
+    ]
+  }
+
+  # --- ② S3 버킷 퍼블릭 차단: 침해로 퍼블릭화된 버킷을 되돌린다 ---
+  statement {
+    sid       = "BlockS3Public"
+    effect    = "Allow"
+    actions   = ["s3:PutBucketPublicAccessBlock"]
+    resources = ["arn:aws:s3:::*"]
+  }
+
+  # --- ③ 위험 SG 규칙 제거 (DescribeSecurityGroups 는 DescribeTargets 에 이미 있음) ---
+  statement {
+    sid       = "RemoveRiskySgRules"
+    effect    = "Allow"
+    actions   = ["ec2:RevokeSecurityGroupIngress"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:security-group/*"]
+  }
+
+  # --- ④ 격리 시 EBS 포렌식 스냅샷 (읽기 전용 증거 보존) ---
+  statement {
+    sid       = "ForensicSnapshot"
+    effect    = "Allow"
+    actions   = ["ec2:CreateSnapshots"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "TagForensicSnapshot"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:snapshot/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values   = ["CreateSnapshots"]
+    }
+  }
+
   # --- 결과 통보: 알림 허브로만 발행 가능 ---
   statement {
     sid    = "PublishResult"
@@ -734,6 +822,13 @@ resource "aws_lambda_function" "guardduty_isolation" {
       # (2026-08-13) 침해 파드 K8s 격리 (배스천 SSM 경유)
       POD_RESPONSE_ENABLED = var.pod_response_enabled ? "true" : "false"
       BASTION_TAG_NAME     = "gochuchamchi-bastion"
+
+      # (2026-08-13) 추가 대응 4종 (IAM 주체 격리 / S3 퍼블릭 차단 / SG 규칙 제거 / EBS 스냅샷)
+      IAM_SUBJECT_RESPONSE_ENABLED = var.iam_subject_response_enabled ? "true" : "false"
+      PROTECTED_IAM_PRINCIPALS     = join(",", var.protected_iam_principals)
+      S3_RESPONSE_ENABLED          = var.s3_response_enabled ? "true" : "false"
+      SG_RESPONSE_ENABLED          = var.sg_response_enabled ? "true" : "false"
+      SNAPSHOT_ON_ISOLATE_ENABLED  = var.snapshot_on_isolate_enabled ? "true" : "false"
     }
   }
 

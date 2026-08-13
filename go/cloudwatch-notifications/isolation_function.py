@@ -50,6 +50,7 @@ ec2 = boto3.client("ec2")
 sns = boto3.client("sns")
 iam = boto3.client("iam")
 dynamodb = boto3.client("dynamodb")
+s3 = boto3.client("s3")
 
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 MIN_SEVERITY = float(os.environ.get("MIN_SEVERITY", "7"))
@@ -93,6 +94,21 @@ PROTECTED_IPS = {ip.strip() for ip in os.environ.get("PROTECTED_IPS", "").split(
 POD_RESPONSE_ENABLED = os.environ.get("POD_RESPONSE_ENABLED", "false").lower() == "true"
 BASTION_TAG_NAME = os.environ.get("BASTION_TAG_NAME", "gochuchamchi-bastion")
 
+# --- (2026-08-13) 추가 대응 4종 설정 (전부 기본 드라이런) --------------------
+# ① IAM 주체 격리: 키 비활성화가 못 잡는 AssumedRole/SSO 세션을 deny-all 정책으로.
+#    정상 역할에 붙으면 서비스가 마비되므로 보호 목록으로 반드시 걸러야 한다.
+IAM_SUBJECT_RESPONSE_ENABLED = os.environ.get("IAM_SUBJECT_RESPONSE_ENABLED", "false").lower() == "true"
+PROTECTED_IAM_PRINCIPALS = {
+    p.strip() for p in os.environ.get("PROTECTED_IAM_PRINCIPALS", "").split(",") if p.strip()
+}
+# ② S3 버킷 퍼블릭 차단  ③ 위험 SG 규칙 제거  ④ 격리 시 EBS 포렌식 스냅샷
+S3_RESPONSE_ENABLED = os.environ.get("S3_RESPONSE_ENABLED", "false").lower() == "true"
+SG_RESPONSE_ENABLED = os.environ.get("SG_RESPONSE_ENABLED", "false").lower() == "true"
+SNAPSHOT_ON_ISOLATE_ENABLED = os.environ.get("SNAPSHOT_ON_ISOLATE_ENABLED", "false").lower() == "true"
+
+# IAM 주체 격리로 붙이는 인라인 정책 이름(복구 때 이 이름으로 지운다).
+QUARANTINE_DENY_POLICY_NAME = "gochuchamchi-quarantine-deny"
+
 QUARANTINE_TAG = "gochuchamchi:quarantined"
 QUARANTINE_TIME_TAG = "gochuchamchi:quarantine-time"
 
@@ -124,6 +140,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     # ── 파드 격리 복구 분기 (라벨만 떼면 deny-all 셀렉터에서 빠져 정상화) ──
     if event.get("action") == "recover-pod":
         return recover_pod(event.get("namespace", ""), event.get("name", ""))
+
+    # ── IAM 주체 격리 복구 분기 (deny-all 인라인 정책 제거) ──────────────
+    if event.get("action") == "recover-iam":
+        return recover_iam_principal(event.get("kind", ""), event.get("name", ""))
 
     # ── 미복구 격리 감시 분기 (EventBridge 스케줄이 매시간 호출) ──────
     #     같은 스케줄에서 만료된 WAF 차단 IP 도 함께 걷어낸다(TTL 자동 해제).
@@ -193,9 +213,11 @@ def process_finding(detail: dict[str, Any]) -> dict[str, Any]:
             namespace, name, _ = extract_pod(detail)
             if namespace and name:
                 return isolate_pod(detail, result)
-            # S3/컨트롤플레인 등 — SG 격리로도 키 무효화로도 파드 격리로도 대응 불가.
-            # 통보 경로(Rule 1)가 이미 Discord로 알렸으므로 여기선 기록만.
-            result["detail"] = "EC2·자격증명·파드 대상이 아닌 finding — 자동대응 불가, 수동 확인 필요"
+            # S3 대상 finding 이면 버킷 퍼블릭 차단으로 대응한다(② S3 퍼블릭 차단).
+            if block_s3_public(detail, result):
+                return result
+            # 그 외(컨트롤플레인 등) — 자동대응 불가. 통보 경로가 이미 알렸으니 기록만.
+            result["detail"] = "EC2·자격증명·파드·S3 대상이 아닌 finding — 자동대응 불가, 수동 확인 필요"
             return finish(result)
 
         result["instanceId"] = instance_id
@@ -284,6 +306,10 @@ def process_finding(detail: dict[str, Any]) -> dict[str, Any]:
             f"ENI {len(enis)}개를 검역 SG {quarantine_sg}로 교체, "
             f"기존 SG: {sorted(current_sgs)}"
         )
+        # 부가 대응: 원본 SG 위험 규칙 제거(③) + EBS 포렌식 스냅샷(④).
+        # 둘 다 격리와 독립적이고, 실패해도 격리는 이미 끝났으므로 삼킨다.
+        remove_risky_sg_rules(instance, result)
+        snapshot_instance(instance, result)
         return finish(result)
 
     except Exception as error:  # noqa: BLE001 — 실패도 반드시 통보돼야 함
@@ -402,14 +428,10 @@ def disable_access_key(
     result["userName"] = user_name or "(unknown)"
     result["userType"] = user_type or "(unknown)"
 
-    # 정적 키가 아니면 이 API 로 손댈 수 없다 — SSO/AssumedRole 이 여기 해당.
+    # 정적 키가 아니면 이 API 로 손댈 수 없다(SSO/AssumedRole). 키 비활성화 대신
+    # IAM 주체에 deny-all 정책을 붙여 세션을 막는다(① IAM 주체 격리).
     if user_type != "IAMUser" or not user_name:
-        result["action"] = "manual-required"
-        result["detail"] = (
-            f"userType={user_type} — 정적 IAM 액세스키가 아니라 자동 비활성화 불가. "
-            "임시 자격증명이면 원 주체(역할/SSO 세션) 차단이 필요하다."
-        )
-        return finish(result)
+        return quarantine_iam_principal(user_name, user_type, result)
 
     if access_key_id in PROTECTED_ACCESS_KEY_IDS:
         result["action"] = "skipped"
@@ -1167,3 +1189,210 @@ def recover_pod(namespace: str, name: str) -> dict[str, Any]:
         result["action"] = "failed"
         result["detail"] = f"파드 복구 SSM 실패 (status={status}): {(err or out)[:400]}"
     return finish(result)
+
+
+# =============================================================================
+# 추가 대응 4종 (2026-08-13)
+#   ① IAM 주체 격리  ② S3 퍼블릭 차단  ③ 위험 SG 규칙 제거  ④ EBS 포렌식 스냅샷
+# =============================================================================
+
+
+def quarantine_iam_principal(user_name: str | None, user_type: str | None, result: dict[str, Any]) -> dict[str, Any]:
+    """① 탈취 의심 IAM 주체(역할/사용자)에 deny-all 인라인 정책을 부착한다.
+
+    액세스키 비활성화가 못 잡는 AssumedRole·SSO 세션까지 막는다 — 이 계정은 SSO라
+    finding 주체가 대개 역할이다. 정상 역할에 붙이면 그 역할의 모든 세션이
+    마비되므로 보호 목록·드라이런·복구를 반드시 통과시킨다.
+    """
+    # AssumedRole 은 userName 이 "역할명" 또는 "역할명/세션명"으로 온다. 역할명만 취한다.
+    principal = (user_name or "").split("/")[0]
+    if user_type == "AssumedRole" and principal:
+        target, kind = principal, "role"
+    elif user_type == "IAMUser" and user_name:
+        target, kind = user_name, "user"
+    else:
+        result["action"] = "manual-required"
+        result["detail"] = f"userType={user_type} — 격리할 IAM 주체를 특정할 수 없다(Root/연합 등). 수동 차단 필요."
+        return finish(result)
+
+    result["iamPrincipal"] = f"{kind}:{target}"
+
+    if target in PROTECTED_IAM_PRINCIPALS:
+        result["action"] = "skipped"
+        result["detail"] = f"보호 목록(PROTECTED_IAM_PRINCIPALS)의 주체 {target} — 자동 격리 생략, 수동 판단"
+        return finish(result)
+
+    if not IAM_SUBJECT_RESPONSE_ENABLED:
+        result["action"] = "dry-run"
+        result["detail"] = (
+            f"IAM_SUBJECT_RESPONSE_ENABLED=false — 실제였다면 {kind} {target} 에 deny-all 정책을 붙였음"
+        )
+        return finish(result)
+
+    deny_policy = json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {"Sid": "GochuchamchiQuarantineDenyAll", "Effect": "Deny", "Action": "*", "Resource": "*"}
+            ],
+        }
+    )
+    try:
+        if kind == "role":
+            iam.put_role_policy(RoleName=target, PolicyName=QUARANTINE_DENY_POLICY_NAME, PolicyDocument=deny_policy)
+        else:
+            iam.put_user_policy(UserName=target, PolicyName=QUARANTINE_DENY_POLICY_NAME, PolicyDocument=deny_policy)
+    except iam.exceptions.NoSuchEntityException:
+        result["action"] = "skipped"
+        result["detail"] = f"{kind} {target} 가 이미 없음"
+        return finish(result)
+
+    result["action"] = "iam-quarantined"
+    result["detail"] = (
+        f'{kind} {target} 에 deny-all 정책 부착 (복구: {{"action":"recover-iam","kind":"{kind}","name":"{target}"}})'
+    )
+    logger.info("IAM 주체 격리: %s %s", kind, target)
+    return finish(result)
+
+
+def recover_iam_principal(kind: str, name: str) -> dict[str, Any]:
+    """IAM 주체 격리 복구 — deny-all 인라인 정책을 제거한다."""
+    result: dict[str, Any] = {"action": "recover-iam", "iamPrincipal": f"{kind}:{name}", "detail": ""}
+    if kind not in ("role", "user") or not name:
+        result["action"] = "failed"
+        result["detail"] = '형식: {"action":"recover-iam","kind":"role|user","name":"<name>"}'
+        return finish(result)
+    try:
+        if kind == "role":
+            iam.delete_role_policy(RoleName=name, PolicyName=QUARANTINE_DENY_POLICY_NAME)
+        else:
+            iam.delete_user_policy(UserName=name, PolicyName=QUARANTINE_DENY_POLICY_NAME)
+    except iam.exceptions.NoSuchEntityException:
+        result["action"] = "skipped"
+        result["detail"] = "격리 정책이 이미 없음(이미 복구됐거나 격리된 적 없음)"
+        return finish(result)
+    result["action"] = "iam-recovered"
+    result["detail"] = f"{kind} {name} 의 deny-all 정책 제거 — 권한 정상화"
+    return finish(result)
+
+
+def block_s3_public(detail: dict[str, Any], result: dict[str, Any]) -> bool:
+    """② S3 대상 finding 의 버킷에 PublicAccessBlock 을 강제한다.
+
+    S3 대상이 아니면 False 를 돌려 호출부가 다음 분기로 넘어가게 한다. S3 대상이면
+    (드라이런 포함) 처리하고 True 를 돌린다.
+    """
+    buckets = detail.get("resource", {}).get("s3BucketDetails", [])
+    names = [b.get("name") for b in buckets if b.get("name")]
+    if not names:
+        return False
+    result["s3Buckets"] = names
+
+    if not S3_RESPONSE_ENABLED:
+        result["action"] = "dry-run"
+        result["detail"] = f"S3_RESPONSE_ENABLED=false — 실제였다면 {names} 에 PublicAccessBlock 을 강제했음"
+        finish(result)
+        return True
+
+    blocked = []
+    for name in names:
+        try:
+            s3.put_public_access_block(
+                Bucket=name,
+                PublicAccessBlockConfiguration={
+                    "BlockPublicAcls": True,
+                    "IgnorePublicAcls": True,
+                    "BlockPublicPolicy": True,
+                    "RestrictPublicBuckets": True,
+                },
+            )
+            blocked.append(name)
+        except Exception:  # noqa: BLE001
+            logger.exception("S3 퍼블릭 차단 실패: %s", name)
+
+    result["action"] = "s3-public-blocked" if blocked else "failed"
+    result["detail"] = (
+        f"버킷 {blocked} 에 PublicAccessBlock 강제" if blocked else f"버킷 {names} 퍼블릭 차단 전부 실패"
+    )
+    finish(result)
+    return True
+
+
+# 0.0.0.0/0 로 열렸을 때 특히 위험한 포트(원격 접속·DB·컨테이너/오케스트레이터 API).
+_SENSITIVE_PORTS = {22, 3389, 3306, 5432, 6379, 27017, 9200, 2375, 6443}
+
+
+def _is_risky_port_range(perm: dict[str, Any]) -> bool:
+    """전체 개방된 규칙이 위험한가 — 모든 프로토콜/민감 포트/광범위 범위."""
+    if perm.get("IpProtocol") == "-1":
+        return True
+    from_p, to_p = perm.get("FromPort"), perm.get("ToPort")
+    if from_p is None or to_p is None:
+        return True
+    if any(from_p <= p <= to_p for p in _SENSITIVE_PORTS):
+        return True
+    return (to_p - from_p) >= 1000
+
+
+def remove_risky_sg_rules(instance: dict[str, Any], result: dict[str, Any]) -> None:
+    """③ 격리 대상 인스턴스의 원본 SG 에서 0.0.0.0/0 위험 인그레스를 제거한다.
+
+    격리(SG 교체)와 별개로 원본 SG 자체를 고쳐, 그 SG 를 공유하는 다른 자원까지
+    보호한다. 전체 개방(0.0.0.0/0 또는 ::/0) + 민감 포트/광범위 범위만 대상으로
+    좁혀 정상 규칙을 잘못 지우지 않는다.
+    """
+    if not SG_RESPONSE_ENABLED:
+        return
+    sg_ids = list({sg["GroupId"] for sg in instance.get("SecurityGroups", [])})
+    if not sg_ids:
+        return
+    try:
+        described = ec2.describe_security_groups(GroupIds=sg_ids)["SecurityGroups"]
+    except Exception:  # noqa: BLE001
+        logger.exception("SG 조회 실패")
+        return
+
+    removed: dict[str, int] = {}
+    for sg in described:
+        risky = []
+        for perm in sg.get("IpPermissions", []):
+            open_v4 = any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
+            open_v6 = any(r.get("CidrIpv6") == "::/0" for r in perm.get("Ipv6Ranges", []))
+            if (open_v4 or open_v6) and _is_risky_port_range(perm):
+                risky.append(perm)
+        if risky:
+            try:
+                ec2.revoke_security_group_ingress(GroupId=sg["GroupId"], IpPermissions=risky)
+                removed[sg["GroupId"]] = len(risky)
+            except Exception:  # noqa: BLE001
+                logger.exception("SG 규칙 제거 실패: %s", sg["GroupId"])
+
+    if removed:
+        result["sgRulesRemoved"] = removed
+        logger.info("위험 SG 규칙 제거: %s", removed)
+
+
+def snapshot_instance(instance: dict[str, Any], result: dict[str, Any]) -> None:
+    """④ 격리한 인스턴스의 EBS 볼륨 스냅샷을 떠 증거를 보존한다(읽기 전용)."""
+    if not SNAPSHOT_ON_ISOLATE_ENABLED:
+        return
+    instance_id = instance["InstanceId"]
+    try:
+        response = ec2.create_snapshots(
+            InstanceSpecification={"InstanceId": instance_id, "ExcludeBootVolume": False},
+            Description=f"gochuchamchi forensic snapshot for quarantined {instance_id}",
+            TagSpecifications=[
+                {
+                    "ResourceType": "snapshot",
+                    "Tags": [
+                        {"Key": "gochuchamchi:forensic", "Value": "true"},
+                        {"Key": "gochuchamchi:source-instance", "Value": instance_id},
+                    ],
+                }
+            ],
+        )
+        snapshot_ids = [s["SnapshotId"] for s in response.get("Snapshots", [])]
+        result["forensicSnapshots"] = snapshot_ids
+        logger.info("포렌식 스냅샷 생성: %s", snapshot_ids)
+    except Exception:  # noqa: BLE001
+        logger.exception("포렌식 스냅샷 생성 실패")

@@ -40,7 +40,8 @@ try {
     --region $Region --profile $Profile --query "Environment.Variables" --output json
   if ($LASTEXITCODE -ne 0) { throw "get-function-configuration 실패 (권한/미배포)" }
   $envVars = $envJson | ConvertFrom-Json
-  foreach ($key in @("WAF_RESPONSE_ENABLED", "POD_RESPONSE_ENABLED", "WAF_BLOCKLIST_IP_SET_NAME")) {
+  foreach ($key in @("WAF_RESPONSE_ENABLED", "POD_RESPONSE_ENABLED", "WAF_BLOCKLIST_IP_SET_NAME",
+      "IAM_SUBJECT_RESPONSE_ENABLED", "S3_RESPONSE_ENABLED", "SG_RESPONSE_ENABLED", "SNAPSHOT_ON_ISOLATE_ENABLED")) {
     if ($envVars.PSObject.Properties.Name -contains $key) {
       $val = [string]$envVars.$key
       if ($key -like "*_ENABLED" -and $val -ne "true") {
