@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>작업 보고서 — 2026-08-13</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  h4 { font-size: 14.5px; margin: 18px 0 6px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .node small { font-weight: 500; color: var(--sub); }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .callout.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .kpi div { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+             padding: 14px 12px; text-align: center; }
+  .kpi .n { font-size: 24px; font-weight: 700; color: var(--accent); display: block; }
+  .kpi .t { font-size: 12.5px; color: var(--sub); }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .kpi { grid-template-columns: 1fr 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>작업 보고서 — 2026-08-13</h1>
+  <div class="meta">
+    Workload 계정 828885965304 · 담당 wherekyj ·
+    상세 기록 <code>docs/2026-08-13.md</code> (15개 섹션)
+  </div>
+</header>
+
+<div class="kpi">
+  <div><span class="n">15</span><span class="t">커밋 (2개 저장소)</span></div>
+  <div><span class="n">2</span><span class="t">상시 자격증명 제거</span></div>
+  <div><span class="n">5</span><span class="t">검증 스크립트 신규</span></div>
+  <div><span class="n">6</span><span class="t">체크리스트 교훈 추가</span></div>
+</div>
+
+<div class="callout ok">
+  <strong>오늘의 큰 줄기 하나로 말하면</strong> — <strong>상시 유효한 자격증명 두 개를 없앴다.</strong>
+  앱의 DB 비밀번호를 IAM 15분 토큰으로 완전히 대체했고(파드 환경변수에서 <code>DB_PASS</code>가 사라졌다),
+  같은 관점으로 계정을 훑다가 <strong>38일간 로테이션 없이 살아 있던 관리자 정적 키</strong>를 찾아 회수했다.
+  덤으로, 확인해야 할 것들을 기억이 아니라 스크립트로 고정했다.
+</div>
+
+<h2>1. DB 비밀번호 제거 — 제로 트러스트 완결</h2>
+
+<p>
+  8/12에 앱을 IAM 토큰 방식으로 전환해 두었으나, <strong>쓰이지도 않는 <code>DB_PASS</code>가
+  파드 환경변수에 계속 남아 있었다.</strong> 파드가 침해되면 그대로 읽히고, 15분이면 만료되는
+  토큰과 달리 이 값은 만료가 없다. 토큰으로 바꾼 목적 자체가 "상시 유효한 자격증명을 없애는 것"이므로
+  안 쓰는 자격증명이 남아 있으면 그 목적이 반감된다.
+</p>
+
+<div class="flow">
+  <div class="lane-title">이전 (8/4 ~ 8/12)</div>
+  <div class="lane">
+    <span class="node neutral">파드</span><span class="arrow">→</span>
+    <span class="node bad">DB_PASS<small> (만료 없음)</small></span><span class="arrow">→</span>
+    <span class="node neutral">RDS</span>
+    <span class="arrow">＋</span>
+    <span class="node">IAM 토큰<small> (15분)</small></span>
+  </div>
+  <div class="lane-title">현재</div>
+  <div class="lane">
+    <span class="node neutral">파드</span><span class="arrow">→</span>
+    <span class="node good">IAM 토큰만<small> (15분, 접속마다 재발급)</small></span><span class="arrow">→</span>
+    <span class="node neutral">RDS</span>
+  </div>
+</div>
+
+<h3>순서가 전부였다 — 뒤집으면 장애</h3>
+
+<p>저장소 두 개가 순서로 묶여 있었고, gitops 커밋 메시지가 직접 경고하고 있었다.</p>
+
+<table>
+  <tr><th style="width:60px">단계</th><th>내용</th><th style="width:110px">결과</th></tr>
+  <tr><td><strong>1</strong></td><td>IAM 토큰 접속을 <strong>재발급 구간까지</strong> 검증</td><td><span class="badge done">완료</span></td></tr>
+  <tr><td><strong>2</strong></td><td>gitops <code>853a6a4</code> 머지 → ArgoCD 배포 → 파드에서 <code>DB_PASS</code> 제거</td><td><span class="badge done">완료</span></td></tr>
+  <tr><td><strong>3</strong></td><td>terraform <code>dbae59c</code> 머지 → 다음 apply부터 Secret·DB 계정 미생성</td><td><span class="badge done">완료</span></td></tr>
+</table>
+
+<div class="callout danger">
+  <strong>3이 2보다 먼저 가면</strong> Secret은 없는데 참조만 남아 파드가
+  <code>CreateContainerConfigError</code>로 뜨지 못한다. <strong>2026-08-04에 정확히 같은 방식으로
+  장애가 났다</strong>(terraform이 Secret 이름을 바꿨는데 gitops가 옛 이름을 계속 참조).
+  그래서 두 브랜치를 push만 해두고 검증이 끝날 때까지 머지하지 않았다 —
+  실패해도 비밀번호 계정이 살아 있어 되돌릴 수 있는 상태를 유지하기 위해서다.
+</div>
+
+<h3>검증이 "통과"했는데 아무것도 증명하지 않았던 것</h3>
+
+<p>
+  전날 만들어 둔 검증 스크립트가 <strong>통과</strong>를 냈다. 그런데 출력에
+  <code>gochuchamchi_app_iam</code>의 <strong>CONNECT 줄이 없었다.</strong>
+</p>
+
+<pre><code>[3] RDS 감사 로그 — 최근 10분 (토큰 캐시 만료 이후 구간)
+    CONNECT  rdsadmin                 16회
+    QUERY    gochuchamchi_app_iam     346회      <span class="cmt">← CONNECT 는 0건</span>
+판정: 통과 — IAM 토큰 재발급 구간을 넘겨 DB 접속이 유지됐다.</code></pre>
+
+<p>
+  <strong>MariaDB는 접속을 맺을 때만 인증하고 그 뒤로는 재인증하지 않는다.</strong>
+  IAM 토큰은 "접속 시점의 입장권"이지 세션을 계속 검사하는 값이 아니다. 따라서
+  <strong>이미 열린 커넥션 위의 QUERY는 몇 백 건이든 전부 첫 토큰의 결과</strong>이고,
+  토큰이 만료된 뒤에도 그 커넥션은 아무 일 없이 계속 돈다. 스크립트는 QUERY만 세고 있었으므로
+  <strong>재발급이 한 번도 안 일어난 상태에서도 통과가 나온다.</strong>
+</p>
+
+<div class="callout warn">
+  전날 문서에 "219건은 첫 토큰이라 증명이 아니다"라고 <strong>정확히 적어 놓고</strong>,
+  정작 검사 조건은 같은 함정에 들어가 있었다. 문서로 아는 것과 코드가 검사하는 것은 별개다.
+</div>
+
+<h4>실패한 시도 — 동시 요청으로 풀을 키우기</h4>
+<p>
+  커넥션 풀이 커지면 새 물리 커넥션이 생기므로 동시 요청 45건을 몰아쳤다.
+  <strong>새 CONNECT는 0건이었다.</strong> 응답이 빨라 파드당 커넥션 2개로 전부 처리됐다.
+  <code>maximumPoolSize=10</code>은 "필요할 때 늘어나는 한도"이지 미리 여는 개수가 아니다.
+</p>
+
+<div class="callout info">
+  <strong>곁다리로 밟은 오진</strong> — 첫 시도에서 30건이 전부 <strong>403</strong>이었다.
+  rate 기반 WAF 규칙에 걸린 줄 알았으나 단일 요청은 200이었다. 원인은
+  <strong>User-Agent 헤더 부재</strong> — .NET <code>HttpClient</code>는 UA 기본값이 없고
+  WAF 관리형 규칙의 <code>NoUserAgent_HEADER</code>가 이를 막는다.
+  <strong>WAF가 제대로 도는 증거였지 결함이 아니었다.</strong>
+  부하 도구가 403을 뱉으면 rate limit보다 UA를 먼저 볼 것.
+</div>
+
+<h4>통한 방법 — HikariCP <code>maxLifetime</code>(기본 30분)을 기다린다</h4>
+<p>
+  커넥션은 수명이 다하면 폐기되고 곧바로 새로 열린다. 그 새 커넥션은 캐시가 만료된 뒤라
+  <strong>반드시 토큰을 새로 발급받아야 한다.</strong> 14:20에 열린 커넥션이므로 14:50 전후를 보면 된다.
+</p>
+
+<table>
+  <tr><th style="width:110px">시각</th><th>이벤트</th><th style="width:170px">커넥션 ID</th></tr>
+  <tr><td>14:43:11</td><td>DISCONNECT</td><td>32 <small>(14:20 생성)</small></td></tr>
+  <tr><td>14:43:12</td><td><strong>CONNECT</strong></td><td><strong>72</strong></td></tr>
+  <tr><td>14:44:32</td><td>DISCONNECT / <strong>CONNECT</strong></td><td>30 → <strong>74</strong></td></tr>
+  <tr><td>14:44:35</td><td>DISCONNECT / <strong>CONNECT</strong></td><td>31 → <strong>75</strong></td></tr>
+  <tr><td>14:45:02</td><td>DISCONNECT / <strong>CONNECT</strong></td><td>33 → <strong>77</strong></td></tr>
+</table>
+
+<div class="callout ok">
+  <strong><code>FAILED_CONNECT</code> 0건.</strong> 첫 토큰이 아니라 <strong>재발급된 토큰으로
+  물리 커넥션 4개가 새로 맺어졌다.</strong> 이것이 "아직 한 번도 안 돌아본 경로"의 실증이다.
+</div>
+
+<h3>결과</h3>
+<p>머지 후 새 파드에서 확인:</p>
+<pre><code>DB_USER=gochuchamchi_app_iam
+DB_HOST=gochuchamchi-db...rds.amazonaws.com
+SPRING_DATA_REDIS_PASSWORD=&lt;있음&gt;     <span class="cmt">← Redis 만 Secret 유지</span>
+DB_PASS                               <span class="cmt">← 없음</span></code></pre>
+<p>
+  파드 2개 ready·재시작 0, 사이트 200, 로그에 DB 오류 없음.
+  <strong>비밀번호 없이 토큰만으로 붙고 있다.</strong>
+  terraform은 머지만 하고 apply는 하지 않았다 — 밤 <code>daily-down</code>이 런타임 루트를
+  통째로 destroy하므로 시크릿과 K8s Secret이 그때 사라지고, 다음 <code>daily-up</code>부터는
+  코드에 없으니 재생성되지 않는다.
+</p>
+
+<h2>2. <code>terra-user</code> 정적 키 — 오늘 없앤 것보다 훨씬 강한 자격증명</h2>
+
+<p>
+  하루 종일 "상시 유효한 DB 자격증명을 없앤다"를 했는데,
+  <strong>정작 계정 전체에 대한 상시 자격증명이 그대로 있었다.</strong>
+</p>
+
+<table>
+  <tr><th style="width:130px">항목</th><th>값</th></tr>
+  <tr><td>사용자</td><td><code>terra-user</code></td></tr>
+  <tr><td>권한</td><td><strong>AdministratorAccess</strong></td></tr>
+  <tr><td>키</td><td><code>AKIA4B7L…</code> · Active</td></tr>
+  <tr><td>생성</td><td>2026-07-06 — <strong>38일, 로테이션 없음</strong></td></tr>
+  <tr><td>최근 사용</td><td>2026-08-12</td></tr>
+  <tr><td>MFA</td><td>없음</td></tr>
+</table>
+
+<p>
+  DB 계정은 DML만 되고 매일 사라지는데, 이 키는 IAM·S3·EC2 전부에 무기한이었다.
+  <strong>보안 작업의 초점이 최근에 만진 것에 쏠려 있었다</strong> — 오래돼서 잊힌 것이 더 위험했다.
+</p>
+
+<h3>"안 쓰는 키"가 아니라 "기본값이라 조용히 쓰이는 키"였다</h3>
+
+<p>
+  CloudTrail 90일 이력상 실작업은 <strong>2026-07-30 구계정 철거가 마지막</strong>이었다.
+  그런데 그 뒤로도 <code>GetCallerIdentity</code>가 계속 찍혔다. 원인은 로컬 설정이었다.
+</p>
+
+<pre><code>~/.aws/credentials
+  [default]     -&gt; AKIA4B7L…   <span class="cmt">(terra-user)</span>
+  [terra-user]  -&gt; AKIA4B7L…   <span class="cmt">(같은 키)</span></code></pre>
+
+<p>
+  <strong><code>--profile</code>을 안 붙인 모든 AWS 명령이 이 전권 자격증명으로 돌고 있었다.</strong>
+  습관적으로 치는 <code>aws sts get-caller-identity</code>가 그대로 기록에 남은 것이다.
+</p>
+
+<h3>조치 — 삭제가 아니라 비활성화</h3>
+<p>
+  terraform 루트 6개·daily 스크립트는 전부 <code>workload-admin</code>, CI는 OIDC 역할을 쓴다는 것을
+  먼저 확인한 뒤, <strong>백업 → 비활성화 → 로컬 정리</strong> 순으로 진행했다.
+  삭제가 아닌 이유는 <code>terra-user</code>가 <strong>공유 계정의 IAM 사용자</strong>라
+  팀원 중 누가 같은 키를 쓰고 있을 수 있어서다. 비활성화는 되돌릴 수 있고 삭제는 못 되돌린다.
+</p>
+<ul>
+  <li><code>--profile</code> 없이 <code>get-caller-identity</code> → SSO 역할 ARN 반환</li>
+  <li><code>~/.aws/credentials</code>에 <code>aws_access_key_id</code> <strong>0건</strong></li>
+  <li>환경변수(프로세스·사용자·시스템)에도 정적 키 없음 — 프로필만 고쳐서는 소용없는 경우가 있어 같이 확인</li>
+</ul>
+
+<h2>3. GuardDuty AI 트리아지 — 적용하고, 검증하고, 철회했다</h2>
+
+<p>
+  가이드에 따라 트리아지를 배포했다. 통보 경로에 판정 계층을 끼워 넣는 작업이다.
+  <strong><code>11 added, 1 changed, 1 destroyed</code></strong>로 plan·apply 모두 예고와 일치했고
+  검증도 전부 통과했다.
+</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>검증 통과 항목</h4>
+    <ul>
+      <li><strong>루트 사용(severity 2) → <code>tier=HIGH</code> 승격</strong> — 가장 중요한 확인</li>
+      <li>LOW 소음은 모델 호출 없이 <code>filtered</code></li>
+      <li>CRITICAL은 판정 무관 <code>urgent</code></li>
+      <li>중복 억제 동작</li>
+      <li>실제 샘플 finding이 EventBridge 거쳐 도달 → <code>TRUE_POSITIVE</code>(0.85)</li>
+      <li>격리 Lambda <code>skipped</code>, 부작용 0</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>그럼에도 껐다</h4>
+    <ul>
+      <li>Groq 무료 티어 <strong>8000 TPM</strong> — finding 1건이 2,100~2,400 토큰이라
+          <strong>분당 3건 넘으면 429</strong>. 검증 중 12회 발생</li>
+      <li>API 키가 대화 중 <strong>평문 노출</strong> — 재발급 필요</li>
+      <li>판정 provider를 다시 검토하기로 결정</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout info">
+  <strong>429가 나도 탐지 공백은 없다.</strong> <code>verdict=null → UNCERTAIN</code>으로 떨어지고
+  정책 표대로 통보되므로 <strong>소음만 늘 뿐</strong>이다. 다만 판정이 자꾸 <code>UNCERTAIN</code>이면
+  모델 성능이 아니라 레이트리밋을 먼저 의심할 것 — 로그의 <code>unavailable_reason</code>에 사유가 남는다.
+</div>
+
+<h3>하마터면 <code>terraform destroy</code>를 칠 뻔했다</h3>
+<p>
+  "매일 오후에 지운다"는 것은 맞지만 <strong>루트가 다르다.</strong>
+  <code>daily-down.ps1</code>은 <code>go/terraform</code>(런타임 계층, 약 235개)만 destroy하고,
+  트리아지가 있는 <code>cloudwatch-notifications</code>는 <strong>손대지 않는 상시 계층</strong>이다.
+  그 루트에는 SNS 허브·격리 Lambda·Discord Lambda·IAM 활동 감시 등 40개 넘는 인프라가 들어 있다.
+  <code>enable_triage=false</code> apply로 <strong>배선만</strong> 되돌렸다 — 알림 끊김 구간 없음.
+</p>
+
+<h2>4. 판정 provider 추상화 — 재배포 없이 갈아끼울 수 있게</h2>
+
+<p>
+  provider 차이를 <code>judge.py</code>의 세 함수(<code>_build_payload</code> /
+  <code>_extract_content</code> / <code>_extract_usage</code>)에만 가뒀다. <code>judge()</code>는
+  어느 provider인지 모른다. <strong>groq / openai / gemini / anthropic</strong> 네 가지를 지원한다.
+</p>
+
+<table>
+  <tr><th></th><th>groq / openai / gemini</th><th>anthropic</th></tr>
+  <tr><td>규격</td><td>OpenAI Chat Completions</td><td>Messages API</td></tr>
+  <tr><td>system</td><td><code>messages</code> 안의 role</td><td><strong>최상위 필드</strong></td></tr>
+  <tr><td>max_tokens</td><td>선택</td><td><strong>필수</strong></td></tr>
+  <tr><td>구조화 출력</td><td><code>response_format: json_object</code></td><td><code>output_config.format</code>의 json_schema</td></tr>
+  <tr><td>응답</td><td><code>choices[0].message.content</code></td><td><strong><code>content</code> 블록 배열</strong></td></tr>
+  <tr><td>temperature</td><td><code>0</code> 전송</td><td><strong>안 보냄</strong> — 최신 Claude는 400</td></tr>
+</table>
+
+<div class="callout danger">
+  <strong>Claude를 OpenAI 호환 레이어로 부르면 안 된다.</strong>
+  <code>base_url=api.anthropic.com/v1/</code>로 붙이면 코드 무수정으로 동작해 매력적이지만,
+  그 레이어는 <strong><code>response_format</code>을 무시한다.</strong> 우리 판정은 구조화 출력이
+  계약의 근간이라, 무시되는 순간 모델이 산문으로 답하고 스키마 검증이 전부 떨어뜨려
+  <strong>모든 finding이 조용히 "판정 없음"이 된다.</strong> 에러가 아니라 침묵이라 몇 주가 갈 수 있다.
+  Claude를 쓰려면 네이티브 Messages API로 간다.
+</div>
+
+<h3>Gemini 실측 — 추측하지 않고 재봤다</h3>
+<p>
+  구글 문서도 <code>response_format</code> 지원 여부를 명시하지 않는다(호환 레이어가 베타).
+  Anthropic을 탈락시킨 바로 그 지점이라 같은 표본으로 3회씩 실측했다.
+</p>
+
+<table>
+  <tr><th><code>reasoning_effort</code></th><th>1회</th><th>2회</th><th>3회</th><th>최대</th><th>편차</th></tr>
+  <tr><td><code>none</code></td><td>400</td><td>400</td><td>400</td><td>—</td><td>미지원</td></tr>
+  <tr><td><code>minimal</code></td><td>18.95</td><td>9.31</td><td>15.27</td><td><strong>18.95초</strong></td><td><strong>9.6초</strong></td></tr>
+  <tr><td><strong><code>low</code></strong></td><td>9.12</td><td>9.81</td><td>9.94</td><td><strong>9.94초</strong></td><td><strong>0.8초</strong></td></tr>
+</table>
+
+<ul>
+  <li><strong><code>response_format</code>이 작동한다</strong> — 유효한 구조화 판정이 나왔다</li>
+  <li><strong><code>low</code>가 <code>minimal</code>보다 빠르고 안정적이다</strong>(반직관적). 편차 0.8초 대 9.6초.
+      <strong>기본값이 이미 최적</strong>이라 바꿀 것이 없었다</li>
+  <li><strong>인젝션 감지에서 Groq보다 낫다</strong> — 같은 표본에서 Groq은 "감지 아니오", Gemini는 "감지 예"</li>
+  <li>속도는 Groq 압승(1.17초 대 9.94초). 다만 finding 1건당 Lambda 1회 호출이고 서로 병렬이라
+      <strong>판정 시간은 누적되지 않는다</strong></li>
+</ul>
+
+<p>
+  <strong>결론: Groq 유지.</strong> Gemini는 코드에 선택지로만 남겼다. 전환하려면 무료 티어 실제 TPM을
+  먼저 확인해야 한다 — Groq의 8000 TPM 벽이 전환 동기였으므로 그보다 빡빡하면 의미가 없다.
+</p>
+
+<h2>5. 운영 스크립트 — 저녁 종료가 실패할 수 있던 버그</h2>
+
+<div class="callout danger">
+  <code>daily-down.ps1</code>이 <strong>stderr 한 줄에 죽는 상태</strong>였다.
+  AWS CLI가 stderr를 쓰는 가장 흔한 경우가 <strong>SSO 토큰 만료</strong>다. 즉 SSO가 만료된 저녁이면
+  1단계에서 정체불명의 <code>RemoteException</code>으로 죽고,
+  <strong>종료를 못 하면 그날 과금이 그대로 간다.</strong>
+</div>
+
+<p>
+  PS 5.1은 native 명령의 stderr를 <strong>리다이렉트할 때</strong> 각 줄을 ErrorRecord로 감싼다.
+  스크립트가 <code>$ErrorActionPreference="Stop"</code>이라 경고 한 줄에도 죽는다.
+  <strong><code>2&gt;$null</code>로 버려도 마찬가지다</strong> — 원인은 "버렸다"가 아니라 "리다이렉트했다"는 사실 자체다.
+</p>
+
+<table>
+  <tr><th style="width:280px">방식</th><th>결과</th></tr>
+  <tr><td><code>2&gt;$null</code> 붙임</td><td><strong>RemoteException 사망</strong></td></tr>
+  <tr><td>리다이렉트 없음</td><td><strong>생존</strong> — stdout·<code>$LASTEXITCODE</code> 모두 정상</td></tr>
+  <tr><td>리다이렉트 없음 + 종료코드 128</td><td><strong>생존</strong> — 종료코드도 정상 감지</td></tr>
+</table>
+
+<div class="callout info">
+  같은 파일 33행은 <strong>이미 같은 이유로 리다이렉트를 피하고 있었는데 18행만 빠져 있었다.</strong>
+  교훈이 주석으로는 남아 있었지만 코드 전체에 적용되지는 않은 상태였다.
+</div>
+
+<p>
+  <code>daily-up.ps1</code>의 git 두 줄도 같은 문제였고, 고치면서 <strong>게이트 로직의 구멍</strong>도 발견했다 —
+  git이 실패하면 <code>codeChanged=false</code>가 되어 <strong>plan 확인을 조용히 건너뛰고 바로 apply</strong>로 갔다.
+  <strong>안전장치가 실패하면 안전장치가 없어지는 구조</strong>였다. 이제 git을 못 읽으면 "변경 있음"으로 보고 승인을 받는다.
+</p>
+
+<h2>6. 검증 스크립트 5종 — 만들자마자 오검사 2건을 스스로 잡았다</h2>
+
+<p>
+  검증이 매번 "그때그때 명령어를 조합해서" 이뤄지고 있었다. 그래서 무엇을 확인했고 무엇을 빠뜨렸는지가
+  기억에만 남는다. WAF 가이드 8~11번은 그렇게 몇 주째 미실행으로 남아 있었다.
+  <strong>확인해야 할 것들을 코드로 고정했다.</strong>
+</p>
+
+<table>
+  <tr><th style="width:250px">스크립트</th><th>보는 것</th></tr>
+  <tr><td><code>verify-db-iam-only.ps1</code></td><td>비밀번호 잔재 부재, 파드 <code>DB_PASS</code> 부재, 토큰 재발급</td></tr>
+  <tr><td><code>verify-waf.ps1</code></td><td>ALB 우회 차단, SQLi 차단, WAF 로그, 알람·구독</td></tr>
+  <tr><td><code>verify-notifications.ps1</code></td><td>SNS 구독 확인 상태, 알람→EventBridge→SNS 배선, 시크릿 값 유무</td></tr>
+  <tr><td><code>verify-log-pipeline.ps1</code></td><td>구독 필터 존재·목적지 계정, 로그 유입, ALB 액세스 로그 설정</td></tr>
+  <tr><td><code>verify-all.ps1</code></td><td>위 전부 + 기존 smoke-test·verify-contract·verify-schema-sync 요약</td></tr>
+</table>
+
+<p>
+  <strong>판정을 통과 / 미결 / 실패 3단계로 나눴다</strong>(종료 코드 0 / 2 / 1).
+  토큰 재발급처럼 시간이 지나야 관찰되는 항목을 "실패"로 부르면 아침마다 헛경보가 난다.
+  <strong>"아직 모른다"가 정확한 답인 경우가 있고, 그건 고칠 것이 있다는 뜻이 아니다.</strong>
+</p>
+
+<h3>돌려 보자마자 드러난 오검사 — 둘 다 내일 아침에 "고장"으로 오진했을 것들</h3>
+
+<div class="grid2">
+  <div class="card">
+    <h4>① 인코딩으로 "알람 0개"</h4>
+    <ul>
+      <li><code>describe-alarms</code>가 <code>'cp949' codec can't encode '—'</code>로 통째로 실패</li>
+      <li>화면에는 <strong>"알람 0개"</strong>로 나온다 — 알람이 사라진 줄 안다</li>
+      <li><code>PYTHONIOENCODING</code>도 <code>[Console]::OutputEncoding</code>도 안 통함
+          (CLI v2는 frozen 바이너리)</li>
+      <li>해법: <code>--query</code>로 <strong>설명 필드를 애초에 출력에서 뺀다</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>② "알람에 액션이 없다"</h4>
+    <ul>
+      <li>상시 알람 2개가 전부 <code>AlarmActions</code> 0개 — 처음엔 실패로 판정</li>
+      <li>그런데 <strong>이 프로젝트는 알람에 액션을 붙이지 않는다.</strong>
+          EventBridge가 <strong>이름 접두사 <code>gochuchamchi-</code></strong>로 잡아 SNS로 넘긴다</li>
+      <li>진짜 위험은 따로 있다 — <strong>접두사를 안 지킨 알람은 룰에 안 걸려 조용히 통보에서 빠진다</strong></li>
+      <li>검사를 그쪽으로 바꿨다(접두사 불일치 + 룰 활성 상태)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn">
+  <strong>내일 아침 핵심 확인점</strong> — <code>verify-db-iam-only.ps1</code>에서
+  <code>gochuchamchi_app</code> CONNECT가 <strong>0건</strong>이어야 한다.
+  오늘은 아침 프로비저닝 흔적 1건이 잡혔고, <strong>그게 0이 되는 것이
+  "비밀번호 계정이 더는 태어나지 않는다"의 증거</strong>가 된다.
+</div>
+
+<h2>7. 저장소 정리</h2>
+
+<div class="grid2">
+  <div class="card">
+    <h4>브랜치 8개 삭제</h4>
+    <ul>
+      <li>완전 병합 7개 + superseded 1개</li>
+      <li><code>fix/discord-notification-renderers</code>가 위험했다 — 이름은 "알림 유실 수정"인데
+          내용은 이미 main에 있고 <strong>30커밋 뒤처져</strong> 있어,
+          병합하면 트리아지 렌더러가 되돌아간다</li>
+      <li>Bedrock 구현은 <strong>원격이 이미 삭제돼 로컬이 마지막 사본</strong>이었다 →
+          <code>archive/guardduty-ai-triage-bedrock</code> 태그로 보존 후 원격에 push</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>SIEM 상관 탐지 병합</h4>
+    <ul>
+      <li><code>feat/siem-detection</code> — Athena 룰 4종이 후보를 뽑고 Groq이 판정</li>
+      <li><strong>Log 계정(564186750363) 스택</strong> — Workload 스택과 안 겹침, 충돌 없음</li>
+      <li>설계상 Workload에서 AssumeRole 신뢰 경로를 만들지 않으므로
+          <strong>apply는 Log 담당자 몫</strong></li>
+      <li>병합은 코드를 main에 모으는 것까지</li>
+    </ul>
+  </div>
+</div>
+
+<h2>8. 오늘 반복해서 밟은 것 — 인코딩</h2>
+
+<p>같은 계열의 함정을 <strong>하루에 네 번</strong> 만났다. 전부 "한글 + Windows 로캘"이다.</p>
+
+<table>
+  <tr><th style="width:220px">지점</th><th>증상</th><th>원인</th></tr>
+  <tr><td><code>.ps1</code> 파일</td><td><code>Unexpected token</code> — <strong>문법 에러</strong>로 나타남</td><td>BOM 부재 → PS 5.1이 CP949로 오독</td></tr>
+  <tr><td><code>file://</code> payload</td><td><code>text contents could not be decoded</code></td><td>AWS CLI가 로캘 인코딩으로 읽음</td></tr>
+  <tr><td><code>describe-alarms</code> 출력</td><td><strong>"알람 0개"</strong>로 보임</td><td>CLI가 em-dash를 CP949로 인코딩 실패</td></tr>
+  <tr><td><code>~/.aws/config</code></td><td><code>Unable to parse config file</code></td><td>한글 주석 168바이트</td></tr>
+</table>
+
+<div class="callout warn">
+  공통 교훈 — <strong>증상이 인코딩을 가리키지 않는다.</strong> 문법 에러, 조회 결과 0개,
+  파싱 실패처럼 전혀 다른 얼굴로 나타나서 원인에 도달하기까지가 멀다.
+  <strong>Windows에서 한글이 섞이는 경계(파일·인자·출력·설정)를 의심 목록에 상비할 것.</strong>
+</div>
+
+<h2>9. 커밋</h2>
+
+<table>
+  <tr><th style="width:100px">해시</th><th>내용</th></tr>
+  <tr><td><code>8827b6b</code></td><td>Merge <code>feat/guardduty-triage</code> — 트리아지 기능 일체</td></tr>
+  <tr><td><code>8e87ec4</code></td><td><code>verify-deployment.ps1</code> PS 5.1 호환 수정</td></tr>
+  <tr><td><code>6b53113</code></td><td>판정 provider 계층 (groq / openai / anthropic)</td></tr>
+  <tr><td><code>2fe4063</code></td><td>provider 후보에 gemini 추가</td></tr>
+  <tr><td><code>5224c77</code></td><td>비교 스크립트에 반복 실행·추론 강도 스윕</td></tr>
+  <tr><td><code>9effc2d</code></td><td><code>reasoning_effort</code> 폴백이 Gemini에서 안 걸리던 버그</td></tr>
+  <tr><td><code>8a84a33</code></td><td><code>enable_triage</code> 기본값을 실제 배포 상태와 일치</td></tr>
+  <tr><td><code>60e9f38</code></td><td>PS 5.1 실행 불가 · 시크릿 환경변수 이름 · 변수 범위 문서화</td></tr>
+  <tr><td><code>90f22c1</code></td><td>daily 스크립트가 stderr 한 줄에 죽던 것</td></tr>
+  <tr><td><code>80bdd60</code></td><td>Merge <code>feat/siem-detection</code></td></tr>
+  <tr><td><code>dbae59c</code></td><td>Merge — <strong>비밀번호 DB 계정 제거 (IAM 토큰 일원화)</strong></td></tr>
+  <tr><td><code>c6ade76</code></td><td>런북의 RDS 접속 절차를 IAM 토큰 방식으로 교체</td></tr>
+  <tr><td><code>e695842</code></td><td><strong>검증 스크립트 5종</strong></td></tr>
+  <tr><td><code>archive/…-bedrock</code></td><td>Bedrock 구현 보존 태그</td></tr>
+</table>
+
+<p>gitops 저장소: <code>853a6a4</code> — <code>deployment.yml</code>에서 <code>secretRef: gochuchamchi-db-app</code> 제거.</p>
+
+<h2>10. tfstate SSE-KMS 전환 — 진단이 절반 틀렸던 것</h2>
+
+<p>보안 점검 3번. tfstate가 SSE-S3라 <strong>버킷을 읽을 수 있으면 곧 복호화</strong>인 상태였다.
+CloudFront Origin 검증 헤더가 거기 평문으로 들어 있고, 그 값을 알면 자기 CloudFront 배포로
+ALB를 오리진 삼아 WAF를 통째로 우회할 수 있다 — SG의 prefix list는 "CloudFront IP 대역에서
+왔다"까지만 검증하므로 그 관문은 통과한다.</p>
+
+<h3>먼저, 틀린 진단부터</h3>
+
+<p>"버전 이력에 남은 평문 때문에 헤더 로테이션도 함께 필요하다"고 판단했다. <strong>뒤쪽이 틀렸다.</strong>
+state에 들어가는 민감값을 전수 확인했더니 둘뿐이었고, 둘 다 매일 재생성되는 계층에 있었다.</p>
+
+<table>
+  <tr><th>값</th><th>루트</th><th>수명</th></tr>
+  <tr><td><code>random_password.cloudfront_origin_verify</code></td><td><code>go/terraform</code></td><td><strong>매일 재생성</strong></td></tr>
+  <tr><td><code>random_password.redis_auth</code></td><td><code>go/terraform</code></td><td><strong>매일 재생성</strong></td></tr>
+  <tr><td>RDS 마스터</td><td><code>manage_master_user_password</code></td><td>state에 없음</td></tr>
+  <tr><td>ArgoCD PAT · Grafana 비밀번호</td><td>8/4에 state 밖으로 이미 뺐음</td><td>state에 없음</td></tr>
+</table>
+
+<p><code>terraform state list</code>로 확인하니 destroy 직후 현재 state는 리소스 0개였다.
+<strong>142개 버전에 남은 값들은 이미 무효다.</strong> 별도 로테이션 작업은 할 필요가 없었다.
+장기 루트에는 평문 시크릿이 아예 없다 — 8/4 리뷰에서 이미 정리한 결과다.</p>
+
+<div class="callout info">
+  그래서 이 작업의 값어치는 "평문 노출 제거"가 아니라 두 가지로 재정의된다 —
+  <strong>방어선이 하나에서 둘로</strong>(<code>s3:GetObject</code>만으로는 못 읽고 <code>kms:Decrypt</code>도 필요),
+  그리고 <strong>누가 state를 읽었는지 남는다</strong>(KMS <code>Decrypt</code>는 관리 이벤트라
+  S3 데이터 이벤트를 켜지 않아도 CloudTrail에 기록된다 — 실측 확인).
+</div>
+
+<h3>버킷만 바꾸면 아무 일도 안 일어난다</h3>
+
+<p><strong>terraform S3 백엔드는 <code>encrypt = true</code>이고 <code>kms_key_id</code>가 없으면
+<code>AES256</code>을 "명시적으로" 보낸다.</strong> 명시 지정이 버킷 기본값을 이기므로,
+버킷 설정만 바꿔 놓으면 state는 계속 SSE-S3로 저장된다. 조용히 아무 일도 안 일어나는 종류의 실패다.</p>
+
+<div class="flow">
+  <div class="lane-title">버킷만 KMS로 바꿨을 때</div>
+  <div class="lane">
+    <span class="node neutral">terraform</span><span class="arrow">→</span>
+    <span class="node bad">x-amz-sse: AES256<br><small>명시 지정</small></span><span class="arrow">→</span>
+    <span class="node neutral">버킷 기본값(KMS)</span><span class="arrow">→</span>
+    <span class="node bad">SSE-S3로 저장<br><small>전환 실패</small></span>
+  </div>
+  <div class="lane-title">backend.tf에 kms_key_id를 넣었을 때</div>
+  <div class="lane">
+    <span class="node neutral">terraform</span><span class="arrow">→</span>
+    <span class="node good">x-amz-sse: aws:kms<br><small>키 지정</small></span><span class="arrow">→</span>
+    <span class="node good">SSE-KMS로 저장</span>
+  </div>
+</div>
+
+<h3>키를 terraform이 아니라 부트스트랩 계층에 둔 이유</h3>
+
+<p>이 키로 암호화되는 것이 <strong>terraform 자신의 state</strong>다. terraform이 키를 관리하면
+"키가 사라지면 state를 못 읽고, state를 못 읽으니 키를 되살릴 수도 없는" 순환이 생긴다.
+버킷과 같은 계층(<code>scripts/bootstrap-state.ps1</code>)에 둬서 그 고리를 끊었다.</p>
+
+<table>
+  <tr><th>항목</th><th>내용</th></tr>
+  <tr><td>KMS 키</td><td>별칭 <code>alias/gochuchamchi-tfstate</code>, 기본 키 정책(계정 루트 위임), 연 1회 자동 로테이션</td></tr>
+  <tr><td>버킷 암호화</td><td><code>aws:kms</code> + <strong><code>BucketKeyEnabled=true</code></strong> — state는 작은 파일을 자주 쓰는 패턴이라 이게 없으면 KMS 요청 비용·지연이 그대로 붙는다</td></tr>
+  <tr><td><code>backend.tf</code> 5개</td><td><strong>별칭 ARN</strong>으로 <code>kms_key_id</code> 추가 — 키를 재생성해도 값이 안 바뀌게</td></tr>
+  <tr><td>건드리지 않은 것</td><td><code>log-archive</code>, <code>management/*</code> — 다른 계정 버킷이라 이 키가 없다. 그 계정들은 각자 부트스트랩을 돌려야 한다</td></tr>
+  <tr><td>수명주기 <span class="badge new">신규</span></td><td>버전 298개·138MB가 무한정 쌓이고 있었다. 30일 만료 + <code>NewerNoncurrentVersions=10</code></td></tr>
+</table>
+
+<h3>검증</h3>
+
+<ul>
+  <li><code>persistent</code> state를 실제로 다시 써서 확인 — <code>ServerSideEncryption=aws:kms</code>, 키 <code>fb00273a…</code>, <code>BucketKeyEnabled=true</code></li>
+  <li>CloudTrail에 <code>Decrypt</code> 이벤트 기록 확인 — 감사 이점이 말뿐이 아님을 실측</li>
+  <li><strong>평범한 <code>terraform init</code>이 프롬프트 없이 exit 0</strong></li>
+</ul>
+
+<div class="callout warn">
+  <strong>이 확인을 빠뜨렸으면 내일 아침 daily-up이 멈췄을 것이다.</strong>
+  백엔드 설정이 바뀌면 다음 <code>terraform init</code>이 마이그레이션 여부를 <strong>대화형으로 묻는다.</strong>
+  <code>daily-up.ps1</code>은 비대화형으로 <code>init</code>을 부르므로 그 프롬프트에서 멈추고,
+  증상은 백엔드와 무관해 보인다. 5개 루트에 <code>init -reconfigure</code>를 미리 돌려 뒀다.
+</div>
+
+<h2>11. PR #7 충돌 — 내일 아침 daily-up을 막는 것을 발견</h2>
+
+<p>SSE-KMS 작업을 push하려는데 거부됐다. 다른 사람이
+<code>agent/security-hardening</code> 브랜치를 PR #7로 main에 머지한 것이다(<code>b936f32</code>).
+파일이 겹치지 않아 rebase는 깔끔했지만, <strong>그 내용이 내일 아침을 막는다.</strong></p>
+
+<h3>무슨 일이 일어나는가</h3>
+
+<p>PR #7은 ArgoCD의 공용 PAT 하나를 <strong>읽기 전용 / 쓰기 두 개로 분리</strong>했다.
+방향은 옳다. 문제는 배선이다.</p>
+
+<div class="flow">
+  <div class="lane-title">내일 아침 daily-up</div>
+  <div class="lane">
+    <span class="node neutral">daily-up.ps1</span><span class="arrow">→</span>
+    <span class="node neutral">go/terraform만 apply</span><span class="arrow">→</span>
+    <span class="node bad">data source가<br>없는 시크릿 참조</span><span class="arrow">→</span>
+    <span class="node bad">plan 단계에서 실패<br><small>시작조차 못 함</small></span>
+  </div>
+  <div class="lane-title">그릇을 만드는 쪽</div>
+  <div class="lane">
+    <span class="node neutral">go/persistent/secrets.tf</span><span class="arrow">→</span>
+    <span class="node bad">daily-up이 안 건드림</span>
+  </div>
+</div>
+
+<p><code>go/terraform/persistent-data.tf</code>에 <code>data "aws_secretsmanager_secret"</code> 두 개가
+추가됐는데, 그 시크릿을 만드는 코드는 <code>go/persistent</code>에 있다.
+<strong><code>daily-up.ps1</code>은 <code>go/terraform</code> 루트만 apply한다</strong>(26행).
+data source는 대상이 없으면 plan에서 즉시 실패한다.</p>
+
+<h3>그 뒤에 숨은 두 번째 함정</h3>
+
+<p>그릇을 만들어도 값이 없으면 끝이 아니다. <code>eso.tf</code>의 주입 로직은 환경변수가 없으면
+<strong>조용히 건너뛴다.</strong></p>
+
+<pre><code>if (-not $env:ARGOCD_GITOPS_READ_PAT) { Write-Host "...skipping read PAT injection."; exit 0 }</code></pre>
+
+<p>그리고 ESO는 이제 옛 <code>git-pat</code>이 아니라 <strong>새 시크릿 두 개</strong>를 바라본다.
+값이 비면 ExternalSecret이 실패하고 ArgoCD가 gitops에 인증하지 못한다 —
+<strong>8/4 장애와 정확히 같은 실패 방식</strong>(<code>authentication required: Repository not found</code>)이다.</p>
+
+<h3>조치</h3>
+
+<p><code>go/persistent</code>를 apply해 그릇을 만들었다(<code>7 added, 0 changed, 0 destroyed</code>).
+시크릿 2개 외에 CloudFront 로그 버킷 하드닝 5개가 딸려 있었는데, 코드에만 있고 한 번도
+apply되지 않았던 것들이다 — CloudFront가 destroy된 지금이 적용하기 가장 안전한 시점이었다.</p>
+
+<h3>남은 것 — 그리고 계정 구조가 만든 벽</h3>
+
+<p>값 주입이 남았는데, 여기서 GitHub 계정 구조가 걸린다.</p>
+
+<table>
+  <tr><th>확인 사항</th><th>결과</th></tr>
+  <tr><td>gitops 저장소 소유자</td><td><code>landoll9999</code> — <strong>개인 계정</strong>(조직 아님)</td></tr>
+  <tr><td>작업자 계정</td><td><code>wherekyj</code> — 협업자</td></tr>
+  <tr><td>저장소 권한</td><td><code>push: true</code>, <strong><code>admin: false</code></strong></td></tr>
+</table>
+
+<div class="callout danger">
+  <strong>Fine-grained PAT는 Resource owner로 본인 계정이나 소속 조직만 고를 수 있다.</strong>
+  다른 개인의 계정은 선택할 수 없으므로, 작업자는 이 저장소를 대상으로 하는 fine-grained PAT를
+  <strong>만들 수 없다.</strong> Classic PAT는 private 저장소에 읽기 전용 스코프가 없어
+  <strong>읽기/쓰기 분리가 원리적으로 불가능</strong>하다.
+  <strong>GitHub App(장기 해법)도 설치는 소유자만 가능</strong>하다 — <code>admin: false</code>이므로 마찬가지다.
+</div>
+
+<p>즉 <strong>저장소 소유자의 협조가 필요하다.</strong> 소유자가 당장 어려우면
+기존 PAT 값을 새 시크릿 두 개에 복사해 두면 내일 아침은 안전하다 —
+읽기/쓰기 분리는 안 되지만 <strong>오늘과 같은 수준</strong>이지 나빠지지 않는다.</p>
+
+<h2>12. 현재 상태와 남은 것</h2>
+
+<div class="grid2">
+  <div class="card">
+    <h4><span class="badge done">완료</span> 현재 상태</h4>
+    <ul>
+      <li><strong>DB 비밀번호 제거 완료</strong> — 파드에 <code>DB_PASS</code> 없음</li>
+      <li><strong>정적 관리자 키 비활성화</strong> — 로컬 <code>[default]</code>도 SSO로</li>
+      <li><strong>tfstate SSE-KMS 전환 완료</strong> — 수명주기 30일, 5개 루트 재init</li>
+      <li><strong>GitHub 시크릿 점검 완료</strong> — 세 저장소 모두 정적 AWS 키 0건, CI는 순수 OIDC</li>
+      <li>트리아지는 리소스만 남고 배선 꺼짐 — GuardDuty 알림은 SNS 직결로 정상</li>
+      <li>저녁 <code>daily-down</code> 완료 — 278개 destroy, 상시 3버킷만 잔존</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge risk">긴급</span> 내일 아침 전에</h4>
+    <ul>
+      <li><strong>ArgoCD PAT 2개 값 주입</strong> — 안 하면 daily-up이 plan 단계에서 실패한다.
+          그릇은 만들어 뒀고 값만 없다</li>
+      <li>fine-grained PAT는 <strong>저장소 소유자만</strong> 만들 수 있다.
+          소유자가 어려우면 기존 PAT를 두 시크릿에 복사해 두면 내일은 안전하다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h4><span class="badge todo">남은 것</span></h4>
+    <ul>
+      <li><strong>Groq 키 재발급</strong> — 노출됨. 트리아지 재가동 전 필수</li>
+      <li><code>terra-user</code> 키 <strong>삭제</strong> — 팀원 사용 여부 며칠 관찰 후</li>
+      <li>ArgoCD PAT → GitHub App 교체 — <strong>설치가 소유자 권한</strong>이라 협조 필요</li>
+      <li>Log 계정 S3/Athena 적재 확인 · SIEM 상관 탐지 apply — <code>log-admin</code> 몫</li>
+      <li><code>eks</code> 등 4개 루트의 state 객체는 아직 AES256 — 다음 apply 때 자동 전환</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge new">알고 있을 것</span></h4>
+    <ul>
+      <li>PR #7이 WAF에 <strong>IP 평판 목록을 BLOCK</strong>으로 추가했다 — 내일 자동 적용되고
+          VPN 경유 접속이 막힐 수 있다(익명 IP·로그인 rate limit은 COUNT라 관찰만)</li>
+      <li><strong>이 KMS 키는 삭제 금지</strong> — 지우면 모든 루트의 state와 버전 이력이
+          통째로 복호화 불가가 된다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout info">
+  <strong>되돌리는 방법이 바뀌었다.</strong> 머지 전에는 ConfigMap의 <code>DB_USER</code>를
+  <code>gochuchamchi_app</code>으로 되돌리면 즉시 복귀할 수 있었다.
+  <strong>이제는 비밀번호 계정 자체가 만들어지지 않으므로 terraform <code>dbae59c</code>를 revert해야 한다.</strong>
+</div>
+
+<footer>
+  상세 기록: <code>docs/2026-08-13.md</code> (16개 섹션) ·
+  누적 교훈: <code>docs/pitfalls-checklist.md</code> (8줄 추가) ·
+  절차: <code>docs/runbook.md</code> §1.4 RDS 접속 · §5 검증 스크립트 안내 갱신
+</footer>
+
+</div>
+</body>
+</html>
