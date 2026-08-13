@@ -430,6 +430,17 @@ aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> 
 
 **Terraform 코드 밖에 있는 상태는 destroy/apply에서 살아남지 못합니다.** apply 성공 후 아래를 순서대로 확인하세요.
 
+> **먼저 이걸 돌리면 대부분 자동으로 확인됩니다** (2026-08-13 추가):
+> ```powershell
+> go\scripts\verify-all.ps1
+> ```
+> 스모크 테스트·배포 계약·DB IAM 전용·알림 경로·로그 파이프라인·WAF·스키마 동기화를
+> 한 번에 돌리고 요약표를 냅니다. **종료 코드 0=통과 / 2=미결 / 1=실패**이고,
+> **미결은 실패가 아닙니다** — 토큰 재발급은 파드 기동 후 약 35분, WAF 로그는 몇 분
+> 지연이라 그때까지는 "아직 모른다"가 정확한 답입니다. 몇 분 뒤 다시 돌리세요.
+> 개별 실행: `verify-db-iam-only.ps1` · `verify-waf.ps1` · `verify-notifications.ps1` ·
+> `verify-log-pipeline.ps1`. 일부만 돌리려면 `-Only db,waf`, 느린 것 빼려면 `-Skip schema,waf`.
+
 - [ ] **ArgoCD PAT 확인** — 안 되어 있으면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3, 2026-08-05 §4, 2026-08-06 §1.4).
 
   > **2026-08-06부터 재구축마다 다시 넣을 필요가 없습니다.** 시크릿을 `go/persistent`로 옮겨(`prevent_destroy`) 값이 destroy를 건너 살아남습니다. 아래는 **최초 구축**과 **로테이션**용입니다. 확인만 하고 값이 있으면 넘어가세요:
