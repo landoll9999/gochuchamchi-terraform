@@ -104,10 +104,15 @@ def list_models():
 
 
 def run_one(model_id):
-    """judge.py 를 그 모델로 한 번 태운다."""
+    """judge.py 를 그 모델로 한 번 태운다.
+
+    judge.MODEL 을 직접 갈아끼운다(옛 이름은 judge.GROQ_MODEL 이었다).
+    이 스크립트는 Groq 전용 사전 점검이므로 provider 는 기본값 groq 그대로 둔다 —
+    Claude/OpenAI 와 나란히 비교하려면 compare-providers.py 를 쓸 것.
+    """
     import judge
 
-    judge.GROQ_MODEL = model_id
+    judge.MODEL = model_id
     verdict = judge.judge(SAMPLE_FINDING, API_KEY)
     korean = bool(HANGUL.search(verdict.get("reason", "") + verdict.get("evidence", "")))
     return verdict, korean

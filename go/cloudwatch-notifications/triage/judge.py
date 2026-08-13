@@ -43,23 +43,106 @@ import urllib.request
 
 LOG = logging.getLogger()
 
-GROQ_ENDPOINT = os.environ.get("GROQ_ENDPOINT", "https://api.groq.com/openai/v1/chat/completions")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-GROQ_TIMEOUT_SECONDS = float(os.environ.get("GROQ_TIMEOUT_SECONDS", "20"))
+def _env(name, legacy_name, default=""):
+    """새 이름을 우선하고 옛 GROQ_* 이름으로 물러선다.
+
+    이 파일은 Groq 전용으로 태어나서 환경변수가 전부 GROQ_ 접두사였다.
+    provider가 늘어난 뒤로는 그 이름이 거짓말이 되므로 TRIAGE_* 로 옮겼다.
+    옛 이름을 계속 읽는 이유는 배포 순서 때문이다 — Lambda 코드가 먼저
+    올라가고 Terraform이 나중에 환경변수를 바꾸는 구간에도 판정이 살아 있어야
+    한다. 두 이름이 다 없으면 default 를 쓴다.
+    """
+    for key in (name, legacy_name):
+        value = os.environ.get(key)
+        if value is not None:
+            return value
+    return default
+
+
+# 어느 API 규격으로 말할 것인가. groq/openai는 OpenAI Chat Completions 규격을
+# 공유하므로 코드 경로가 같고, anthropic만 Messages API로 갈라진다.
+#
+# ⚠️ Claude를 OpenAI 호환 레이어(base_url=api.anthropic.com/v1/)로 부르면 안 된다.
+#   그 레이어는 response_format을 **무시한다**. 우리 판정은 구조화 출력이 계약의
+#   근간이라(위 ④), 무시되는 순간 모델이 산문으로 답하고 _validate가 전부
+#   떨어뜨려 모든 finding이 조용히 "판정 없음"이 된다. Claude를 쓰려면 반드시
+#   provider="anthropic"(네이티브 Messages API)으로 간다.
+PROVIDER = os.environ.get("TRIAGE_PROVIDER", "groq").strip().lower()
+
+_OPENAI_COMPATIBLE = ("groq", "openai")
+_SUPPORTED_PROVIDERS = _OPENAI_COMPATIBLE + ("anthropic",)
+
+_DEFAULT_ENDPOINTS = {
+    "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
+    "anthropic": "https://api.anthropic.com/v1/messages",
+}
+
+_DEFAULT_MODELS = {
+    "groq": "openai/gpt-oss-120b",
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-haiku-4-5",
+}
+
+if PROVIDER not in _SUPPORTED_PROVIDERS:
+    # 오타로 판정이 통째로 멈추는 것보다, 기본값으로 돌리고 시끄럽게 남기는 게 낫다.
+    LOG.error("TRIAGE_PROVIDER=%r 를 모릅니다. groq 로 되돌립니다. 허용값: %s",
+              PROVIDER, ", ".join(_SUPPORTED_PROVIDERS))
+    PROVIDER = "groq"
+
+# 빈 값이면 provider 기본 엔드포인트를 쓴다. provider만 바꾸고 엔드포인트를
+# 옛 값으로 남겨 두는 사고를 막으려는 것이다.
+ENDPOINT = _env("TRIAGE_ENDPOINT", "GROQ_ENDPOINT").strip() or _DEFAULT_ENDPOINTS[PROVIDER]
+MODEL = _env("TRIAGE_MODEL", "GROQ_MODEL").strip() or _DEFAULT_MODELS[PROVIDER]
+TIMEOUT_SECONDS = float(_env("TRIAGE_TIMEOUT_SECONDS", "GROQ_TIMEOUT_SECONDS", "20"))
+
+# Anthropic Messages API는 버전 헤더가 필수다. 값이 바뀌는 일은 드물지만
+# 코드를 다시 배포하지 않고 올릴 수 있게 환경변수로 빼 둔다.
+ANTHROPIC_VERSION = os.environ.get("TRIAGE_ANTHROPIC_VERSION", "2023-06-01").strip()
 
 # ⚠️ 추론(reasoning) 모델을 위한 여유.
 #   gpt-oss / qwen3 계열은 최종 JSON 앞에 사고 과정 토큰을 먼저 생성한다.
 #   빠듯하게 잡으면 JSON을 시작하기도 전에 예산이 소진돼 400
 #   json_validate_failed("max completion tokens reached...")로 떨어진다.
 #   상한이지 지출이 아니다 — 생성된 토큰만 과금되므로 넉넉히 둔다.
-GROQ_MAX_TOKENS = int(os.environ.get("GROQ_MAX_TOKENS", "4000"))
+#
+#   Anthropic에서는 max_tokens가 **필수**이고, thinking이 켜지면 사고 토큰까지
+#   이 한도를 같이 먹는다. Claude 5 계열(claude-opus-5 등)은 thinking이 기본
+#   ON이라 이 값이 빠듯하면 답이 잘린다. 기본값 claude-haiku-4-5는 thinking이
+#   기본 OFF라 그대로 써도 된다.
+MAX_TOKENS = int(_env("TRIAGE_MAX_TOKENS", "GROQ_MAX_TOKENS", "4000"))
 
 # 사고 과정 토큰도 출력 단가로 과금된다. 이 판정은 finding 한 건을 보고 정상
 # 자동화인지 가르는 일이라 깊은 추론이 필요 없다. 빈 문자열이면 파라미터를
 # 아예 안 보낸다(이 값을 모르는 모델을 위한 탈출구).
-GROQ_REASONING_EFFORT = os.environ.get("GROQ_REASONING_EFFORT", "low").strip()
+# Anthropic에는 이런 파라미터가 없으므로 그쪽 경로에서는 보내지 않는다.
+REASONING_EFFORT = _env("TRIAGE_REASONING_EFFORT", "GROQ_REASONING_EFFORT", "low").strip()
 
 VALID_VERDICTS = ("TRUE_POSITIVE", "FALSE_POSITIVE", "UNCERTAIN")
+
+# Anthropic 구조화 출력(output_config.format)에 넘길 스키마.
+# OpenAI 규격의 response_format={"type":"json_object"}는 "JSON이기만 하면 된다"
+# 지만, 이쪽은 스키마를 강제할 수 있어 계약 위반 자체가 줄어든다.
+#
+# ⚠️ 수치 제약(minimum/maximum)은 이 API가 지원하지 않는다. 범위 클램프는
+#   _validate가 이미 하고 있으므로 스키마에는 타입만 적는다.
+VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": list(VALID_VERDICTS)},
+        "confidence": {"type": "number"},
+        "risk_score": {"type": "number"},
+        "reason": {"type": "string"},
+        "evidence": {"type": "string"},
+        "recommended_action": {"type": "string"},
+        "injection_suspected": {"type": "boolean"},
+    },
+    "required": [
+        "verdict", "confidence", "risk_score",
+        "reason", "evidence", "recommended_action", "injection_suspected",
+    ],
+    "additionalProperties": False,
+}
 
 # ⚠️ User-Agent를 반드시 붙인다.
 #   urllib 기본값 "Python-urllib/3.x"는 스크래퍼 시그니처로 알려져 있어
@@ -366,15 +449,28 @@ def build_user_prompt(detail, masker):
 # 호출
 # ---------------------------------------------------------------------------
 
+def _auth_headers(api_key):
+    """provider별 인증 헤더.
+
+    OpenAI 규격은 Bearer 토큰이고, Anthropic Messages API는 x-api-key 와
+    anthropic-version 헤더를 쓴다. Anthropic에 Bearer를 보내면 401이 떨어지는데
+    본문이 "키가 틀렸다"처럼 읽혀서 키를 계속 재발급하며 시간을 버리기 쉽다 —
+    키가 아니라 헤더 방식이 다른 것이다.
+    """
+    if PROVIDER == "anthropic":
+        return {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION}
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 def _post(api_key, payload):
     request = urllib.request.Request(
-        GROQ_ENDPOINT,
+        ENDPOINT,
         data=json.dumps(payload).encode("utf-8"),
-        headers={**HTTP_HEADERS, "Authorization": f"Bearer {api_key}"},
+        headers={**HTTP_HEADERS, **_auth_headers(api_key)},
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=GROQ_TIMEOUT_SECONDS) as response:
+    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -385,22 +481,142 @@ def _http_failure(status, body, extra=""):
     쓰지 않게 하는 게 이 함수의 목적이다.
     """
     note = {
-        401: " (API 키 거부 — 시크릿 값 확인)",
+        401: " (API 키 거부 — 시크릿 값과 provider가 맞는지 확인)",
         403: " (Cloudflare 차단일 수 있음 — HTTP_HEADERS의 User-Agent 확인)",
+        404: " (모델 ID가 없을 수 있음 — TRIAGE_MODEL 확인)",
         429: " (레이트리밋)",
     }.get(status, "")
 
     if status == 400:
-        if "max completion tokens" in body:
-            note = " (추론 토큰이 예산을 다 씀 — GROQ_MAX_TOKENS를 올리거나 reasoning_effort를 내릴 것)"
+        if "max completion tokens" in body or "max_tokens" in body:
+            note = " (출력 예산 소진 — TRIAGE_MAX_TOKENS를 올리거나 추론 강도를 내릴 것)"
         elif "reasoning_effort" in body:
             note = " (이 모델이 이 reasoning_effort 값을 모름 — 오류 본문의 허용값 확인)"
         elif "json_validate_failed" in body:
-            note = " (모델이 유효한 JSON을 못 냄 — GROQ_MAX_TOKENS를 올리거나 다른 모델로)"
+            note = " (모델이 유효한 JSON을 못 냄 — TRIAGE_MAX_TOKENS를 올리거나 다른 모델로)"
+        elif "output_config" in body or "json_schema" in body:
+            # 구조화 출력을 지원하지 않는 Claude 모델을 골랐을 때 여기로 온다.
+            note = " (이 모델이 구조화 출력을 지원하지 않음 — 다른 모델로)"
+        elif "thinking" in body:
+            note = " (thinking 설정 충돌 — Claude 5 계열은 thinking이 기본 ON이다)"
 
-    reason = f"Groq HTTP {status}{note}{extra}: {body}"
+    reason = f"{PROVIDER} HTTP {status}{note}{extra}: {body}"
     LOG.warning("판정 호출 실패: %s", reason)
     return unjudged(reason)
+
+
+class _ResponseError(Exception):
+    """응답은 200으로 왔는데 판정을 꺼낼 수 없는 경우.
+
+    HTTP 실패와 구분하는 이유는 대응이 다르기 때문이다. 이쪽은 재시도해도
+    같은 결과가 나오는 일이 많고(거절·잘림), 사유를 그대로 남기는 게 낫다.
+    """
+
+
+def _build_payload(user_prompt):
+    """provider 규격에 맞는 요청 본문.
+
+    두 규격의 차이를 이 함수 안에만 가둔다 — judge()는 어느 provider인지
+    몰라도 되게 한다.
+    """
+    if PROVIDER == "anthropic":
+        return {
+            "model": MODEL,
+            # OpenAI 규격에서는 선택이지만 Anthropic에서는 **필수**다.
+            "max_tokens": MAX_TOKENS,
+            # system은 messages 안의 role이 아니라 최상위 필드다.
+            "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": user_prompt}],
+            # 스키마까지 강제하므로 OpenAI의 json_object보다 계약이 세다.
+            # 계약 위반 자체가 줄어 _validate가 떨어뜨릴 일이 적어진다.
+            "output_config": {
+                "format": {"type": "json_schema", "schema": VERDICT_SCHEMA}
+            },
+            # ⚠️ temperature를 일부러 보내지 않는다.
+            #   Claude 최신 계열(Opus 5/4.8/4.7, Sonnet 5, Fable 5)은 이
+            #   파라미터를 제거해서 보내면 400이다. 구형 모델은 받지만, 모델을
+            #   갈아끼울 때마다 깨지는 것보다 안 보내는 편이 낫다. 결정성은
+            #   구조화 출력 스키마가 대신 잡아 준다.
+            #
+            # ⚠️ reasoning_effort도 보내지 않는다 — Anthropic에는 없는 개념이다.
+            #   추론 깊이는 output_config.effort로 조절하지만, 이 판정에는
+            #   기본값으로 충분해서 두지 않는다.
+        }
+
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        # 관제 판정은 매번 같은 입력에 같은 답이 나와야 한다
+        "temperature": 0,
+        "max_tokens": MAX_TOKENS,
+        # 자유 텍스트 파싱을 없애는 1차 방어선
+        "response_format": {"type": "json_object"},
+    }
+
+    if REASONING_EFFORT:
+        payload["reasoning_effort"] = REASONING_EFFORT
+
+    return payload
+
+
+def _extract_content(response):
+    """응답에서 판정 JSON 문자열을 꺼낸다."""
+    if PROVIDER != "anthropic":
+        return response["choices"][0]["message"]["content"]
+
+    # Anthropic은 content가 블록 배열이다. thinking 블록이 앞에 붙을 수 있으므로
+    # 첫 원소를 그냥 집으면 안 되고 text 블록을 찾아야 한다.
+    stop_reason = response.get("stop_reason")
+
+    if stop_reason == "refusal":
+        # 안전 분류기가 거절한 경우. HTTP 200이라 예외로 오지 않는다 —
+        # content를 먼저 읽는 코드는 여기서 조용히 깨진다.
+        details = response.get("stop_details") or {}
+        raise _ResponseError(
+            f"모델이 요청을 거절했습니다 (category={details.get('category')}). "
+            "finding 내용이 분류기를 건드렸을 수 있습니다"
+        )
+
+    for block in response.get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text") or ""
+            if text.strip():
+                return text
+
+    if stop_reason == "max_tokens":
+        raise _ResponseError(
+            "출력이 max_tokens에서 잘려 JSON이 완성되지 않았습니다 — "
+            "TRIAGE_MAX_TOKENS를 올리거나 thinking이 기본 OFF인 모델을 쓰세요"
+        )
+
+    raise _ResponseError(f"응답에 text 블록이 없습니다 (stop_reason={stop_reason})")
+
+
+def _extract_usage(response):
+    """토큰 사용량을 공통 키로 정규화한다. 지표·비용 추적이 여기에 의존한다."""
+    usage = response.get("usage") or {}
+
+    if PROVIDER == "anthropic":
+        return {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            # Anthropic은 사고 토큰을 따로 세어 주지 않는다 — output_tokens에
+            # 포함돼 같은 단가로 과금된다.
+            "reasoning_tokens": 0,
+        }
+
+    return {
+        "input_tokens": usage.get("prompt_tokens", 0),
+        # 추론 모델의 사고 과정 토큰도 completion_tokens에 포함돼 출력 단가로
+        # 과금된다. 비용이 예상보다 크면 여기부터 본다.
+        "output_tokens": usage.get("completion_tokens", 0),
+        "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get(
+            "reasoning_tokens", 0
+        ),
+    }
 
 
 def _validate(raw_text):
@@ -475,21 +691,7 @@ def judge(detail, api_key, strict_masking=False):
     masker = Masker(strict=strict_masking)
     started = time.monotonic()
 
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_user_prompt(detail, masker)},
-        ],
-        # 관제 판정은 매번 같은 입력에 같은 답이 나와야 한다
-        "temperature": 0,
-        "max_tokens": GROQ_MAX_TOKENS,
-        # 자유 텍스트 파싱을 없애는 1차 방어선
-        "response_format": {"type": "json_object"},
-    }
-
-    if GROQ_REASONING_EFFORT:
-        payload["reasoning_effort"] = GROQ_REASONING_EFFORT
+    payload = _build_payload(build_user_prompt(detail, masker))
 
     try:
         response = _post(api_key, payload)
@@ -501,7 +703,7 @@ def judge(detail, api_key, strict_masking=False):
         # 판정이 통째로 멈추면 안 되므로, 거부당하면 빼고 한 번만 다시 던진다.
         if error.code == 400 and "reasoning_effort" in body and "reasoning_effort" in payload:
             LOG.info("이 모델이 reasoning_effort='%s'를 거부했습니다. 빼고 재시도합니다.",
-                     GROQ_REASONING_EFFORT)
+                     REASONING_EFFORT)
             payload.pop("reasoning_effort")
             try:
                 response = _post(api_key, payload)
@@ -514,10 +716,12 @@ def judge(detail, api_key, strict_masking=False):
             return _http_failure(error.code, body)
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         LOG.warning("판정 호출 실패(네트워크/타임아웃): %s", error)
-        return unjudged(f"네트워크 오류 또는 {GROQ_TIMEOUT_SECONDS}초 타임아웃: {error}")
+        return unjudged(f"네트워크 오류 또는 {TIMEOUT_SECONDS}초 타임아웃: {error}")
 
     try:
-        content = response["choices"][0]["message"]["content"]
+        content = _extract_content(response)
+    except _ResponseError as error:
+        return unjudged(str(error))
     except (KeyError, IndexError, TypeError) as error:
         return unjudged(f"응답 구조가 예상과 다릅니다: {error}")
 
@@ -527,15 +731,9 @@ def judge(detail, api_key, strict_masking=False):
         LOG.warning("판정 출력 계약 위반: %s / 원문 앞부분=%s", error, str(content)[:200])
         return unjudged(f"출력 스키마 위반: {error}")
 
-    usage = response.get("usage") or {}
-    verdict["model"] = response.get("model", GROQ_MODEL)
+    verdict["model"] = response.get("model", MODEL)
+    verdict["provider"] = PROVIDER
     verdict["latency_seconds"] = round(time.monotonic() - started, 2)
-    verdict["input_tokens"] = usage.get("prompt_tokens", 0)
-    # 추론 모델의 사고 과정 토큰도 completion_tokens에 포함돼 출력 단가로 과금된다.
-    # 비용이 예상보다 크면 여기부터 본다.
-    verdict["output_tokens"] = usage.get("completion_tokens", 0)
-    verdict["reasoning_tokens"] = (usage.get("completion_tokens_details") or {}).get(
-        "reasoning_tokens", 0
-    )
+    verdict.update(_extract_usage(response))
 
     return verdict

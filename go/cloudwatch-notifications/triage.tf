@@ -45,11 +45,38 @@ variable "triage_judge_enabled" {
   default     = true
 }
 
+variable "triage_provider" {
+  description = <<-EOT
+    판정을 맡길 API 규격. groq/openai는 OpenAI Chat Completions 규격을 공유하고
+    anthropic만 Messages API로 갈라진다. 시크릿에 넣는 키도 여기에 맞춰야 한다
+    (groq=gsk_…, openai=sk-…, anthropic=sk-ant-…).
+
+    provider를 바꾸기 전에 triage/compare-providers.py로 같은 표본을 태워
+    판정을 비교할 것 — 비용만 보고 고르면 알림 품질이 조용히 나빠진다.
+
+    ⚠️ Claude를 쓰려면 반드시 "anthropic"이다. OpenAI 호환 레이어
+    (base_url=api.anthropic.com/v1/)로 부르면 response_format이 **무시되어**
+    구조화 출력이 깨지고, 모든 finding이 조용히 "판정 없음"이 된다.
+  EOT
+  type        = string
+  default     = "groq"
+
+  validation {
+    condition     = contains(["groq", "openai", "anthropic"], var.triage_provider)
+    error_message = "triage_provider는 groq, openai, anthropic 중 하나여야 합니다."
+  }
+}
+
 variable "triage_groq_model" {
   description = <<-EOT
-    판정에 쓸 Groq 모델 ID. 2026-08-12 기준 생산 모델 실측 비교 결과
-    gpt-oss-120b를 택했다 — llama-3.3-70b보다 싸고(입력 1/4) 빠르고(1.8배)
-    크며, Llama 3.3은 공식 지원 언어에 한국어가 없다.
+    판정에 쓸 모델 ID. 빈 문자열이면 provider별 기본 모델을 쓴다
+    (groq=openai/gpt-oss-120b, openai=gpt-4o-mini, anthropic=claude-haiku-4-5).
+
+    Groq에서 gpt-oss-120b를 택한 근거(2026-08-12 실측): llama-3.3-70b보다
+    싸고(입력 1/4) 빠르고(1.8배) 크며, Llama 3.3은 공식 지원 언어에 한국어가 없다.
+
+    ⚠️ provider와 짝이 맞아야 한다. provider만 바꾸고 모델을 그대로 두면 404가
+    나고 모든 판정이 "판정 없음"이 된다. 헷갈리면 비워 두는 편이 안전하다.
 
     ⚠️ "그록 컴파운드"처럼 웹 검색·코드 실행 도구가 붙은 시스템은 쓰지 말 것.
     판정 입력에는 공격자가 값을 정할 수 있는 문자열(인스턴스 태그, 버킷 이름,
@@ -60,13 +87,17 @@ variable "triage_groq_model" {
     되는데 알림은 계속 나오므로 알아채기 어렵다.
   EOT
   type        = string
-  default     = "openai/gpt-oss-120b"
+  default     = ""
 }
 
 variable "triage_groq_endpoint" {
-  description = "Groq chat completions 엔드포인트 (OpenAI 호환)"
+  description = <<-EOT
+    판정 API 엔드포인트. 비우면 provider 기본값을 쓴다 — provider만 바꾸고
+    엔드포인트를 옛 값으로 남겨 두는 사고를 막기 위해 기본값을 비워 두었다.
+    프록시를 태우거나 호환 게이트웨이를 쓸 때만 채운다.
+  EOT
   type        = string
-  default     = "https://api.groq.com/openai/v1/chat/completions"
+  default     = ""
 }
 
 variable "triage_groq_max_tokens" {
@@ -373,8 +404,8 @@ resource "aws_iam_role_policy" "triage" {
 
 #
 # source_dir 이 아니라 파일을 하나씩 지정한다. 디렉터리를 통째로 넣으면
-# __pycache__ 나 배포 대상이 아닌 검증 스크립트(check-groq.py)까지 딸려가
-# zip 해시가 예측 불가능하게 흔들린다.
+# __pycache__ 나 배포 대상이 아닌 검증 스크립트(check-groq.py,
+# compare-providers.py)까지 딸려가 zip 해시가 예측 불가능하게 흔들린다.
 data "archive_file" "triage" {
   type        = "zip"
   output_path = "${path.module}/guardduty-triage.zip"
@@ -404,7 +435,7 @@ data "archive_file" "triage" {
 
 resource "aws_lambda_function" "triage" {
   function_name = local.triage_name
-  description   = "GuardDuty finding을 Groq으로 판정하고 (심각도 × 판정) 정책 표에 따라 통보"
+  description   = "GuardDuty finding을 AI로 판정하고 (심각도 × 판정) 정책 표에 따라 통보"
 
   role    = aws_iam_role.triage.arn
   handler = "triage_function.lambda_handler"
@@ -429,11 +460,15 @@ resource "aws_lambda_function" "triage" {
       JUDGE_ENABLED  = tostring(var.triage_judge_enabled)
       STRICT_MASKING = tostring(var.triage_strict_masking)
 
-      GROQ_ENDPOINT         = var.triage_groq_endpoint
-      GROQ_MODEL            = var.triage_groq_model
-      GROQ_MAX_TOKENS       = tostring(var.triage_groq_max_tokens)
-      GROQ_REASONING_EFFORT = var.triage_groq_reasoning_effort
-      GROQ_TIMEOUT_SECONDS  = "20"
+      # judge.py는 TRIAGE_* 를 우선 읽고 옛 GROQ_* 로 물러선다. 이름을 옮긴 것은
+      # provider가 groq만이 아니게 된 뒤로 GROQ_ 접두사가 거짓말이 되기 때문이다.
+      # 엔드포인트·모델을 빈 값으로 두면 judge.py가 provider 기본값을 채운다.
+      TRIAGE_PROVIDER         = var.triage_provider
+      TRIAGE_ENDPOINT         = var.triage_groq_endpoint
+      TRIAGE_MODEL            = var.triage_groq_model
+      TRIAGE_MAX_TOKENS       = tostring(var.triage_groq_max_tokens)
+      TRIAGE_REASONING_EFFORT = var.triage_groq_reasoning_effort
+      TRIAGE_TIMEOUT_SECONDS  = "20"
 
       POLICY_MATRIX           = jsonencode(var.triage_policy_matrix)
       ALWAYS_NOTIFY_PREFIXES  = jsonencode(var.guardduty_always_notify_type_prefixes)
