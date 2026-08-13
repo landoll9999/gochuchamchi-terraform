@@ -34,6 +34,17 @@ resource "aws_s3_bucket_versioning" "images" {
   }
 }
 
+# 기본 SSE-S3에도 의존하지 않고, 이미지 객체의 저장 시 암호화를 IaC로 명시한다.
+resource "aws_s3_bucket_server_side_encryption_configuration" "images" {
+  bucket = aws_s3_bucket.images.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "images" {
   bucket = aws_s3_bucket.images.id
 
@@ -88,6 +99,17 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
+resource "aws_cloudfront_response_headers_policy" "images_security" {
+  name    = "gochuchamchi-images-security"
+  comment = "Prevent content-type sniffing for user-uploaded product images"
+
+  security_headers_config {
+    content_type_options {
+      override = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "images" {
   enabled         = true
   is_ipv6_enabled = true
@@ -104,10 +126,11 @@ resource "aws_cloudfront_distribution" "images" {
     target_origin_id       = "gochuchamchi-images-s3"
     viewer_protocol_policy = "redirect-to-https"
 
-    allowed_methods = ["GET", "HEAD", "OPTIONS"]
-    cached_methods  = ["GET", "HEAD"]
-    cache_policy_id = data.aws_cloudfront_cache_policy.caching_optimized.id
-    compress        = true
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.images_security.id
+    compress                   = true
   }
 
   restrictions {
@@ -142,6 +165,21 @@ resource "aws_s3_bucket_policy" "images_cloudfront_read" {
         Condition = {
           StringEquals = {
             "AWS:SourceArn" = aws_cloudfront_distribution.images.arn
+          }
+        }
+      },
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.images.arn,
+          "${aws_s3_bucket.images.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
           }
         }
       }

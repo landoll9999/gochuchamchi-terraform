@@ -170,6 +170,28 @@ variable "waf_rate_limit_per_5min" {
   }
 }
 
+variable "waf_login_rate_limit_per_5min" {
+  description = "POST /auth/login 전용 WAF rate limit. 동일 IP의 로그인 대입 공격을 제한한다."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.waf_login_rate_limit_per_5min >= 10
+    error_message = "waf_login_rate_limit_per_5min 은 최소 10이어야 합니다."
+  }
+}
+
+variable "waf_login_rate_limit_action" {
+  description = "로그인 전용 WAF rule 동작. 운영 관찰 기간에는 COUNT, 차단 전환 시 BLOCK."
+  type        = string
+  default     = "COUNT"
+
+  validation {
+    condition     = contains(["COUNT", "BLOCK"], var.waf_login_rate_limit_action)
+    error_message = "waf_login_rate_limit_action 은 COUNT 또는 BLOCK이어야 합니다."
+  }
+}
+
 variable "cloudfront_origin_header_rotation_version" {
   description = "CloudFront -> ALB Origin 검증값 회전 버전. 변경 시 짧은 전파 불일치가 가능하므로 점검 시간에 apply합니다."
   type        = number

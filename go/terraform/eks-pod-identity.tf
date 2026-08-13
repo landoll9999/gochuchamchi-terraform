@@ -234,13 +234,10 @@ resource "aws_iam_policy" "gochuchamchi_app_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "S3ImageBucketAccess"
-        Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-        Resource = [
-          aws_s3_bucket.images.arn,
-          "${aws_s3_bucket.images.arn}/*"
-        ]
+        Sid      = "S3ProductImageUploadOnly"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = ["${aws_s3_bucket.images.arn}/products/*"]
       },
       {
         # (2026-08-04 제로트러스트) 기존 rds!* 와일드카드는 계정 내 "모든" RDS 관리형

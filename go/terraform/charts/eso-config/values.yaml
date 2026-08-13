@@ -1,5 +1,6 @@
 # 실제 값은 전부 terraform(eso.tf의 helm_release.eso_config values)이 주입함
 region: ""
-patSecretName: ""
+readPatSecretName: ""
+writePatSecretName: ""
 repoURL: ""
 username: ""

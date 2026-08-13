@@ -32,3 +32,25 @@ resource "aws_secretsmanager_secret" "argocd_git_pat" {
     prevent_destroy = true
   }
 }
+
+# Argo CD의 읽기 권한과 Image Updater의 쓰기 권한을 별도 fine-grained PAT로 분리한다.
+# 값은 Terraform state에 넣지 않고, 운영자가 CLI 또는 eso.tf의 환경변수 주입으로만 넣는다.
+resource "aws_secretsmanager_secret" "argocd_gitops_read_pat" {
+  name                    = "gochuchamchi/argocd/gitops-read-pat"
+  description             = "gochuchamchi-gitops GitHub PAT (Contents: Read-only) for Argo CD"
+  recovery_window_in_days = 0
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_secretsmanager_secret" "argocd_image_updater_write_pat" {
+  name                    = "gochuchamchi/argocd/image-updater-write-pat"
+  description             = "gochuchamchi-gitops GitHub PAT (Contents: Read/write) for Argo CD Image Updater"
+  recovery_window_in_days = 0
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
