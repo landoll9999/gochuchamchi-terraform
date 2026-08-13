@@ -9,5 +9,12 @@
 *.yaml  text eol=lf
 *.yml   text eol=lf
 
+# Lambda 배포 패키지에 그대로 들어가는 것들 (log-archive/siem/*).
+# archive_file이 file()로 읽어 zip에 담으므로, 클론마다 줄바꿈이 다르면
+# source_code_hash가 달라져 apply할 때마다 Lambda가 재배포된다.
+# .tf가 겪었던 것과 같은 계열의 문제이고, 런타임도 리눅스라 LF가 맞다.
+*.py    text eol=lf
+*.md    text eol=lf
+
 # Windows 전용 스크립트는 CRLF 유지
 *.ps1   text eol=crlf
