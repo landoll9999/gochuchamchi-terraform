@@ -59,8 +59,16 @@ REGION = os.environ.get("AWS_REGION", "ap-northeast-2")
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 STATE_TABLE_NAME = os.environ["STATE_TABLE_NAME"]
 
-GROQ_SECRET_ARN = os.environ.get("GROQ_SECRET_ARN", "")
-GROQ_SECRET_KEY = os.environ.get("GROQ_SECRET_KEY", "api_key")
+# 판정 provider 가 groq 만이 아니게 된 뒤로 GROQ_ 접두사가 거짓말이 됐다
+# (TRIAGE_PROVIDER=anthropic 인데 키를 GROQ_SECRET_ARN 에서 읽는 모양이 된다).
+# judge.py 와 같은 이유로 TRIAGE_* 를 우선 읽고 옛 이름으로 물러선다 — 코드가
+# 먼저 배포되고 Terraform 이 나중에 환경변수를 바꾸는 구간에도 살아 있어야 한다.
+#
+# 시크릿 자체의 이름(gochuchamchi/triage/groq-api-key)은 바꾸지 않았다.
+# 이름을 바꾸면 리소스가 재생성되는데, 삭제된 시크릿 이름은 복구 대기창
+# (recovery_window_in_days=7) 동안 재사용할 수 없어 전환이 7일 막힌다.
+SECRET_ARN = os.environ.get("TRIAGE_SECRET_ARN") or os.environ.get("GROQ_SECRET_ARN", "")
+SECRET_KEY = os.environ.get("TRIAGE_SECRET_KEY") or os.environ.get("GROQ_SECRET_KEY", "api_key")
 
 JUDGE_ENABLED = os.environ.get("JUDGE_ENABLED", "true").lower() == "true"
 STRICT_MASKING = os.environ.get("STRICT_MASKING", "false").lower() == "true"
@@ -85,28 +93,28 @@ cloudwatch = boto3.client("cloudwatch", region_name=REGION, config=_BOTO_CONFIG)
 dynamodb = boto3.resource("dynamodb", region_name=REGION, config=_BOTO_CONFIG)
 secretsmanager = boto3.client("secretsmanager", region_name=REGION, config=_BOTO_CONFIG)
 
-_groq_api_key = None
+_api_key = None
 
 
-def groq_api_key():
+def judge_api_key():
     """콜드 스타트 때 한 번만 읽는다. 값은 로그에 절대 남기지 않는다."""
-    global _groq_api_key
-    if _groq_api_key is not None:
-        return _groq_api_key
+    global _api_key
+    if _api_key is not None:
+        return _api_key
 
-    if not GROQ_SECRET_ARN:
-        _groq_api_key = ""
-        return _groq_api_key
+    if not SECRET_ARN:
+        _api_key = ""
+        return _api_key
 
     try:
-        raw = secretsmanager.get_secret_value(SecretId=GROQ_SECRET_ARN)["SecretString"].strip()
-        _groq_api_key = json.loads(raw)[GROQ_SECRET_KEY] if raw.startswith("{") else raw
+        raw = secretsmanager.get_secret_value(SecretId=SECRET_ARN)["SecretString"].strip()
+        _api_key = json.loads(raw)[SECRET_KEY] if raw.startswith("{") else raw
     except (ClientError, ValueError, KeyError) as error:
         # 키가 없어도 알림은 계속된다. 판정만 "판정 없음"이 된다.
-        LOG.warning("Groq API 키를 읽지 못했습니다(판정 없이 진행): %s", error)
-        _groq_api_key = ""
+        LOG.warning("판정 API 키를 읽지 못했습니다(판정 없이 진행): %s", error)
+        _api_key = ""
 
-    return _groq_api_key
+    return _api_key
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +397,7 @@ def lambda_handler(event, context):  # noqa: ARG001
             judged_from = "quota-exceeded"
             metrics.append(metric("JudgeQuotaExceeded", 1))
         else:
-            verdict = judge_module.judge(detail, groq_api_key(), strict_masking=STRICT_MASKING)
+            verdict = judge_module.judge(detail, judge_api_key(), strict_masking=STRICT_MASKING)
             judged_from = "model"
             metrics.append(metric("JudgeCalls", 1))
 

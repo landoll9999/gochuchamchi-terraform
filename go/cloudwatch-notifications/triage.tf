@@ -45,6 +45,25 @@ variable "enable_triage" {
 
     즉시 멈춰야 할 때 EventBridge 룰을 disable하지 말 것 — 룰을 끄면
     통보 경로 전체가 죽는다. 이 변수로 끄면 SNS 직결로 안전하게 되돌아간다.
+
+    ── 이 변수가 끄는 것과 끄지 않는 것 (헷갈리기 쉬움)
+
+    끈다  : EventBridge 타겟(aws_cloudwatch_event_target.triage)과
+            Lambda 호출 권한(aws_lambda_permission.triage_from_events).
+            이 둘만 count 게이트가 걸려 있다.
+
+    안 끈다: Lambda 함수·IAM 역할과 정책 3개·DynamoDB 상태 테이블·
+            로그 그룹·에러 알람·시크릿. **리소스는 그대로 남는다.**
+
+    의도된 설계다. 기계는 두고 배선만 끊는 것이라 껐다 켜는 데 수 초면
+    되고, 켤 때 IAM 전파를 기다릴 일도 없다. 남는 유휴 비용은 시크릿
+    $0.4 + 알람 $0.1 해서 월 $0.5 수준이다(Lambda·DynamoDB는 호출이
+    없으면 0).
+
+    리소스까지 완전히 없애려면 이 변수로는 안 되고 -target destroy 로
+    지워야 한다. 다만 **시크릿은 지우지 말 것** — 삭제하면 그 이름이
+    복구 대기창(recovery_window_in_days = 7) 동안 잠겨 7일간 같은
+    이름으로 재생성할 수 없다. 다시 켤 계획이 있으면 시크릿은 남긴다.
   EOT
   type        = bool
   default     = false
@@ -470,8 +489,11 @@ resource "aws_lambda_function" "triage" {
       SNS_TOPIC_ARN    = aws_sns_topic.alerts.arn
       STATE_TABLE_NAME = aws_dynamodb_table.triage_state.name
 
-      GROQ_SECRET_ARN = aws_secretsmanager_secret.triage_groq_api_key.arn
-      GROQ_SECRET_KEY = "api_key"
+      # 시크릿 리소스/이름은 그대로 두고 환경변수 이름만 옮긴다. 시크릿 이름을
+      # 바꾸면 재생성되는데, 삭제된 이름은 복구 대기창(7일) 동안 재사용할 수
+      # 없어 provider 전환이 그 기간만큼 막힌다.
+      TRIAGE_SECRET_ARN = aws_secretsmanager_secret.triage_groq_api_key.arn
+      TRIAGE_SECRET_KEY = "api_key"
 
       JUDGE_ENABLED  = tostring(var.triage_judge_enabled)
       STRICT_MASKING = tostring(var.triage_strict_masking)
