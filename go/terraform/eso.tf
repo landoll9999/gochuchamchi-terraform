@@ -150,8 +150,6 @@ module "eso_pod_identity" {
       resources = [
         data.aws_secretsmanager_secret.argocd_gitops_read_pat.arn,
         data.aws_secretsmanager_secret.argocd_image_updater_write_pat.arn,
-        # 앱 DB 시크릿도 나중에 ESO로 이관할 수 있게 미리 포함 (DB_SECRET_SETUP.md)
-        aws_secretsmanager_secret.app_db.arn,
       ]
     }
   ]

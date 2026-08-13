@@ -46,14 +46,9 @@ locals {
     ]
 
     secrets = [
-      {
-        name = "gochuchamchi-db-app"
-        keys = ["DB_PASS"]
-        # Terraform 관리 밖 — 배스천이 SSM 런타임에서 생성/주입한다.
-        # 그래서 "terraform apply 성공 = 이 Secret 존재"가 보장되지 않는다.
-        # 라이브 검증이 필요한 대표 항목 (db-zero-trust.tf 참고)
-        owner = "bastion runtime (db-zero-trust.tf)"
-      },
+      # (2026-08-13) gochuchamchi-db-app 이 목록에서 빠졌다. IAM 토큰 전환으로 앱
+      # DB 비밀번호가 없어졌고, 그 Secret 을 만들던 배스천 프로비저닝도 제거했다.
+      # 아래 forbidden_refs 로 옮겼다 — gitops 가 계속 참조하면 검증에서 잡힌다.
       {
         name  = kubernetes_secret_v1.gochuchamchi_redis_secret.metadata[0].name
         keys  = ["SPRING_DATA_REDIS_PASSWORD"]
@@ -80,6 +75,11 @@ locals {
     # 옛 문서를 보고 되살린다. 검증 스크립트는 이 이름이 gitops에 남아 있으면 실패시킨다.
     forbidden_refs = [
       "gochuchamchi-db-secret", # 마스터 계정 시절의 Secret (제로트러스트 전환으로 삭제)
+      # (2026-08-13) 앱 전용 비밀번호 계정 시절의 Secret. IAM 토큰 전환으로 계정도
+      # 비밀번호도 없앴다. gitops 가 이걸 envFrom 으로 계속 참조하면 Secret 이
+      # 존재하지 않아 파드가 CreateContainerConfigError 로 못 뜬다 — 8/4 장애와
+      # 정확히 같은 실패 방식이다. 그래서 gitops 수정이 이 커밋보다 먼저다.
+      "gochuchamchi-db-app",
     ]
 
     # ---- 재구축마다 바뀌는 값 (gitops에 하드코딩하면 안 되는 것들) --------------

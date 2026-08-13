@@ -78,7 +78,7 @@ resource "null_resource" "wait_for_app_ready" {
     module.eks,
     kubernetes_ingress_v1.gochuchamchi_web,
     kubernetes_network_policy_v1.gochuchamchi_web_allow,
-    null_resource.provision_app_db_user,
+    null_resource.provision_app_db_iam_user, # 앱이 토큰으로 붙을 DB 계정이 먼저 있어야 한다
     null_resource.inject_gitops_read_pat,
     null_resource.inject_image_updater_write_pat,
     null_resource.sync_kubeconfig,      # 아래 kubectl들이 새 클러스터를 보게 한다 (ci-sync.tf)
@@ -190,9 +190,9 @@ resource "null_resource" "post_apply_smoke_test" {
     module.eks,
     kubernetes_ingress_v1.gochuchamchi_web,
     kubernetes_network_policy_v1.gochuchamchi_web_allow,
-    null_resource.provision_app_db_user, # gochuchamchi-db-app Secret 주입
-    helm_release.eso_config,             # ExternalSecret CR
-    null_resource.wait_for_app_ready,    # 앱이 뜬 뒤에 검사해야 결과가 의미 있다
+    null_resource.provision_app_db_iam_user, # 앱이 토큰으로 붙을 DB 계정
+    helm_release.eso_config,                 # ExternalSecret CR
+    null_resource.wait_for_app_ready,        # 앱이 뜬 뒤에 검사해야 결과가 의미 있다
   ]
 
   provisioner "local-exec" {

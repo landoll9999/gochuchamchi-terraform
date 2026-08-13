@@ -238,17 +238,13 @@ resource "aws_iam_policy" "gochuchamchi_app_policy" {
         Effect   = "Allow"
         Action   = ["s3:PutObject"]
         Resource = ["${aws_s3_bucket.images.arn}/products/*"]
-      },
-      {
-        # (2026-08-04 제로트러스트) 기존 rds!* 와일드카드는 계정 내 "모든" RDS 관리형
-        # 마스터 시크릿 조회가 가능했음. 앱은 이제 마스터 시크릿에 접근할 이유가 없으므로
-        # 앱 전용 시크릿 1개로 축소 (현재 앱은 env로 자격증명을 받아 SDK 조회를 안 하지만,
-        # ESO 전환 대비 + 최소권한 원칙으로 정확한 ARN만 유지)
-        Sid      = "AppDbSecretRead"
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = aws_secretsmanager_secret.app_db.arn
       }
+      # (2026-08-13) AppDbSecretRead 문장을 제거했다.
+      #   원래는 앱 DB 비밀번호가 든 시크릿을 앱이 읽을 수 있게 열어둔 것이었다
+      #   (8/4 에 rds!* 와일드카드를 이 시크릿 1개로 좁힌 흔적). IAM 토큰 전환으로
+      #   그 시크릿 자체가 없어졌으므로 읽을 대상이 존재하지 않는다.
+      #   앱의 DB 자격증명은 이제 secretsmanager 가 아니라 rds-db:connect 로 받는다
+      #   (db-zero-trust.tf 의 app_db_iam_auth 정책).
     ]
   })
 }

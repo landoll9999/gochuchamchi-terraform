@@ -117,18 +117,24 @@ aws ssm start-session --target <bastion-instance-id> --region ap-northeast-2 --p
 sudo su - ec2-user
 ```
 
-> **(2026-08-04 제로트러스트 이후)** `--ssl`이 **필수**입니다 — `require_secure_transport=1`이라 평문 접속은 핸드셰이크에서 거부됩니다. K8s Secret에는 이제 **앱 계정(`gochuchamchi-db-app`) 비밀번호만** 있고, 마스터(admin) 비밀번호는 Secrets Manager에만 있습니다(구 `gochuchamchi-db-secret`은 삭제됨).
+> **(2026-08-04 제로트러스트 이후)** `--ssl`이 **필수**입니다 — `require_secure_transport=1`이라 평문 접속은 핸드셰이크에서 거부됩니다.
+>
+> **(2026-08-13 IAM 토큰 전환 이후)** **앱 계정에는 비밀번호가 없습니다.** `gochuchamchi_app_iam`은 `AWSAuthenticationPlugin`으로 만들어져 비밀번호 인증이 구조적으로 불가능하고, 접속할 때마다 **15분짜리 IAM 토큰**을 발급받아 비밀번호 자리에 넣습니다. 옛 계정 `gochuchamchi_app`과 K8s Secret `gochuchamchi-db-app`은 제거됐으니 **그걸 찾는 옛 절차를 따라가지 마세요.** 남은 비밀번호는 마스터(admin) 하나뿐이고 Secrets Manager에만 있습니다.
 
-**③ 앱 계정으로 접속 — 일상 조회는 이걸로 (DML만 가능)**
+**③ 앱 계정으로 접속 — 일상 조회는 이걸로 (IAM 토큰, DML만 가능)**
 
 ```bash
 which mysql || sudo dnf install -y mariadb105
 rm -f ~/.my.cnf
 DB_HOST=$(kubectl -n gochuchamchi get cm gochuchamchi-config -o jsonpath='{.data.DB_HOST}')
-DB_PASS=$(kubectl -n gochuchamchi get secret gochuchamchi-db-app -o jsonpath='{.data.DB_PASS}' | base64 -d)
-echo "HOST=$DB_HOST  PASS_LEN=${#DB_PASS}"
-MYSQL_PWD="$DB_PASS" mysql --ssl -h "$DB_HOST" -u gochuchamchi_app gochuchamchi
+TOKEN=$(aws rds generate-db-auth-token --hostname "$DB_HOST" --port 3306 --username gochuchamchi_app_iam --region ap-northeast-2)
+echo "HOST=$DB_HOST  TOKEN_LEN=${#TOKEN}"
+MYSQL_PWD="$TOKEN" mysql --ssl -h "$DB_HOST" -u gochuchamchi_app_iam gochuchamchi
 ```
+
+**토큰은 접속 시점에만 검사됩니다** — 세션은 15분이 지나도 끊기지 않습니다. 다만 **재접속할 때는 `TOKEN=` 줄부터 다시** 실행해야 합니다(만료된 토큰으로는 새 접속이 거부됨).
+
+토큰 발급은 로컬 서명이라 API 호출이 아니고, 실제 검사는 **접속할 때 DB가 IAM에 확인**합니다. 배스천 역할에는 `rds-db:connect`가 `gochuchamchi_app_iam` **이 유저 하나로 리소스가 못박혀** 있어(`db-zero-trust.tf`) 다른 유저로는 토큰을 써먹을 수 없습니다.
 
 **④ 마스터(admin)로 접속 — DDL/GRANT 등 관리 작업일 때만**
 
@@ -141,17 +147,38 @@ DB_PASS=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --region
 MYSQL_PWD="$DB_PASS" mysql --ssl -h "$DB_HOST" -u admin gochuchamchi
 ```
 
+**⑤ 로컬 GUI 도구(DBeaver 등)로 붙어야 할 때 — SSM 포트포워딩**
+
+로컬 PowerShell에서 터널을 엽니다 (`session-manager-plugin` 필요):
+
+```powershell
+aws ssm start-session --target <bastion-instance-id> --document-name AWS-StartPortForwardingSessionToRemoteHost `
+  --parameters "host=<rds-endpoint>,portNumber=3306,localPortNumber=13306" --region ap-northeast-2 --profile admin
+```
+
+그 뒤 `127.0.0.1:13306`으로 접속하되 **두 가지를 주의하세요.**
+
+- **토큰은 실제 RDS 엔드포인트로 발급**해야 합니다. `localhost`로 발급하면 서명이 안 맞아 거부됩니다
+- **TLS 인증서가 RDS 호스트명으로 발급**돼 있어 `127.0.0.1`로 붙으면 호스트명 검증이 실패합니다. 클라이언트에서 인증서 검증을 끄거나(`REQUIRE SSL` 자체는 통과) hosts 파일에 별칭을 거세요
+
+일상 조회는 ③이 훨씬 간단합니다. 이 경로는 GUI가 꼭 필요할 때만 쓰세요.
+
 **막힐 때**
 
 ```bash
 export PATH=$PATH:/home/ec2-user/bin                        # kubectl: command not found
 export KUBECONFIG=/home/ec2-user/.kube/config
 rm -f ~/.my.cnf                                             # Access denied (using password: NO)
-kubectl -n gochuchamchi get secret gochuchamchi-db-app      # PASS_LEN=0
 mysql --ssl ...                                             # ERROR 3159 (secure transport required) -> --ssl 누락
 ```
 
-**왜 앱 비밀번호는 kubectl이고 마스터는 Secrets Manager인가** — 앱 자격증명은 배스천 프로비저너가 K8s Secret(`gochuchamchi-db-app`)으로 직접 주입하므로(`db-zero-trust.tf`) kubectl로 꺼내는 게 제일 빠릅니다. 마스터 비밀번호는 제로트러스트 전환으로 **K8s에서 완전히 제거**됐고(state에도 없음), 배스천 IAM이 이 스택의 마스터 시크릿 ARN 1개에만 GetSecretValue를 갖고 있어 Secrets Manager 경유가 유일한 경로입니다. ARN은 재구축마다 바뀌므로 하드코딩하지 말고 매번 `terraform output`으로 조회하세요 (배스천 역할에는 `rds:DescribeDBInstances`가 없어 ARN을 스스로 못 찾습니다).
+- **`TOKEN_LEN=0`** — `generate-db-auth-token`이 실패한 것입니다. 배스천 역할에 `rds-db:connect`가 붙기 전(= `provision_app_db_iam_user`가 돌기 전)이거나 `--hostname`이 비었을 때 납니다
+- **`Access denied for user 'gochuchamchi_app_iam'`** — 토큰이 만료됐거나(재발급), `--hostname`이 실제 엔드포인트와 다르거나(서명 불일치), 계정이 아직 안 만들어진 것입니다. 셋 다 같은 에러로 나오니 순서대로 지우세요
+- **토큰은 약 1KB**입니다. 도구가 비밀번호 길이를 자르면 인증이 실패합니다 (AWS 문서가 명시한 함정)
+
+**왜 앱은 토큰이고 마스터는 Secrets Manager인가** — 앱 계정은 **저장되는 비밀값이 아예 없습니다.** 접속 때마다 IAM이 발급하는 15분짜리 토큰뿐이라 꺼내 올 곳이 없고, 그래서 파드가 침해돼도 읽어 갈 DB 자격증명이 남지 않습니다. 반면 마스터는 **없앨 수 없습니다** — RDS 인스턴스 생성이 마스터 비밀번호를 요구하고, 갓 만들어진 DB에서 `gochuchamchi_app_iam`을 `CREATE USER`할 수 있는 것은 마스터뿐입니다(IAM 계정은 DML만). 매일 DB를 재생성하므로 이 부트스트랩이 매일 아침 일어납니다.
+
+마스터 비밀번호는 제로트러스트 전환으로 **K8s에서 완전히 제거**됐고(state에도 없음), 배스천 IAM이 이 스택의 마스터 시크릿 ARN 1개에만 GetSecretValue를 갖고 있어 Secrets Manager 경유가 유일한 경로입니다. ARN은 재구축마다 바뀌므로 하드코딩하지 말고 매번 `terraform output`으로 조회하세요 (배스천 역할에는 `rds:DescribeDBInstances`가 없어 ARN을 스스로 못 찾습니다).
 
 **왜 `MYSQL_PWD`인가** — mysql은 비밀번호를 ①명령줄 `-p` ②옵션 파일 ③`MYSQL_PWD` 순으로 찾습니다.
 - ①은 `ps` 목록과 SSM 로그에 비밀번호가 그대로 남아서 못 씁니다
@@ -160,11 +187,11 @@ mysql --ssl ...                                             # ERROR 3159 (secure
 
 주의할 점:
 
-- **`max_connections`가 30**이고 HikariCP가 파드당 5개를 씁니다. 확인 후 반드시 `exit` (방치하면 `Too many connections`)
+- **`max_connections`가 30**이고 앱에는 HikariCP 설정이 없어 **전부 기본값**입니다 — `maximumPoolSize=10`(파드당 최대 10, 필요할 때만 늘어남), `maxLifetime=30분`. 파드 2개가 한계까지 쓰면 20개라 여유가 크지 않습니다. 확인 후 반드시 `exit` (방치하면 `Too many connections`)
 - **`SHOW TABLES`가 비어 있으면** 스키마가 적용되지 않은 것입니다 → **§5.1**. `USE gochuchamchi`가 되는데 테이블만 없는 상태가 정상처럼 보이니 주의 (DB 자체는 RDS의 `DBName` 설정이 만듭니다)
 - **`Access denied ... (using password: NO)`가 나오면** 순서대로 확인하세요
   1. `~/.my.cnf`가 남아 있는지 — mysql은 이 파일을 **옵션 없이도 자동으로 읽고**, 옵션 파일이 `MYSQL_PWD`보다 우선순위가 높습니다. 깨진 파일 하나가 이후 모든 접속을 오염시킵니다. `rm -f ~/.my.cnf`
-  2. `PASS_LEN=0`이면 kubectl이 실패한 것입니다. `kubectl -n gochuchamchi get secret gochuchamchi-db-app`로 Secret 존재 여부부터 확인 — 없으면 프로비저너가 안 돈 것: 로컬에서 `terraform taint null_resource.provision_app_db_user` 후 `terraform apply`
+  2. `TOKEN_LEN=0`이면 토큰 발급이 실패한 것입니다. 계정 자체가 없을 수도 있으니 마스터로 붙어(④) `SELECT user, plugin FROM mysql.user WHERE user LIKE 'gochuchamchi%'`로 확인 — 없으면 프로비저너가 안 돈 것: 로컬에서 `terraform taint null_resource.provision_app_db_iam_user` 후 `terraform apply`
 
 ### 1.5 Redis — 배스천에서만
 
@@ -403,6 +430,17 @@ aws s3api get-object-retention --bucket <bucket> --key <key> --version-id <vid> 
 
 **Terraform 코드 밖에 있는 상태는 destroy/apply에서 살아남지 못합니다.** apply 성공 후 아래를 순서대로 확인하세요.
 
+> **먼저 이걸 돌리면 대부분 자동으로 확인됩니다** (2026-08-13 추가):
+> ```powershell
+> go\scripts\verify-all.ps1
+> ```
+> 스모크 테스트·배포 계약·DB IAM 전용·알림 경로·로그 파이프라인·WAF·스키마 동기화를
+> 한 번에 돌리고 요약표를 냅니다. **종료 코드 0=통과 / 2=미결 / 1=실패**이고,
+> **미결은 실패가 아닙니다** — 토큰 재발급은 파드 기동 후 약 35분, WAF 로그는 몇 분
+> 지연이라 그때까지는 "아직 모른다"가 정확한 답입니다. 몇 분 뒤 다시 돌리세요.
+> 개별 실행: `verify-db-iam-only.ps1` · `verify-waf.ps1` · `verify-notifications.ps1` ·
+> `verify-log-pipeline.ps1`. 일부만 돌리려면 `-Only db,waf`, 느린 것 빼려면 `-Skip schema,waf`.
+
 - [ ] **ArgoCD PAT 확인** — 안 되어 있으면 앱이 아예 배포되지 않습니다 (2026-08-04 §4.3, 2026-08-05 §4, 2026-08-06 §1.4).
 
   > **2026-08-06부터 재구축마다 다시 넣을 필요가 없습니다.** 시크릿을 `go/persistent`로 옮겨(`prevent_destroy`) 값이 destroy를 건너 살아남습니다. 아래는 **최초 구축**과 **로테이션**용입니다. 확인만 하고 값이 있으면 넘어가세요:
@@ -636,7 +674,7 @@ kubectl -n gochuchamchi logs deploy/gochuchamchi-web --tail=200 | Select-String 
 | `UnknownHostException` | **DNS 차단** — NetworkPolicy가 서비스 CIDR을 안 열었을 때 | 아래 DNS 확인 |
 | `NOAUTH` (Redis) | AUTH 비밀번호 미주입 | `envFrom`에 `gochuchamchi-redis-secret` 있는지 |
 | `BadSqlGrammarException: Table ... doesn't exist` | 스키마 미적용 | §5.1 |
-| `Access denied for user` | DB 비밀번호 불일치 | §1.4, `gochuchamchi-db-app` Secret 확인 |
+| `Access denied for user 'gochuchamchi_app_iam'` | IAM 토큰 인증 실패 — 만료·호스트명 불일치·계정 부재 | §1.4 ③ (비밀번호가 아니라 토큰 문제다) |
 
 **DNS부터 확인하세요** — 막혀 있으면 DB·Redis 규칙이 아무리 정확해도 전부 실패합니다.
 
@@ -716,7 +754,7 @@ kubectl -n <ns> get pod <파드> -o jsonpath="{.spec.serviceAccountName}"
 | 항목 | 조회 방법 |
 |---|---|
 | RDS 엔드포인트 | `kubectl -n gochuchamchi get cm gochuchamchi-config -o jsonpath='{.data.DB_HOST}'` |
-| RDS 앱 계정 비밀번호 | `kubectl -n gochuchamchi get secret gochuchamchi-db-app -o jsonpath='{.data.DB_PASS}' \| base64 -d` |
+| RDS 앱 계정 자격증명 | **없음** — `gochuchamchi_app_iam`은 IAM 토큰 전용이라 저장된 비밀값이 존재하지 않음 (§1.4 ③에서 매번 발급) |
 | RDS 마스터 비밀번호 | K8s에 없음 — Secrets Manager 경유 (§1.4 ④, ARN은 `terraform output -raw rds_secret_arn`) |
 | Redis 엔드포인트 | `kubectl -n gochuchamchi get cm gochuchamchi-config -o jsonpath='{.data.SPRING_DATA_REDIS_HOST}'` |
 | Redis AUTH 토큰 | `kubectl -n gochuchamchi get secret gochuchamchi-redis-secret -o jsonpath='{.data.SPRING_DATA_REDIS_PASSWORD}' \| base64 -d` |

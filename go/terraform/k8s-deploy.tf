@@ -163,10 +163,14 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
 #         2) 마스터 비밀번호 평문이 tfstate에 저장됨 — SECURITY_AUDIT_REPORT #1이
 #            정의한 "state에 secret_string이 다시 들어가는 시점"(ESO 트리거)이
 #            이미 발동된 상태였음
-#   현재: 앱 자격증명은 배스천이 생성해서 K8s Secret(gochuchamchi-db-app)으로 직접
+#   8/4~8/12: 앱 자격증명은 배스천이 생성해서 K8s Secret(gochuchamchi-db-app)으로 직접
 #         주입 (db-zero-trust.tf) -> 앱 DB 비밀번호가 state에 전혀 남지 않음.
-#   * gitops(03-deployment-web.yml)에서 secretKeyRef/secretRef 이름을
-#     gochuchamchi-db-secret -> gochuchamchi-db-app 으로 바꿔야 함 (키는 DB_PASS 동일)
+#   현재(2026-08-13): 그 Secret 도 없앴다. 앱은 IAM 토큰으로 붙으므로 DB 비밀번호가
+#         state 에 안 남는 정도가 아니라 아예 존재하지 않는다. 파드 환경변수에 쓰이지도
+#         않는 DB_PASS 가 남아 있던 것을 없앤 것이 이 단계의 핵심이다.
+#   * gitops(03-deployment-web.yml)에서 envFrom 의 secretRef: gochuchamchi-db-app 을
+#     제거해야 한다. Secret 이 더는 만들어지지 않으므로 참조가 남아 있으면 파드가
+#     CreateContainerConfigError 로 못 뜬다 — 그래서 gitops 수정이 먼저다.
 # ---------------------------------------------------------------------------
 
 # Redis AUTH 토큰 주입 — DB와 달리 auth_token은 aws_elasticache_replication_group의
