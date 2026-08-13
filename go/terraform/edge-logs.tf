@@ -223,163 +223,18 @@ resource "aws_cloudwatch_event_target" "waf_alarm_seoul_event_bus" {
 # CloudFront standard access logs (v2) -> encrypted private S3
 # -----------------------------------------------------------------------------
 
-resource "aws_s3_bucket" "cloudfront_logs" {
-  bucket        = "gochuchamchi-cloudfront-logs-${data.aws_caller_identity.current.account_id}"
-  force_destroy = false
-
-  tags = merge(local.edge_log_tags, {
-    Name      = "gochuchamchi-cloudfront-logs"
-    Component = "cloudfront-logs"
-  })
+# 버킷 본체는 ../persistent/cloudfront-logs.tf 로 옮겼다 (2026-08-12).
+#   이 루트는 매일 밤 destroy 되는 일일 계층이라, 버킷이 여기 있으면 로그가 매일
+#   같이 사라진다. 그것을 막으려고 걸어둔 force_destroy = false 는 보존 장치가
+#   아니라 teardown 을 실패시키는 장치였고, 실제로 8/12 저녁 daily-down 이
+#   BucketNotEmpty 로 멈췄다. 증적을 남기는 것이 목적이므로 상시 계층으로 옮겼다.
+#
+#   여기서는 읽기만 한다. 따라서 ../persistent 를 먼저 apply 해야 한다
+#   (ecr.tf, kms-data.tf 와 같은 계약).
+data "aws_s3_bucket" "cloudfront_logs" {
+  bucket = "gochuchamchi-cloudfront-logs-${data.aws_caller_identity.current.account_id}"
 }
 
-resource "aws_s3_bucket_ownership_controls" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
-
-  rule {
-    object_ownership = "BucketOwnerEnforced"
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
-
-  rule {
-    id     = "archive-cloudfront-access-logs"
-    status = "Enabled"
-
-    filter {
-      prefix = ""
-    }
-
-    transition {
-      days          = 30
-      storage_class = "STANDARD_IA"
-    }
-
-    transition {
-      days          = 90
-      storage_class = "GLACIER"
-    }
-
-    expiration {
-      days = var.cdn_log_retention_days
-    }
-
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
-    }
-  }
-}
-
-data "aws_iam_policy_document" "cloudfront_logs" {
-  statement {
-    sid    = "DenyInsecureTransport"
-    effect = "Deny"
-
-    principals {
-      type        = "*"
-      identifiers = ["*"]
-    }
-
-    actions = ["s3:*"]
-    resources = [
-      aws_s3_bucket.cloudfront_logs.arn,
-      "${aws_s3_bucket.cloudfront_logs.arn}/*"
-    ]
-
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-
-  statement {
-    sid    = "AWSLogDeliveryAclCheck"
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["delivery.logs.amazonaws.com"]
-    }
-
-    actions   = ["s3:GetBucketAcl", "s3:ListBucket"]
-    resources = [aws_s3_bucket.cloudfront_logs.arn]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
-
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:delivery-source:*"]
-    }
-  }
-
-  statement {
-    sid    = "AWSLogDeliveryWrite"
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["delivery.logs.amazonaws.com"]
-    }
-
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.cloudfront_logs.arn}/*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "s3:x-amz-acl"
-      values   = ["bucket-owner-full-control"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
-
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:delivery-source:*"]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
-  policy = data.aws_iam_policy_document.cloudfront_logs.json
-
-  depends_on = [
-    aws_s3_bucket_ownership_controls.cloudfront_logs,
-    aws_s3_bucket_public_access_block.cloudfront_logs
-  ]
-}
 
 # CloudFront standard logging v2 is configured through the CloudWatch Logs API
 # in us-east-1, even when the S3 destination bucket is in another Region.
@@ -399,7 +254,7 @@ resource "aws_cloudwatch_log_delivery_destination" "cloudfront_s3" {
   output_format = "parquet"
 
   delivery_destination_configuration {
-    destination_resource_arn = aws_s3_bucket.cloudfront_logs.arn
+    destination_resource_arn = data.aws_s3_bucket.cloudfront_logs.arn
   }
 }
 
@@ -415,7 +270,10 @@ resource "aws_cloudwatch_log_delivery" "cloudfront_s3" {
     suffix_path                 = "/{distributionid}/{yyyy}/{MM}/{dd}/{HH}"
   }
 
-  depends_on = [aws_s3_bucket_policy.cloudfront_logs]
+  # 예전에는 aws_s3_bucket_policy.cloudfront_logs 를 depends_on 으로 걸었다. 로그
+  # 전송이 만들어지기 전에 버킷 정책이 delivery.logs.amazonaws.com 을 허용하고 있어야
+  # 하기 때문이다. 정책이 ../persistent 로 옮겨간 지금은 계층 순서(상시 먼저 apply)가
+  # 그 보장을 대신한다.
 }
 
 # -----------------------------------------------------------------------------
@@ -433,6 +291,6 @@ output "waf_log_group_name" {
 }
 
 output "cloudfront_log_bucket_name" {
-  description = "S3 bucket receiving CloudFront standard access logs"
-  value       = aws_s3_bucket.cloudfront_logs.id
+  description = "S3 bucket receiving CloudFront standard access logs (owned by ../persistent)"
+  value       = data.aws_s3_bucket.cloudfront_logs.id
 }

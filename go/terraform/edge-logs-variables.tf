@@ -12,16 +12,9 @@ variable "waf_log_retention_days" {
   }
 }
 
-variable "cdn_log_retention_days" {
-  description = "S3 retention period for CloudFront access logs"
-  type        = number
-  default     = 365
-
-  validation {
-    condition     = var.cdn_log_retention_days > 90
-    error_message = "cdn_log_retention_days must be greater than 90 because logs transition to Glacier on day 90."
-  }
-}
+# cdn_log_retention_days 는 ../persistent/variables.tf 로 옮겼다 (2026-08-12).
+# 이 변수를 쓰던 수명주기 규칙이 버킷과 함께 상시 계층으로 갔기 때문에, 여기 남겨두면
+# 아무도 참조하지 않는 죽은 설정이 된다. 보존 기간을 바꾸려면 ../persistent 에서 바꾼다.
 
 variable "waf_total_blocked_alarm_threshold" {
   description = "5분 동안 전체 WAF 차단 요청이 이 값 이상이면 알람"

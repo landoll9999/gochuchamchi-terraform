@@ -20,3 +20,14 @@ variable "image_signing_github_environment" {
   type        = string
   default     = "production-signing"
 }
+
+variable "cdn_log_retention_days" {
+  description = "CloudFront 액세스 로그 S3 보존 기간 (../terraform/edge-logs-variables.tf에서 함께 옮겨옴)"
+  type        = number
+  default     = 365
+
+  validation {
+    condition     = var.cdn_log_retention_days > 90
+    error_message = "cdn_log_retention_days must be greater than 90 because logs transition to Glacier on day 90."
+  }
+}
