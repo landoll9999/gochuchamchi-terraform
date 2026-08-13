@@ -69,18 +69,27 @@ def _env(name, legacy_name, default=""):
 #   provider="anthropic"(네이티브 Messages API)으로 간다.
 PROVIDER = os.environ.get("TRIAGE_PROVIDER", "groq").strip().lower()
 
-_OPENAI_COMPATIBLE = ("groq", "openai")
+_OPENAI_COMPATIBLE = ("groq", "openai", "gemini")
 _SUPPORTED_PROVIDERS = _OPENAI_COMPATIBLE + ("anthropic",)
 
 _DEFAULT_ENDPOINTS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
     "openai": "https://api.openai.com/v1/chat/completions",
+    # Gemini의 OpenAI 호환 레이어. 인증도 Bearer라 groq/openai와 코드가 같다.
+    # ⚠️ 구글 문서 기준 이 레이어는 아직 베타이고 response_format 지원 여부를
+    #   명시하지 않는다. 우리 판정은 구조화 출력이 계약의 근간이므로, 쓰기 전에
+    #   compare-providers.py 로 실제 판정이 나오는지 반드시 확인할 것.
+    #   (Anthropic 호환 레이어는 바로 이 지점에서 탈락했다 — response_format을
+    #    무시해서 모든 판정이 조용히 "판정 없음"이 된다.)
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     "anthropic": "https://api.anthropic.com/v1/messages",
 }
 
 _DEFAULT_MODELS = {
     "groq": "openai/gpt-oss-120b",
     "openai": "gpt-4o-mini",
+    # 모델 이름이 자주 바뀐다. aistudio.google.com 에서 현재 목록을 확인할 것.
+    "gemini": "gemini-3.6-flash",
     "anthropic": "claude-haiku-4-5",
 }
 

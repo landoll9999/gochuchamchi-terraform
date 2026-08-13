@@ -47,9 +47,13 @@ variable "triage_judge_enabled" {
 
 variable "triage_provider" {
   description = <<-EOT
-    판정을 맡길 API 규격. groq/openai는 OpenAI Chat Completions 규격을 공유하고
-    anthropic만 Messages API로 갈라진다. 시크릿에 넣는 키도 여기에 맞춰야 한다
-    (groq=gsk_…, openai=sk-…, anthropic=sk-ant-…).
+    판정을 맡길 API 규격. groq/openai/gemini는 OpenAI Chat Completions 규격을
+    공유하고 anthropic만 Messages API로 갈라진다. 시크릿에 넣는 키도 여기에
+    맞춰야 한다 (groq=gsk_…, openai=sk-…, gemini=AIza…, anthropic=sk-ant-…).
+
+    ⚠️ gemini는 구글의 OpenAI 호환 레이어를 태운다. 그 레이어는 베타이고
+    response_format 지원이 문서에 명시돼 있지 않으므로, 켜기 전에
+    compare-providers.py 로 실제 판정이 나오는지 반드시 확인할 것.
 
     provider를 바꾸기 전에 triage/compare-providers.py로 같은 표본을 태워
     판정을 비교할 것 — 비용만 보고 고르면 알림 품질이 조용히 나빠진다.
@@ -62,15 +66,16 @@ variable "triage_provider" {
   default     = "groq"
 
   validation {
-    condition     = contains(["groq", "openai", "anthropic"], var.triage_provider)
-    error_message = "triage_provider는 groq, openai, anthropic 중 하나여야 합니다."
+    condition     = contains(["groq", "openai", "gemini", "anthropic"], var.triage_provider)
+    error_message = "triage_provider는 groq, openai, gemini, anthropic 중 하나여야 합니다."
   }
 }
 
 variable "triage_groq_model" {
   description = <<-EOT
     판정에 쓸 모델 ID. 빈 문자열이면 provider별 기본 모델을 쓴다
-    (groq=openai/gpt-oss-120b, openai=gpt-4o-mini, anthropic=claude-haiku-4-5).
+    (groq=openai/gpt-oss-120b, openai=gpt-4o-mini, gemini=gemini-3.6-flash,
+    anthropic=claude-haiku-4-5).
 
     Groq에서 gpt-oss-120b를 택한 근거(2026-08-12 실측): llama-3.3-70b보다
     싸고(입력 1/4) 빠르고(1.8배) 크며, Llama 3.3은 공식 지원 언어에 한국어가 없다.
