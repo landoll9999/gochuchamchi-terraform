@@ -32,11 +32,22 @@ variable "enable_triage" {
     AI 트리아지 on/off. false면 EventBridge 타겟이 SNS 직결로 되돌아간다
     (트리아지 도입 전 동작). **알림 자체는 끊기지 않고 판정만 없어진다.**
 
+    기본값이 false인 이유: 2026-08-13에 적용했다가 판정 provider를 다시
+    검토하기로 하면서 배선을 껐다. 기본값이 true로 남아 있으면 이 루트를
+    apply하는 사람이 의도치 않게 트리아지를 되살리게 되고, 그때 시크릿에
+    들어 있는 키가 유효한지 아무도 확인하지 않는다. **코드의 기본값과 실제
+    배포 상태를 일치시켜 두는 것이 이 변수의 유일한 안전장치다.**
+
+    켤 때는 명시적으로 켠다:
+        $env:TF_VAR_enable_triage = "true"
+    켜기 전에 시크릿의 API 키가 유효한지 먼저 확인할 것
+    (triage/compare-providers.py 로 판정이 실제로 나오는지 확인).
+
     즉시 멈춰야 할 때 EventBridge 룰을 disable하지 말 것 — 룰을 끄면
-    통보 경로 전체가 죽는다.
+    통보 경로 전체가 죽는다. 이 변수로 끄면 SNS 직결로 안전하게 되돌아간다.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "triage_judge_enabled" {
