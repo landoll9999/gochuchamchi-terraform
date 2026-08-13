@@ -170,7 +170,20 @@ foreach ($case in $cases) {
 
     $payloadPath = Join-Path $temp "event-$index.json"
     $outPath = Join-Path $temp "out-$index.json"
-    $event | ConvertTo-Json -Depth 10 | Out-File -FilePath $payloadPath -Encoding utf8
+    # payload 는 순수 ASCII 로 쓴다. 이유가 두 가지 겹쳐 있다.
+    #   1) PS 5.1 의 `Out-File -Encoding utf8` 은 BOM 을 붙인다(pwsh 7 은 안 붙임).
+    #   2) AWS CLI 는 Windows 에서 file:// 파라미터를 로캘 인코딩(한국어 Windows
+    #      기준 cp949)으로 읽는다. 한글을 UTF-8 바이트 그대로 넣으면 디코드에
+    #      실패한다 — "text contents could not be decoded".
+    # 비 ASCII 문자를 JSON \uXXXX 이스케이프로 바꾸면 JSON 규격상 동등하면서
+    # 어떤 로캘에서도 안전하다.
+    $json = $event | ConvertTo-Json -Depth 10
+    $ascii = New-Object System.Text.StringBuilder
+    foreach ($ch in $json.ToCharArray()) {
+        if ([int]$ch -gt 127) { [void]$ascii.AppendFormat('\u{0:x4}', [int]$ch) }
+        else { [void]$ascii.Append($ch) }
+    }
+    [System.IO.File]::WriteAllText($payloadPath, $ascii.ToString(), (New-Object System.Text.ASCIIEncoding))
 
     Write-Host "`n  ── $($case.Desc)"
 
@@ -180,7 +193,9 @@ foreach ($case in $cases) {
         --region $Region --profile $Profile `
         $outPath | Out-Null
 
-    $result = Get-Content $outPath -Raw | ConvertFrom-Json
+    # Lambda 응답은 UTF-8 이다. PS 5.1 의 Get-Content 기본값은 시스템 ANSI(cp949)라
+    # 한글 reason 이 깨진다 — 화면 출력뿐 아니라 아래 [3] 의 문자열 매칭도 틀어진다.
+    $result = Get-Content $outPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
     if ($result.errorMessage) {
         Bad "Lambda 실행 오류: $($result.errorMessage)"
@@ -215,7 +230,7 @@ aws lambda invoke --function-name $FunctionName `
     --region $Region --profile $Profile `
     $outPath | Out-Null
 
-$dup = Get-Content $outPath -Raw | ConvertFrom-Json
+$dup = Get-Content $outPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($dup.status -eq "filtered" -and $dup.reason -match "중복") {
     Ok "같은 finding id 재수신 → 중복 억제 동작"
 } else {
