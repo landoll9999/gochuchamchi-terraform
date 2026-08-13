@@ -91,6 +91,49 @@ resource "null_resource" "inject_git_pat" {
   }
 }
 
+# 기존 공용 PAT는 롤백용으로 남겨 둔다. 새 read/write PAT는 별도 Secret에만 주입한다.
+resource "null_resource" "inject_gitops_read_pat" {
+  triggers = {
+    secret_arn = data.aws_secretsmanager_secret.argocd_gitops_read_pat.arn
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-ExecutionPolicy", "Bypass", "-Command"]
+    command     = <<-EOT
+      $secretId = '${data.aws_secretsmanager_secret.argocd_gitops_read_pat.name}'
+      $region   = '${var.region}'
+      $profile  = '${var.aws_profile}'
+      if (-not $env:ARGOCD_GITOPS_READ_PAT) { Write-Host "ARGOCD_GITOPS_READ_PAT is not set; skipping read PAT injection."; exit 0 }
+      $null = aws secretsmanager get-secret-value --secret-id $secretId --region $region --profile $profile 2>$null
+      if ($LASTEXITCODE -eq 0) { Write-Host "Read PAT already exists; skipping injection."; exit 0 }
+      $null = aws secretsmanager put-secret-value --secret-id $secretId --secret-string "$env:ARGOCD_GITOPS_READ_PAT" --region $region --profile $profile
+      if ($LASTEXITCODE -ne 0) { Write-Error "Read PAT injection failed."; exit 1 }
+      Write-Host "Read PAT injected."
+    EOT
+  }
+}
+
+resource "null_resource" "inject_image_updater_write_pat" {
+  triggers = {
+    secret_arn = data.aws_secretsmanager_secret.argocd_image_updater_write_pat.arn
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-ExecutionPolicy", "Bypass", "-Command"]
+    command     = <<-EOT
+      $secretId = '${data.aws_secretsmanager_secret.argocd_image_updater_write_pat.name}'
+      $region   = '${var.region}'
+      $profile  = '${var.aws_profile}'
+      if (-not $env:ARGOCD_IMAGE_UPDATER_WRITE_PAT) { Write-Host "ARGOCD_IMAGE_UPDATER_WRITE_PAT is not set; skipping write PAT injection."; exit 0 }
+      $null = aws secretsmanager get-secret-value --secret-id $secretId --region $region --profile $profile 2>$null
+      if ($LASTEXITCODE -eq 0) { Write-Host "Write PAT already exists; skipping injection."; exit 0 }
+      $null = aws secretsmanager put-secret-value --secret-id $secretId --secret-string "$env:ARGOCD_IMAGE_UPDATER_WRITE_PAT" --region $region --profile $profile
+      if ($LASTEXITCODE -ne 0) { Write-Error "Write PAT injection failed."; exit 1 }
+      Write-Host "Write PAT injected."
+    EOT
+  }
+}
+
 
 # ESO 컨트롤러가 이 스택의 시크릿"만" 읽도록 정확한 ARN으로 제한
 # (iamRole.tf에서 rds!* 와일드카드를 걷어낸 것과 같은 원칙)
@@ -105,9 +148,8 @@ module "eso_pod_identity" {
       sid     = "ReadDesignatedSecretsOnly"
       actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
       resources = [
-        data.aws_secretsmanager_secret.argocd_git_pat.arn,
-        # (2026-08-13) 앱 DB 시크릿을 뺐다 — IAM 토큰 전환으로 시크릿 자체가 없어졌다.
-        # ESO 로 이관할 대상이 아니라, 존재하지 않는 자격증명이 됐다.
+        data.aws_secretsmanager_secret.argocd_gitops_read_pat.arn,
+        data.aws_secretsmanager_secret.argocd_image_updater_write_pat.arn,
       ]
     }
   ]
@@ -153,19 +195,28 @@ resource "helm_release" "eso_config" {
   # 있어야 "첫 동기화"에서 바로 성공한다. 값이 없는 채로 CR이 뜨면 SecretSyncedError로
   # 떨어지고, refreshInterval이 1h이라 나중에 값을 넣어도 최대 1시간을 기다리게 된다
   # (2026-08-05에 force-sync 어노테이션으로 수동 재촉해야 했던 이유).
-  depends_on = [helm_release.external_secrets, helm_release.argocd, null_resource.inject_git_pat]
+  depends_on = [
+    helm_release.external_secrets,
+    helm_release.argocd,
+    null_resource.inject_gitops_read_pat,
+    null_resource.inject_image_updater_write_pat,
+  ]
 
   values = [
     yamlencode({
-      region        = var.region
-      patSecretName = data.aws_secretsmanager_secret.argocd_git_pat.name
-      repoURL       = local.gitops_repo_url
-      username      = var.argocd_github_owner
+      region             = var.region
+      readPatSecretName  = data.aws_secretsmanager_secret.argocd_gitops_read_pat.name
+      writePatSecretName = data.aws_secretsmanager_secret.argocd_image_updater_write_pat.name
+      repoURL            = local.gitops_repo_url
+      username           = var.argocd_github_owner
     })
   ]
 }
 
-output "argocd_git_pat_inject_command" {
-  value       = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_git_pat.name} --secret-string '<GitHub PAT>' --region ${var.region} --profile ${var.aws_profile}"
-  description = "PAT 수동 주입/로테이션 명령. 재구축 시 자동 주입을 쓰려면 apply 전에 $env:ARGOCD_GIT_PAT를 설정할 것 (null_resource.inject_git_pat)"
+output "argocd_git_pat_inject_commands" {
+  value = {
+    read  = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_gitops_read_pat.name} --secret-string '<READ_PAT>' --region ${var.region} --profile ${var.aws_profile}"
+    write = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_image_updater_write_pat.name} --secret-string '<WRITE_PAT>' --region ${var.region} --profile ${var.aws_profile}"
+  }
+  description = "Argo CD read PAT 및 Image Updater write PAT 수동 주입/로테이션 명령"
 }

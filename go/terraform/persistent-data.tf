@@ -41,6 +41,14 @@ data "aws_secretsmanager_secret" "argocd_git_pat" {
   name = "gochuchamchi/argocd/git-pat"
 }
 
+data "aws_secretsmanager_secret" "argocd_gitops_read_pat" {
+  name = "gochuchamchi/argocd/gitops-read-pat"
+}
+
+data "aws_secretsmanager_secret" "argocd_image_updater_write_pat" {
+  name = "gochuchamchi/argocd/image-updater-write-pat"
+}
+
 # 워크로드 데이터 CMK — 별칭으로 조회 (2026-08-07 kms.tf에서 persistent로 이동)
 data "aws_kms_key" "data" {
   key_id = "alias/gochuchamchi-data"

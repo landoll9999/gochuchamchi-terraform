@@ -234,13 +234,10 @@ resource "aws_iam_policy" "gochuchamchi_app_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "S3ImageBucketAccess"
-        Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-        Resource = [
-          aws_s3_bucket.images.arn,
-          "${aws_s3_bucket.images.arn}/*"
-        ]
+        Sid      = "S3ProductImageUploadOnly"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = ["${aws_s3_bucket.images.arn}/products/*"]
       }
       # (2026-08-13) AppDbSecretRead 문장을 제거했다.
       #   원래는 앱 DB 비밀번호가 든 시크릿을 앱이 읽을 수 있게 열어둔 것이었다

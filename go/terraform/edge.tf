@@ -82,23 +82,38 @@ resource "aws_acm_certificate_validation" "cloudfront" {
 locals {
   # AWS 관리형 룰 그룹 — 항목을 추가/제거하면 아래 dynamic "rule"에 그대로 반영됨
   waf_managed_rule_groups = {
+    "aws-managed-ip-reputation" = {
+      priority        = 5
+      name            = "AWSManagedRulesAmazonIpReputationList"
+      metric          = "gochuchamchi-ip-reputation"
+      override_action = "none"
+    }
+    "aws-managed-anonymous-ip" = {
+      priority        = 6
+      name            = "AWSManagedRulesAnonymousIpList"
+      metric          = "gochuchamchi-anonymous-ip"
+      override_action = "count"
+    }
     # OWASP 계열 공통 룰 (XSS, LFI, 프로토콜 위반 등)
     "aws-managed-common" = {
-      priority = 10
-      name     = "AWSManagedRulesCommonRuleSet"
-      metric   = "gochuchamchi-managed-common"
+      priority        = 10
+      name            = "AWSManagedRulesCommonRuleSet"
+      metric          = "gochuchamchi-managed-common"
+      override_action = "none"
     }
     # 알려진 악성 입력 (Log4Shell JNDI, 경로 조작 등)
     "aws-managed-known-bad-inputs" = {
-      priority = 20
-      name     = "AWSManagedRulesKnownBadInputsRuleSet"
-      metric   = "gochuchamchi-known-bad-inputs"
+      priority        = 20
+      name            = "AWSManagedRulesKnownBadInputsRuleSet"
+      metric          = "gochuchamchi-known-bad-inputs"
+      override_action = "none"
     }
     # SQL Injection 전용 룰 — 앱이 DB(MariaDB) 기반 회원/게시판이라 직접 해당
     "aws-managed-sqli" = {
-      priority = 30
-      name     = "AWSManagedRulesSQLiRuleSet"
-      metric   = "gochuchamchi-sqli"
+      priority        = 30
+      name            = "AWSManagedRulesSQLiRuleSet"
+      metric          = "gochuchamchi-sqli"
+      override_action = "none"
     }
   }
 }
@@ -138,6 +153,74 @@ resource "aws_wafv2_web_acl" "edge" {
     }
   }
 
+  # 로그인은 일반 페이지 요청보다 훨씬 낮은 임계값으로 별도 관찰/차단한다.
+  # COUNT로 적용 후 CloudWatch 지표를 확인하고 BLOCK으로 전환한다.
+  rule {
+    name     = "login-rate-limit-per-ip"
+    priority = 2
+
+    dynamic "action" {
+      for_each = var.waf_login_rate_limit_action == "BLOCK" ? [1] : []
+      content {
+        block {}
+      }
+    }
+
+    dynamic "action" {
+      for_each = var.waf_login_rate_limit_action == "COUNT" ? [1] : []
+      content {
+        count {}
+      }
+    }
+
+    statement {
+      rate_based_statement {
+        limit              = var.waf_login_rate_limit_per_5min
+        aggregate_key_type = "IP"
+
+        scope_down_statement {
+          and_statement {
+            statement {
+              byte_match_statement {
+                field_to_match {
+                  uri_path {}
+                }
+                positional_constraint = "EXACTLY"
+                search_string         = "/auth/login"
+
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
+                }
+              }
+            }
+
+            statement {
+              byte_match_statement {
+                field_to_match {
+                  method {}
+                }
+                positional_constraint = "EXACTLY"
+                search_string         = "POST"
+
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "gochuchamchi-login-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
   dynamic "rule" {
     for_each = local.waf_managed_rule_groups
 
@@ -146,7 +229,15 @@ resource "aws_wafv2_web_acl" "edge" {
       priority = rule.value.priority
 
       override_action {
-        none {}
+        dynamic "none" {
+          for_each = rule.value.override_action == "none" ? [1] : []
+          content {}
+        }
+
+        dynamic "count" {
+          for_each = rule.value.override_action == "count" ? [1] : []
+          content {}
+        }
       }
 
       statement {
