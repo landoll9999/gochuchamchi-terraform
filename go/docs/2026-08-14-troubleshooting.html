@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>트러블슈팅 보고서 — 2026-08-14</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  h4 { font-size: 14.5px; margin: 18px 0 6px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .node small { font-weight: 500; color: var(--sub); }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .callout.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .kpi div { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+             padding: 14px 12px; text-align: center; }
+  .kpi .n { font-size: 24px; font-weight: 700; color: var(--accent); display: block; }
+  .kpi .t { font-size: 12.5px; color: var(--sub); }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .kpi { grid-template-columns: 1fr 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>트러블슈팅 보고서 — 2026-08-14</h1>
+  <div class="meta">
+    Workload 계정 828885965304 · 담당 wherekyj ·
+    이번 세션에서 만난 함정 8건 · <strong>대부분 코드 오류가 아니라 도구·환경·워크플로 함정</strong>
+  </div>
+</header>
+
+<div class="kpi">
+  <div><span class="n">8</span><span class="t">함정 (도구·환경·워크플로)</span></div>
+  <div><span class="n">3</span><span class="t">인코딩 관련 함정</span></div>
+  <div><span class="n">3</span><span class="t">아키텍처 결정</span></div>
+  <div><span class="n">0</span><span class="t">내 변경 관련 코드 오류</span></div>
+</div>
+
+<div class="callout ok">
+  <strong>이 세션을 한 문장으로 말하면</strong> — <strong>겉으로 코드가 깨진 것처럼 보인 8건이 거의 다
+  도구·환경·워크플로의 함정이었다.</strong> 컴파일 에러, "String not found", "리소스 0개", "코드가 사라졌다" 같은
+  전혀 다른 얼굴로 나타나서, 증상만 보면 내 변경을 의심하게 된다. 그래서 각 건마다
+  <strong>왜 코드 문제로 오해하기 쉬운지</strong>와 <strong>판별 근거(명령·로그·심볼)</strong>를 함께 남긴다.
+  결론부터 말하면 <strong>내가 추가한 코드에서 나온 타입·구문 에러는 0건</strong>이었다.
+</div>
+
+<div class="callout info">
+  <strong>읽는 법</strong> — 함정 8건은 각각 <strong>증상 → 원인 → 해결 → 판별근거</strong> 순서로 적었다.
+  그중 <strong>인코딩 계열이 3건</strong>(§1 javac, §6 PowerShell BOM, §7 cp949 em-dash)으로,
+  전부 "한글 + Windows 로캘"이 공통 뿌리다. 마지막 §9는 함정이 아니라
+  <strong>이번에 내린 아키텍처 결정 3건</strong>의 판단 근거 기록이다.
+</div>
+
+<h2>1. javac 인코딩 — <code>x-windows-949</code> unmappable character</h2>
+
+<h3>증상</h3>
+<p>
+  <code>S3Service.java</code>(UTF-8 저장, 한글 주석 포함)를 컴파일하니
+  <strong><code>unmappable character (0xED) for encoding x-windows-949</code></strong> 경고가 수십 건 쏟아졌다.
+  방금 손댄 파일이라 <strong>내가 넣은 한글이 뭔가 잘못됐나</strong> 싶은 착시가 먼저 온다.
+</p>
+
+<pre><code>S3Service.java:14: warning: unmappable character (0xED) for encoding x-windows-949
+S3Service.java:14: warning: unmappable character (0xED) for encoding x-windows-949
+...  <span class="cmt">(같은 경고 수십 건, 전부 한글 주석 줄)</span></code></pre>
+
+<h3>원인</h3>
+<p>
+  <code>javac</code>는 <code>-encoding</code>을 안 주면 <strong>플랫폼 기본 인코딩으로 소스를 읽는다.</strong>
+  Windows에서 그 기본값이 <strong>cp949 = <code>x-windows-949</code></strong>다. 파일은 UTF-8인데 javac가 cp949로
+  해석하니 한글 바이트(<code>0xED</code> 등)가 매핑 불가로 깨진다. Maven 빌드는
+  <code>project.build.sourceEncoding=UTF-8</code>로 컴파일하므로 이 문제가 안 보이지만,
+  <strong>javac를 직접 호출하면 그 설정이 어디에도 실리지 않는다.</strong>
+</p>
+
+<h3>해결</h3>
+<p>javac에 <code>-encoding UTF-8</code>을 붙이자 그 경고가 <strong>전부 사라졌다.</strong></p>
+
+<div class="callout ok">
+  <strong>판별 근거</strong> — 에러가 코드 로직(타입·심볼·구문)이 아니라
+  <strong><code>unmappable character</code> 한 종류뿐</strong>이면, 그건 인코딩 옵션 문제지 코드 문제가 아니다.
+  줄 번호가 <strong>전부 한글이 들어간 줄</strong>에 몰려 있는 것도 같은 신호다.
+</div>
+
+<h2>2. 앱 컴파일 완전검증의 한계 — <code>mvn</code>/<code>mvnw</code>·의존성 부재</h2>
+
+<h3>증상</h3>
+<p>
+  인코딩을 넘긴 뒤에도 컴파일이 실패했다. 이번엔 얼굴이 바뀌어
+  <strong><code>package org.springframework... does not exist</code></strong>,
+  <strong><code>package software.amazon.awssdk... does not exist</code></strong>가 떴다.
+  "그럼 정말 내 코드가 문제인가" 싶어지는 지점이다.
+</p>
+
+<h3>원인</h3>
+<p>
+  이 PC에는 <code>mvn</code>이 없고, 이 Spring 프로젝트에는 <code>mvnw</code>(래퍼)도 없다.
+  <code>~/.m2/repository</code>에 이 프로젝트의 의존성(spring / awssdk)이 받아져 있지 않고,
+  <code>target/classes</code>도 없어 <strong>로컬에서 한 번도 빌드된 적이 없다.</strong>
+  즉 클래스패스에 라이브러리가 통째로 빠져 있어 <code>import</code>가 전부 "패키지 없음"으로 떨어진다.
+</p>
+
+<table>
+  <tr><th style="width:220px">확인 지점</th><th>상태</th><th style="width:140px">의미</th></tr>
+  <tr><td><code>mvn</code> / <code>mvnw</code></td><td>둘 다 없음</td><td>빌드 진입점 없음</td></tr>
+  <tr><td><code>~/.m2/repository</code></td><td>spring · awssdk 의존성 없음</td><td>클래스패스 공백</td></tr>
+  <tr><td><code>target/classes</code></td><td>없음</td><td>로컬 빌드 이력 0</td></tr>
+</table>
+
+<h3>판단 — "완전 컴파일"을 "내 변경 관련 에러 없음"으로 갈음</h3>
+<p>
+  남은 에러가 <strong>전부 "패키지 없음"</strong>이고, 내가 추가한 코드(<code>Map.of</code> 사용,
+  매직바이트 검사, <code>byte</code> 연산)에서 나온 <strong>타입·구문 에러는 0건</strong>이었다.
+  이건 환경 제약이지 코드 결함이 아니다. 의존성만 있으면 사라질 에러이므로
+  <strong>CI(GitHub Actions)에서는 통과할 것</strong>으로 판단하고, 로컬에서 완전 컴파일을 고집하는 대신
+  "내 변경 관련 에러 없음"으로 검증을 갈음했다.
+</p>
+
+<div class="callout warn">
+  <strong>판별 근거</strong> — 남은 에러의 <strong>종류</strong>를 보면 된다.
+  전부 <code>does not exist</code>(패키지/심볼 부재) 계열이고 내가 만진 심볼의 타입·구문 에러가 0이면,
+  실패의 원인은 <strong>없는 라이브러리</strong>지 잘못 짠 코드가 아니다.
+  로컬 환경 부재를 코드 문제로 오인하기 가장 쉬운 자리다.
+</div>
+
+<h2>3. <code>terraform validate</code> — provider 캐시 부재</h2>
+
+<h3>증상</h3>
+<p>
+  <code>log-archive</code> 루트에서 <code>terraform validate</code>가
+  <strong><code>no package for registry.terraform.io/hashicorp/archive cached in .terraform</code></strong>로 실패했다.
+  코드가 잘못된 것처럼 보이지만, 실은 검증기 자신이 아직 준비가 안 된 상태다.
+</p>
+
+<h3>원인</h3>
+<p>
+  매일 <code>init</code>을 도는 건 <strong><code>terraform</code> 루트 하나뿐</strong>이다.
+  <code>log-archive</code>를 비롯한 다른 루트들은 이 세션에서 <code>init</code>한 적이 없어
+  <strong><code>.terraform/providers</code>가 비어 있다.</strong> validate는 provider 스키마가 있어야
+  타입을 검사할 수 있으므로, 캐시가 없으면 코드를 보기도 전에 멈춘다.
+</p>
+
+<h3>해결</h3>
+<pre><code><span class="cmt"># 백엔드 접속 없이 provider만 받아 캐시를 채운 뒤 validate</span>
+terraform init -backend=false -input=false
+terraform validate   <span class="cmt">→ 통과</span></code></pre>
+<p>
+  <code>-backend=false</code>로 <strong>백엔드(원격 state)는 건드리지 않고 provider만</strong> 채웠고,
+  이 방식으로 <strong>5개 루트 전부</strong> validate 통과를 확인했다.
+</p>
+
+<div class="callout info">
+  <strong>판별 근거</strong> — 에러 메시지에 <code>cached in .terraform</code>이 들어 있으면
+  코드 유효성 문제가 아니라 <strong>init을 안 돌린 루트</strong>라는 뜻이다.
+  "매일 init하는 루트는 하나뿐"이라는 워크플로를 기억하면 바로 걸러진다.
+</div>
+
+<h2>4. <code>terraform fmt</code>가 정렬을 바꿔 Edit이 "String not found"</h2>
+
+<h3>증상</h3>
+<p>
+  변수를 추가하려고 Edit을 걸었더니 <strong><code>String to replace not found</code></strong>가 났다.
+  <strong>방금 읽은 파일 내용 그대로 앵커를 잡았는데도</strong> 안 맞는다 — 파일이 유령처럼 바뀐 느낌이다.
+</p>
+
+<h3>원인</h3>
+<p>
+  앞선 <code>terraform fmt</code>가 <code>=</code> 정렬(공백 개수)을 바꿔 놓았다.
+  내 <code>old_string</code>은 fmt <strong>이전</strong>의 공백을 담고 있어서 현재 파일과 글자 단위로 불일치한다.
+  내용은 같아 보여도 <strong>공백 폭이 달라 exact match가 깨진 것</strong>이다.
+</p>
+
+<h3>해결</h3>
+<p>
+  Grep으로 <strong>현재 파일의 실제 텍스트(정렬된 상태)</strong>를 다시 읽어 그 앵커로 Edit했다.
+  <strong>fmt를 돌린 뒤에는 항상 파일을 재확인</strong>하고 앵커를 다시 뜬다.
+</p>
+
+<div class="callout warn">
+  <strong>판별 근거</strong> — "분명히 방금 본 내용인데 not found"가 뜨면, 사이에
+  <strong>포매터(fmt / prettier 등)가 끼어들어 공백·정렬을 바꿨는지</strong>를 먼저 의심한다.
+  기억 속 텍스트가 아니라 <strong>지금 디스크의 텍스트</strong>가 진실이다.
+</div>
+
+<h2>5. Edit 앵커 오타 — 존재하지 않는 SQL 순서</h2>
+
+<h3>증상</h3>
+<p>
+  <code>siem-detection-rules.tf</code>에 룰을 추가하려는데, <code>data-egress</code> 룰 끝을 가리킨
+  <code>old_string</code>이 불일치했다. §4와 증상이 똑같아 보여서 <strong>또 fmt인가</strong> 싶지만 원인이 다르다.
+</p>
+
+<h3>원인</h3>
+<p>
+  이번엔 파일이 바뀐 게 아니라 <strong>내 앵커가 틀렸다.</strong> 앵커에
+  <strong><code>ORDER BY total_bytes DESC</code>를 중복으로 잘못 적었다.</strong>
+  실제 SQL의 절 순서는 <strong><code>GROUP BY → HAVING → ORDER BY</code></strong>인데,
+  기억으로 앵커를 지어내다가 없는 순서를 만들어 낸 것이다.
+</p>
+
+<div class="flow">
+  <div class="lane-title">내가 적은 앵커 (틀림)</div>
+  <div class="lane">
+    <span class="node neutral">GROUP BY</span><span class="arrow">→</span>
+    <span class="node bad">ORDER BY total_bytes DESC<br><small>중복 삽입</small></span>
+  </div>
+  <div class="lane-title">파일의 실제 순서</div>
+  <div class="lane">
+    <span class="node neutral">GROUP BY</span><span class="arrow">→</span>
+    <span class="node good">HAVING</span><span class="arrow">→</span>
+    <span class="node good">ORDER BY total_bytes DESC</span>
+  </div>
+</div>
+
+<h3>해결</h3>
+<p>파일의 <strong>정확한 절 순서</strong>를 보고 앵커를 다시 만들어 Edit했다.</p>
+
+<div class="callout danger">
+  <strong>판별 근거 · §4와의 구별</strong> — 둘 다 "not found"지만 원인이 반대다.
+  <strong>§4는 파일이 바뀐 것</strong>(fmt), <strong>§5는 내 기억이 틀린 것</strong>(앵커 오타)이다.
+  구별법은 하나 — <strong>기억이 아니라 파일을 보고 앵커를 만든다.</strong>
+  Grep으로 현재 텍스트를 뜨면 두 경우 모두 즉시 해결된다.
+</div>
+
+<h2>6. PowerShell 5.1 — BOM 없으면 한글이 깨진다</h2>
+
+<h3>증상</h3>
+<p>
+  <code>verify-auto-response.ps1</code>을 Write로 생성하면 <strong>UTF-8 no BOM</strong>으로 저장된다.
+  PS 5.1이 그 파일을 <strong>cp949로 읽어</strong> 한글 주석·문자열이 깨진다. 스크립트 로직은 멀쩡한데
+  실행하면 문법 에러나 문자 깨짐으로 나타나서, 처음엔 스크립트를 잘못 짠 줄 안다.
+</p>
+
+<h3>원인</h3>
+<p>
+  <strong>PS 5.1은 BOM이 없는 파일을 시스템 로캘(cp949)로 디코딩한다.</strong>
+  UTF-8로 저장된 한글이 cp949로 읽히니 깨진다. Write 도구의 기본 출력이 no BOM이라
+  <strong>도구의 기본값과 PS 5.1의 기본값이 어긋나는 지점</strong>이다.
+</p>
+
+<h3>해결</h3>
+<pre><code><span class="cmt"># Write로 만든 뒤 Python으로 BOM(0xEF 0xBB 0xBF)을 앞에 붙인다</span>
+BOM = b'\xef\xbb\xbf'
+data = open(path, 'rb').read()
+open(path, 'wb').write(BOM + data)</code></pre>
+<p>
+  기존 <code>verify-*</code> 스크립트들도 <strong>전부 BOM이 붙어 있어</strong>, 바이트를 대조해서
+  같은 상태(<code>EF BB BF</code>로 시작)로 맞췄는지 확인했다.
+</p>
+
+<div class="callout warn">
+  <strong>판별 근거</strong> — 새로 만든 <code>.ps1</code>에서만 한글이 깨지고 기존 스크립트는 멀쩡하면,
+  차이는 코드가 아니라 <strong>BOM 유무</strong>다. <code>xxd</code>/hex로 첫 3바이트가
+  <code>EF BB BF</code>인지 보면 확정된다.
+</div>
+
+<h2>7. cp949 em-dash 사망 — 반복되는 함정 (<code>read_me</code>·AWS CLI)</h2>
+
+<h3>증상</h3>
+<p>
+  <code>read_me</code>(visualize)가 돌려준 62KB JSON을 Python으로 파싱·출력하려다
+  <strong><code>'cp949' codec can't encode character '—' (em-dash)</code></strong>로 죽었다.
+  JSON을 못 다루는 것처럼 보이지만, 실제로는 <strong>콘솔에 찍는 순간</strong> 죽는 것이다.
+</p>
+
+<h3>원인</h3>
+<p>
+  Windows 콘솔 기본 인코딩 <strong>cp949가 em-dash(<code>—</code>)를 표현하지 못한다.</strong>
+  파싱은 성공하고, <code>print</code>가 그 문자를 콘솔로 내보내는 단계에서 인코딩이 터진다.
+  <strong>이 프로젝트에서 AWS CLI도 같은 이유로 죽어 "리소스 0개"로 오인되는 함정이 반복된다</strong> —
+  비ASCII가 든 설명 필드 하나 때문에 조회 전체가 실패하고, 화면에는 결과가 없는 것처럼 보인다.
+</p>
+
+<h3>해결</h3>
+<p>
+  <strong>비ASCII가 든 필드를 출력에서 아예 빼고</strong> 필요한 것(여기서는 CSS 변수 목록)만 뽑아 찍었다.
+  AWS CLI라면 <code>--query</code>로 설명 필드를 출력에서 제외하는 것과 같은 요령이다.
+</p>
+
+<div class="callout danger">
+  <strong>판별 근거 · 반복 함정</strong> — 조회/파싱이 "0개" 또는 codec 에러로 끝나면
+  <strong>데이터가 없는 게 아니라 콘솔이 특정 문자를 못 찍는 것</strong>일 수 있다.
+  cp949 + em-dash(또는 그 외 비ASCII)는 이 프로젝트에서 <strong>이미 여러 번 밟은 자리</strong>다.
+  "리소스 0개"가 나오면 인코딩부터 배제하고 넘어간다.
+</div>
+
+<h2>8. <code>git checkout main</code>으로 자동대응 코드가 "사라진" 것</h2>
+
+<h3>증상</h3>
+<p>
+  WAF 패치용 fix 브랜치를 만들려고 <code>git checkout main</code>을 했더니, 작업트리에서
+  자동대응 코드(<code>edge.tf</code>·<code>isolation_function.py</code> 등)가 <strong>없어졌다.</strong>
+  방금까지 있던 파일이 통째로 사라지니 <strong>실수로 날렸나</strong> 하고 가슴이 철렁하는 순간이다.
+</p>
+
+<h3>원인</h3>
+<p>
+  그 파일들은 <strong>feat 브랜치 커밋(<code>acaffd8</code>)에만 있고 main에는 없다.</strong>
+  <code>checkout main</code>을 하면 작업트리가 main 버전(자동대응 없음)으로 바뀌고,
+  <strong>uncommitted였던 WAF 변경만</strong> 그대로 따라온다. 사라진 게 아니라
+  <strong>다른 브랜치에 안전하게 커밋되어 있는 것</strong>이다.
+</p>
+
+<div class="flow">
+  <div class="lane-title">feat/detection-and-auto-response (acaffd8, origin에 push됨)</div>
+  <div class="lane">
+    <span class="node good">edge.tf</span>
+    <span class="node good">isolation_function.py</span>
+    <span class="node good">…자동대응 일체</span>
+    <span class="arrow">＋</span>
+    <span class="node neutral">WAF 변경<small> (uncommitted)</small></span>
+  </div>
+  <div class="lane-title">git checkout main 이후 작업트리</div>
+  <div class="lane">
+    <span class="node bad">자동대응 코드 없음<br><small>main엔 애초에 없음</small></span>
+    <span class="arrow">＋</span>
+    <span class="node neutral">WAF 변경만 따라옴<small> (uncommitted라 브랜치 무관)</small></span>
+  </div>
+</div>
+
+<h3>판단 — 의도된 결과다</h3>
+<p>
+  이건 <strong>두 주제(자동대응 / 보안 패치)를 분리하려는 의도된 동작</strong>이다.
+  자동대응은 feat 브랜치에 커밋되어 있고 <strong>origin에도 push되어 있어 안전</strong>하다.
+  자동대응 작업을 이어가려면 <strong><code>git checkout feat/detection-and-auto-response</code></strong>로 돌아가면 된다.
+</p>
+
+<div class="callout ok">
+  <strong>판별 근거</strong> — "파일이 사라졌다"의 첫 확인은 <code>git status</code>와
+  <strong><code>git branch</code></strong>다. 사라진 파일이 <strong>다른 브랜치의 커밋(acaffd8)에 들어 있고
+  그 브랜치가 origin에 있으면</strong> 유실이 아니라 브랜치 전환의 정상 결과다.
+  uncommitted 변경만 브랜치를 따라 이동한다는 규칙을 기억하면 당황할 일이 없다.
+</div>
+
+<h2>9. 아키텍처 결정 3건 — 함정은 아니나 판단 근거 기록</h2>
+
+<p>
+  아래 셋은 함정이 아니라 <strong>이번에 내린 설계 결정</strong>이다. 나중에 "왜 이렇게 배선했나"를
+  다시 묻지 않도록 근거를 남긴다.
+</p>
+
+<h3>① WAF IP set 위치 — 일일 계층이 아니라 상시 계층에</h3>
+<p>
+  차단용 WAF IP set은 <strong><code>CLOUDFRONT</code> scope라 <code>us-east-1</code> 전용</strong>이다.
+  그런데 그 IP set을 참조하는 <strong>edge WAF는 매일 destroy되는 일일 계층</strong>에 있다.
+  <strong>차단된 IP 목록은 매일 사라지면 안 되는 상태값</strong>이므로, IP set을
+  <strong>상시 계층 <code>persistent</code></strong>에 두고, 일일 <code>edge</code>가 이를
+  <strong>data source로 참조</strong>하게 했다. 참조 방향은 한 방향(<strong>일일 → 상시</strong>)이라
+  일일 계층을 밀어도 IP 목록은 살아남는다. IP set의 <strong>내용은 Lambda가 관리</strong>하므로,
+  terraform은 <strong><code>ignore_changes</code></strong>로 그 내용에서 손을 뗀다(런타임이 채운 값을
+  terraform이 매번 되돌리지 않도록).
+</p>
+
+<div class="flow">
+  <div class="lane-title">참조 방향 — 한 방향 (일일 → 상시)</div>
+  <div class="lane">
+    <span class="node bad">edge WAF<small> (일일, 매일 destroy)</small></span>
+    <span class="arrow">— data source —&gt;</span>
+    <span class="node good">IP set<small> (persistent 상시, us-east-1)</small></span>
+    <span class="arrow">◁ ignore_changes</span>
+    <span class="node neutral">Lambda<small> (내용 관리)</small></span>
+  </div>
+</div>
+
+<h3>② Lambda → EKS 접근 — VPC 직결 대신 배스천 SSM</h3>
+<p>
+  자동대응 Lambda가 EKS를 만져야 하는데, <strong>클러스터가 매일 재생성 + 프라이빗 엔드포인트</strong>라
+  <strong>Lambda를 VPC에 직결하기 부담</strong>스럽다(ENI·서브넷·매일 바뀌는 엔드포인트를 다 물려야 함).
+  대신 <strong>이미 <code>gochuchamchi</code> 네임스페이스 edit 권한이 있는 배스천</strong>을
+  <strong>SSM으로 시켜 <code>kubectl</code>을 실행</strong>하게 했다. 이건 새 경로가 아니라
+  <strong>기존 DB 프로비저닝과 같은 경로</strong>라, 검증된 배선을 재사용하는 셈이다.
+</p>
+
+<div class="flow">
+  <div class="lane-title">Lambda → EKS (기존 DB 프로비저닝과 동일 경로)</div>
+  <div class="lane">
+    <span class="node neutral">자동대응 Lambda</span><span class="arrow">— SSM —&gt;</span>
+    <span class="node good">배스천<small> (gochuchamchi ns edit 권한)</small></span><span class="arrow">— kubectl —&gt;</span>
+    <span class="node neutral">EKS<small> (매일 재생성·프라이빗)</small></span>
+  </div>
+</div>
+
+<h3>③ SIEM 크로스계정 배선 — 권한은 이미 있고 라우팅만 추가</h3>
+<p>
+  Log 계정 → Workload 계정으로 이벤트를 <strong><code>put</code>할 권한은 이미 존재</strong>했다.
+  기존 <code>log-account-eventbridge.tf</code>의 <strong><code>event_permission</code>(계정 단위)</strong>이
+  그 권한을 이미 열어 두고 있어서, <strong>권한을 새로 추가할 필요가 없었다.</strong>
+  이번에 필요한 것은 <strong>라우팅 rule 하나</strong>뿐이라, 그것만 추가했다.
+</p>
+
+<div class="callout info">
+  <strong>판단 근거</strong> — 크로스계정 배선은 보통 "신뢰/권한"과 "라우팅"이 한 세트인데,
+  이번엔 <strong>권한(계정 단위 <code>event_permission</code>)이 선행 작업으로 이미 깔려 있었다.</strong>
+  기존 <code>log-account-eventbridge.tf</code>를 먼저 읽어 이를 확인했기 때문에
+  <strong>중복 권한을 새로 만들지 않고 rule만</strong> 얹을 수 있었다. 기존 코드를 읽는 것이 절약이 된 사례다.
+</div>
+
+<h2>10. 요약 — 함정을 판별하는 신호</h2>
+
+<table>
+  <tr><th style="width:36px">#</th><th>겉으로 보인 증상</th><th>진짜 원인</th><th style="width:150px">판별 신호</th></tr>
+  <tr><td>1</td><td>컴파일 경고 수십 건</td><td>javac가 UTF-8을 cp949로 읽음</td><td><code>unmappable character</code>만 있음</td></tr>
+  <tr><td>2</td><td>컴파일 실패 (package 없음)</td><td>mvn/의존성 부재 (환경)</td><td>전부 <code>does not exist</code></td></tr>
+  <tr><td>3</td><td>validate 실패</td><td>해당 루트 init 안 함</td><td><code>cached in .terraform</code></td></tr>
+  <tr><td>4</td><td>Edit "String not found"</td><td>fmt가 정렬을 바꿈</td><td>fmt 직후 발생</td></tr>
+  <tr><td>5</td><td>Edit "String not found"</td><td>앵커 오타(없는 순서)</td><td>기억으로 만든 앵커</td></tr>
+  <tr><td>6</td><td>한글 깨짐 / 문법 에러</td><td>BOM 없어 cp949로 읽힘</td><td>첫 3바이트 ≠ <code>EF BB BF</code></td></tr>
+  <tr><td>7</td><td>"리소스 0개" / codec 에러</td><td>cp949가 em-dash 못 찍음</td><td>비ASCII 필드 출력 시</td></tr>
+  <tr><td>8</td><td>"파일이 사라졌다"</td><td>브랜치 전환(의도된 결과)</td><td>파일이 <code>acaffd8</code>에 있음</td></tr>
+</table>
+
+<div class="callout ok">
+  <strong>관통하는 교훈</strong> — 8건 중 <strong>내 코드가 원인인 것은 하나도 없었다.</strong>
+  인코딩(§1·6·7), init/캐시(§3), 포매터(§4), 앵커 기억(§5), 브랜치 워크플로(§8) —
+  전부 <strong>도구와 환경의 기본 동작</strong>이 만든 함정이다. 증상은 매번 코드 문제처럼 위장하지만,
+  <strong>에러의 "종류"와 발생 "타이밍"</strong>을 보면 대개 코드 밖에 원인이 있다.
+</div>
+
+<footer>
+  담당 wherekyj · 이번 세션 관련 커밋 해시:
+  <code>acaffd8</code> (<code>feat/detection-and-auto-response</code> — 자동대응 코드:
+  <code>edge.tf</code>·<code>isolation_function.py</code> 등, origin push됨) ·
+  <code>784415b</code> (격리 Lambda 대응 4종) · <code>52db0f4</code> (WAF 로그인 rate limit COUNT→BLOCK, <code>fix/security-hardening</code>) ·
+  주요 심볼: <code>x-windows-949</code>/cp949 인코딩 · <code>init -backend=false</code> ·
+  <code>siem-detection-rules.tf</code> · WAF IP set(persistent, <code>ignore_changes</code>) ·
+  배스천 SSM <code>kubectl</code> · <code>log-account-eventbridge.tf</code>의 <code>event_permission</code>
+</footer>
+
+</div>
+</body>
+</html>

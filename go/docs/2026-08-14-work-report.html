@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>작업 보고서 — 2026-08-14</title>
+<style>
+  :root {
+    --ink: #1a2332; --sub: #5a6678; --line: #e3e7ee; --bg: #f7f8fa;
+    --accent: #2456a6; --accent-soft: #eaf1fb; --ok: #1e7e4c; --ok-soft: #e8f5ee;
+    --warn: #a05a00; --warn-soft: #fdf3e3; --danger: #b3372f; --danger-soft: #fdecea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', -apple-system, sans-serif;
+         color: var(--ink); background: var(--bg); line-height: 1.65; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header .meta { color: var(--sub); font-size: 14px; }
+  h2 { font-size: 19px; margin: 44px 0 14px; padding: 8px 14px; background: var(--accent-soft);
+       border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0; }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent); }
+  h4 { font-size: 14.5px; margin: 18px 0 6px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; background: #fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  code { background: #eef1f6; padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: Consolas, 'Courier New', monospace; }
+  pre { background: #1e2430; color: #dce3ee; border-radius: 8px; padding: 14px 16px;
+        font-size: 13px; overflow-x: auto; line-height: 1.5;
+        font-family: Consolas, 'Courier New', monospace; }
+  pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
+  pre .cmt { color: #8a94a6; }
+  .flow { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px; margin: 14px 0 22px; overflow-x: auto; }
+  .flow .lane { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .flow .lane-title { font-size: 13px; font-weight: 700; color: var(--sub); margin: 10px 0 2px; }
+  .node { background: var(--accent-soft); border: 1.5px solid var(--accent); color: var(--ink);
+          border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .node.bad { background: var(--danger-soft); border-color: var(--danger); }
+  .node.good { background: var(--ok-soft); border-color: var(--ok); }
+  .node.neutral { background: #f1f3f7; border-color: #b8c0cc; }
+  .node small { font-weight: 500; color: var(--sub); }
+  .arrow { color: var(--sub); font-weight: 700; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
+           border-radius: 999px; margin-right: 6px; }
+  .badge.done { background: var(--ok-soft); color: var(--ok); }
+  .badge.new { background: var(--accent-soft); color: var(--accent); }
+  .badge.todo { background: var(--warn-soft); color: var(--warn); }
+  .badge.risk { background: var(--danger-soft); color: var(--danger); }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .callout.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout.danger { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+  .callout.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .card ul { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .card li { margin: 4px 0; }
+  .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 24px; }
+  .kpi div { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+             padding: 14px 12px; text-align: center; }
+  .kpi .n { font-size: 24px; font-weight: 700; color: var(--accent); display: block; }
+  .kpi .t { font-size: 12.5px; color: var(--sub); }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--sub); font-size: 13px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .kpi { grid-template-columns: 1fr 1fr; } }
+  @media print { body { background: #fff; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>작업 보고서 — 2026-08-14</h1>
+  <div class="meta">
+    Workload 계정 828885965304 · Log 계정 564186750363 · 담당 wherekyj ·
+    이전 세션(8/13) DB 비밀번호 제거 위에 <strong>탐지·대응을 대폭 확장</strong>
+  </div>
+</header>
+
+<div class="kpi">
+  <div><span class="n">4 → 10</span><span class="t">SIEM 탐지 룰</span></div>
+  <div><span class="n">1 → 8</span><span class="t">격리 Lambda 대응 종류</span></div>
+  <div><span class="n">5</span><span class="t">커밋 (3브랜치·2저장소)</span></div>
+  <div><span class="n">2</span><span class="t">보안 하드닝 패치</span></div>
+</div>
+
+<div class="callout ok">
+  <strong>오늘의 큰 줄기 하나로 말하면</strong> — <strong>방어를 '탐지(무엇을 보는가)'와
+  '대응(무엇을 하는가)' 양면으로 넓혔다.</strong> 격리 Lambda의 대응이 1종에서 8종으로,
+  SIEM 탐지 룰이 4개에서 10개로 늘었고, SIEM 판정을 <strong>크로스계정 대응까지 연결</strong>했다.
+  보안 리뷰에서 짚은 워크로드 구멍 2개도 패치했다. 다만 <strong>전부 드라이런이 기본이라,
+  배포해도 스위치를 켜기 전에는 실제 대응이 돌지 않는다</strong> — 코드는 자리에 있되 아직 잠들어 있다.
+</div>
+
+<h2>1. 탐지 확대 — Log 계정 log-archive, 룰 4 → 10개</h2>
+
+<p>
+  탐지는 전부 Log 계정(564186750363)의 <code>log-archive</code> 쪽에서 늘렸다.
+  세 갈래(DB 감사 · EKS 제어평면 · 앱 행위)에서 룰을 2개씩, 총 6개를 추가했다.
+</p>
+
+<h3>DB 감사 — 정규화 뷰에 편입, 룰 2개</h3>
+<p>
+  RDS 감사를 정규화 뷰(<code>security-events-view.tf</code>)에 편입했다. 원문 <code>message</code>가
+  MariaDB audit CSV라서 <strong>split으로 필드를 파싱</strong>하는 뷰를 만들고 탐지 뷰에 얹었다.
+</p>
+<table>
+  <tr><th style="width:220px">룰</th><th>보는 것 · 판별 근거</th></tr>
+  <tr>
+    <td><code>db-auth-failure</code></td>
+    <td>DB 인증 실패의 폭증. 무차별 대입·오설정을 초기에 잡는다.</td>
+  </tr>
+  <tr>
+    <td><code>db-unexpected-principal</code></td>
+    <td>예상 밖 DB 계정 접속. <strong>구 비밀번호 계정 <code>gochuchamchi_app</code>의 접속을
+      상시 자동 감지</strong>한다 — 어제까지 <code>verify-db-iam-only.ps1</code>로 <strong>수동 검증</strong>하던
+      "비밀번호 계정이 더는 안 태어나는가"를 탐지 룰이 대체했다.</td>
+  </tr>
+</table>
+
+<h3>EKS 제어평면 — 조회조차 안 되던 로그를 살렸다, 룰 2개</h3>
+<p>
+  control-plane 로그는 중앙 S3로 수집은 되고 있었으나 <strong>Glue 테이블이 없어 조회조차 안 됐다</strong>.
+  <code>eks-control-plane-analytics.tf</code>로 원문 <code>message</code> 테이블을 신설하고,
+  뷰·룰에서는 audit JSON만 <code>json_extract</code>로 파싱한다. 탐지 뷰가 원본을 그대로 스캔하지 않게
+  <strong>원본 테이블을 직접 조회</strong>해 스캔량을 보호했다 — <code>vpc_flow</code>와 동일한 처리다.
+</p>
+<table>
+  <tr><th style="width:220px">룰</th><th>보는 것 · 판별 근거</th></tr>
+  <tr>
+    <td><code>eks-pod-exec</code></td>
+    <td><code>kubectl exec</code>/<code>attach</code>. 침해된 파드에 들어가 손대는 정황.
+      <strong>CRITICAL, <code>always_alert</code></strong> — 판정과 무관하게 항상 알린다.</td>
+  </tr>
+  <tr>
+    <td><code>eks-forbidden-burst</code></td>
+    <td>K8s 403(Forbidden)의 폭증. 권한 밖 리소스를 훑는 정찰 신호.</td>
+  </tr>
+</table>
+
+<h3>앱 행위 — 룰 2개</h3>
+<table>
+  <tr><th style="width:220px">룰</th><th>보는 것 · 판별 근거</th></tr>
+  <tr>
+    <td><code>app-admin-path-probe</code></td>
+    <td>관리자 경로 무단 접근으로 인한 403. 관리 콘솔 탐침을 잡는다.</td>
+  </tr>
+  <tr>
+    <td><code>app-upload-burst</code></td>
+    <td>상품 등록의 폭증. 아래 5번의 <strong>S3 업로드 취약점을 탐지 쪽에서 보완</strong>한다 —
+      코드 차단(대응)과 이상 감지(탐지)를 양쪽에 둔다.</td>
+  </tr>
+</table>
+
+<h2>2. 대응 강화 — workload, 격리 Lambda 1종 → 8종</h2>
+
+<p>
+  대응은 전부 workload 계정의 격리 Lambda에서 늘렸다. <strong>기존 2종</strong>(EC2 격리 —
+  ENI의 SG를 검역 SG로 교체 · IAM 정적키 비활성화) 위에 <strong>오늘 6종을 추가</strong>했다.
+</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>WAF IP 자동 차단</h4>
+    <ul>
+      <li><code>persistent/waf-blocklist.tf</code>에 us-east-1 <code>CLOUDFRONT</code> IP set 생성,
+          <code>ignore_changes=[addresses]</code>로 Lambda가 넣는 IP를 terraform이 되돌리지 않게 함</li>
+      <li><code>terraform/edge.tf</code>가 <code>data.aws_wafv2_ip_set</code>로 참조 + block rule(<code>priority 3</code>)</li>
+      <li>Lambda의 <code>block_remote_ip</code>(격리·키 비활성화와 병행) / <code>sweep_expired_waf_blocks</code>
+          — <strong>24h 자동 만료</strong>, audit 경로가 청소</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>침해 파드 K8s 격리</h4>
+    <ul>
+      <li>Lambda가 EKS 프라이빗 API에 <strong>직접 붙지 않고</strong> 배스천 <code>SSM</code>+<code>kubectl</code>로
+          <code>deny-all</code> NetworkPolicy 적용 — <strong>파드를 살려 포렌식</strong></li>
+      <li><code>gochuchamchi</code> ns 한정, k8s 이름 정규식으로 인젝션 검증</li>
+      <li>Lambda timeout <strong>60 → 120</strong>(SSM 왕복 시간 확보)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>IAM 주체 격리</h4>
+    <ul>
+      <li>키 비활성화가 못 잡는 <strong>AssumedRole / SSO 세션</strong>에 <code>deny-all</code> 인라인 정책 부착</li>
+      <li>이 계정이 SSO라 <strong>실질적 갭</strong>이었다 — 정적 키가 아니면 비활성화가 무의미</li>
+      <li><code>recover-iam</code> 복구, <code>protected_iam_principals</code> 보호목록 필수(자기 발을 쏘지 않게)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>S3 버킷 퍼블릭 차단</h4>
+    <ul>
+      <li>S3 대상 finding 시 <code>PublicAccessBlock</code> 4개 항목을 전부 <code>true</code>로 강제</li>
+      <li>버킷을 지우지 않고 <strong>노출만 닫는다</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>위험 SG 규칙 제거</h4>
+    <ul>
+      <li>원본 SG에서 <code>0.0.0.0/0</code> 민감포트(<code>22</code>/<code>3389</code>/DB/K8s API)·
+          광범위 인그레스<strong>만 골라</strong> revoke</li>
+      <li>SG 전체가 아니라 <strong>위험 규칙만</strong> 떼어 부수효과를 줄임</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>격리 시 EBS 포렌식 스냅샷</h4>
+    <ul>
+      <li>격리하는 김에 <code>create_snapshots</code>로 <strong>증거 보존</strong></li>
+      <li>읽기 전용 — 대응이 원본을 훼손하기 전에 상태를 떠 둔다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>대상별 대응 매핑</h3>
+<table>
+  <tr><th style="width:230px">대상</th><th>대응</th></tr>
+  <tr><td>EC2 인스턴스</td><td>격리(ENI SG → 검역 SG)</td></tr>
+  <tr><td>IAM 정적키</td><td>비활성화</td></tr>
+  <tr><td>IAM 역할 · SSO 세션</td><td><code>deny-all</code> 인라인 정책 부착</td></tr>
+  <tr><td>공격자 IP</td><td>WAF 차단(24h 자동 만료)</td></tr>
+  <tr><td>침해 파드</td><td>K8s <code>deny-all</code> NetworkPolicy(파드 생존, 포렌식)</td></tr>
+  <tr><td>S3 버킷</td><td>퍼블릭 차단(<code>PublicAccessBlock</code> 4개 <code>true</code>)</td></tr>
+  <tr><td>위험 SG</td><td>위험 규칙만 revoke</td></tr>
+  <tr><td>격리하는 김에</td><td>EBS 포렌식 스냅샷</td></tr>
+</table>
+
+<h2>3. 대응 입력원 3종 — SIEM 판정을 크로스계정 대응으로</h2>
+
+<p>격리 Lambda는 세 갈래로 트리거된다. 앞 두 개는 같은 계정 내부, 세 번째가 오늘의 새 경계다.</p>
+
+<table>
+  <tr><th style="width:230px">입력원</th><th>조건 · 이중대응 방지</th></tr>
+  <tr>
+    <td>GuardDuty finding</td>
+    <td><code>severity ≥ 7</code></td>
+  </tr>
+  <tr>
+    <td>Security Hub finding</td>
+    <td><code>HIGH</code>/<code>CRITICAL</code>, 단 <strong><code>ProductName=GuardDuty</code>는 제외</strong>
+      — GuardDuty가 이미 흘려보낸 것을 Security Hub 경유로 <strong>두 번 대응하지 않게</strong></td>
+  </tr>
+  <tr>
+    <td>SIEM 크로스계정 <span class="badge new">신규</span></td>
+    <td>Log detector의 <code>urgent</code> 판정만. 아래 흐름 참조</td>
+  </tr>
+</table>
+
+<h3>SIEM → 크로스계정 대응의 흐름</h3>
+<p>
+  Log 계정의 detector가 <code>urgent</code>로 판정하면 <strong>workload의 default 이벤트 버스</strong>로
+  <code>put_events</code>를 던지고, workload의 <code>gochuchamchi-siem-response</code> rule이 받아
+  격리 Lambda의 <code>handle_siem_response</code>를 호출한다.
+</p>
+<div class="flow">
+  <div class="lane-title">urgent 판정 게이트 — 넷이 모두 참일 때만</div>
+  <div class="lane">
+    <span class="node neutral">severity<br><small>CRITICAL/HIGH</small></span><span class="arrow">＋</span>
+    <span class="node neutral">verdict<br><small>= malicious</small></span><span class="arrow">＋</span>
+    <span class="node neutral">confidence<br><small>≥ 0.8</small></span><span class="arrow">＋</span>
+    <span class="node neutral">source_ip<br><small>공인 IP</small></span>
+  </div>
+  <div class="lane-title">대응 경로</div>
+  <div class="lane">
+    <span class="node good">Log detector<br><small>urgent</small></span><span class="arrow">→</span>
+    <span class="node neutral">workload default<br>이벤트 버스<br><small>put_events</small></span><span class="arrow">→</span>
+    <span class="node neutral">gochuchamchi-<br>siem-response rule</span><span class="arrow">→</span>
+    <span class="node good">handle_siem_response<br><small>WAF 24h 차단만</small></span>
+  </div>
+</div>
+
+<div class="callout warn">
+  <strong>크로스계정 신호에는 WAF 24h 차단만 건다 — 강한 대응(격리·키 비활성화·SG 제거)은 걸지 않는다.</strong>
+  Log→workload <code>put_events</code> 권한은 기존 <code>log-account-eventbridge.tf</code>의
+  <code>event_permission</code>(계정 단위)이 이미 허용하고 있어 새 IAM 배선은 없었다.
+  다만 이건 <code>detector_function.py</code> docstring이 못 박아 둔 <strong>"SIEM은 알림만"이라는 경계를
+  넘는 변경</strong>이라, <strong>문을 좁게 열고(WAF만) 이중 게이트로 감쌌다</strong> — 판정 4조건 + 두 계정의 스위치.
+</div>
+
+<h2>4. GuardDuty 런타임 점검 — account-baseline/guardduty.tf</h2>
+
+<p>
+  대응을 파드 런타임까지 연결하려면 GuardDuty가 그 신호를 내야 한다. 점검해 보니 대부분 이미 켜져 있었다.
+</p>
+<table>
+  <tr><th style="width:280px">기능</th><th>상태</th></tr>
+  <tr><td><code>EKS_AUDIT_LOGS</code></td><td><span class="badge done">ENABLED</span> 이미 켜짐</td></tr>
+  <tr><td><code>S3_DATA_EVENTS</code></td><td><span class="badge done">ENABLED</span> 이미 켜짐</td></tr>
+  <tr><td><code>EBS_MALWARE_PROTECTION</code></td><td><span class="badge done">ENABLED</span> 이미 켜짐</td></tr>
+  <tr>
+    <td><code>RUNTIME_MONITORING</code></td>
+    <td><strong>변수 게이트</strong> <code>enable_guardduty_runtime_monitoring</code>(기본 OFF) —
+      <code>t3.small</code> 메모리 부담 때문</td>
+  </tr>
+</table>
+<div class="callout info">
+  대응 편입은 <strong>severity 기반</strong>이라 이미 자동이다. 즉 <code>RUNTIME_MONITORING</code>을 켜기만 하면
+  <strong>파드 런타임 finding이 별도 배선 없이 파드 격리로 흐른다</strong> — 주석에 그렇게 명시해 뒀다.
+  런타임 감시는 비용 판단만 남았고, 배선은 이미 준비돼 있다.
+</div>
+
+<h2>5. 보안 하드닝 패치 2건 — 별도 브랜치로 분리</h2>
+
+<p>
+  주제가 자동 탐지·대응과 달라 <strong>별도 브랜치</strong>로 분리했다. 워크로드에 뚫린 구멍 두 개를 막는다.
+</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4>WAF 로그인 rate limit — COUNT → BLOCK</h4>
+    <ul>
+      <li><code>terraform/variables.tf</code>의 <code>waf_login_rate_limit_action</code>
+          기본값을 <code>COUNT</code>에서 <code>BLOCK</code>으로</li>
+      <li>로그인 무차별 대입을 <strong>관찰만 하던 것을 실제 차단</strong>으로 — 임계 <strong>50회 / 5분</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>S3 업로드 콘텐츠 검증 — gochuchamchi-spring</h4>
+    <ul>
+      <li><code>S3Service.upload</code>에 크기 <strong>10MB</strong> 제한</li>
+      <li>MIME 화이트리스트(<code>jpg</code>/<code>png</code>/<code>webp</code>/<code>gif</code>) —
+          <strong><code>SVG</code>는 스크립트 XSS 벡터라 제외</strong></li>
+      <li>매직바이트 위조 검증, 확장자·<code>Content-Type</code>을 <strong>검증된 값으로 강제</strong></li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout info">
+  S3 검증이 막는 실제 경로 — <strong>이미지인 척하는 HTML/SVG를 신뢰 도메인(CloudFront)에 올려
+  XSS·피싱에 쓰는 것</strong>이다. 확장자만 보고 통과시키면 브라우저는 실제 콘텐츠로 렌더하므로,
+  매직바이트까지 봐야 위조를 잡는다.
+</div>
+
+<h2>6. 설계 원칙 — 다섯 갈래 대응 전부를 관통한다</h2>
+
+<div class="grid2">
+  <div class="card">
+    <h4><span class="badge new">1</span> 드라이런 기본</h4>
+    <ul>
+      <li>모든 신규 대응 스위치 기본 <code>false</code></li>
+      <li><code>waf/pod/iam_subject/s3/sg/snapshot_response_enabled</code>,
+          <code>securityhub_response_enabled</code>, <code>siem_response_enabled</code></li>
+      <li>배포해도 켜기 전엔 아무것도 실행되지 않는다</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge new">2</span> 이중 게이트</h4>
+    <ul>
+      <li>SIEM → 대응은 <strong>두 계정 스위치가 모두</strong> 참이어야 발동</li>
+      <li>Log의 <code>siem_response_enabled</code> + workload의 <code>waf_response_enabled</code></li>
+      <li>한쪽만 켜져선 크로스계정 대응이 돌지 않는다</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge new">3</span> 복구 경로</h4>
+    <ul>
+      <li>EC2·파드·IAM 격리 전부 되돌리기 존재</li>
+      <li><code>recover</code> / <code>recover-pod</code> / <code>recover-iam</code></li>
+      <li>WAF 차단은 24h 자동 만료 — 손 안 대도 풀린다</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><span class="badge new">4</span> 되돌리기 쉬운 대응 우선</h4>
+    <ul>
+      <li>삭제 대신 <strong>비활성화</strong></li>
+      <li>파드 죽이기 대신 <strong>네트워크 끊기</strong></li>
+      <li>크로스계정 신호엔 <strong>WAF만</strong>(가장 약하고 자동 만료되는 수단)</li>
+    </ul>
+  </div>
+</div>
+
+<h3>계정 경계 — 탐지는 Log, 대응은 workload</h3>
+<div class="flow">
+  <div class="lane-title">역할 분리와 apply 순서</div>
+  <div class="lane">
+    <span class="node neutral">Log 계정<br><small>탐지 (log-admin으로 별도)</small></span>
+    <span class="arrow">｜</span>
+    <span class="node neutral">persistent<br><small>WAF IP set (상시)</small></span><span class="arrow">→</span>
+    <span class="node neutral">terraform</span><span class="arrow">→</span>
+    <span class="node neutral">cloudwatch-<br>notifications</span>
+  </div>
+</div>
+<p>
+  탐지는 Log, 대응은 workload, WAF IP set은 상시 계층인 <code>persistent</code>에 둔다.
+  workload apply 순서는 <strong><code>persistent</code> → <code>terraform</code> →
+  <code>cloudwatch-notifications</code></strong>이고, Log는 <code>log-admin</code>으로 별도로 돌린다.
+</p>
+
+<h2>7. 검증 — verify-auto-response.ps1 신규</h2>
+
+<p>
+  <code>verify-auto-response.ps1</code>을 새로 만들어 <code>verify-all.ps1</code>의 <code>$suite</code>에
+  <code>autoresp</code>로 편입했다. 어제까지의 PS 5.1 함정들을 그대로 반영했다 —
+  <strong>BOM 확보</strong>, <strong><code>--query</code>로 ASCII만 뽑기</strong>,
+  <strong>리다이렉트 없이 <code>$LASTEXITCODE</code></strong>로 종료코드 읽기.
+</p>
+
+<table>
+  <tr><th style="width:120px">종료코드</th><th>의미</th></tr>
+  <tr><td><code>0</code></td><td><strong>통과</strong></td></tr>
+  <tr><td><code>2</code></td><td><strong>드라이런</strong> — 정상이다. 실패가 아니다(스위치가 꺼진 정상 상태)</td></tr>
+  <tr><td><code>1</code></td><td><strong>배포 누락</strong> — 리소스가 아예 없음</td></tr>
+</table>
+
+<div class="callout ok">
+  <strong>정적 검증 전부 통과.</strong> <code>terraform validate</code> 5개 루트 +
+  <code>py_compile</code> 2개 Lambda + PSParser 2개 스크립트가 모두 통과했다.
+  드라이런(종료코드 2)을 "실패"로 부르지 않는 3단계 판정이라, 스위치가 꺼진 정상 상태에서 헛경보가 나지 않는다.
+</div>
+
+<h2>8. 커밋 · 브랜치 — 5커밋, 3브랜치, 2저장소</h2>
+
+<p>셋 다 아직 <strong>main 미병합</strong>이고, acaffd8만 origin에 push됐다.</p>
+
+<table>
+  <tr><th style="width:110px">해시</th><th>브랜치 · 저장소</th><th>내용</th><th style="width:110px">상태</th></tr>
+  <tr>
+    <td><code>acaffd8</code></td>
+    <td>terraform<br><code>feat/detection-and-auto-response</code></td>
+    <td>자동대응 8갈래 + 탐지 6룰, 13파일, main에서 분기</td>
+    <td><span class="badge done">origin push</span></td>
+  </tr>
+  <tr>
+    <td><code>784415b</code></td>
+    <td>terraform<br><code>feat/detection-and-auto-response</code></td>
+    <td>격리 대응 4종 추가</td>
+    <td><span class="badge todo">로컬 미push</span></td>
+  </tr>
+  <tr>
+    <td><code>52db0f4</code></td>
+    <td>terraform<br><code>fix/security-hardening</code></td>
+    <td>WAF login <code>BLOCK</code></td>
+    <td><span class="badge todo">로컬 미push</span></td>
+  </tr>
+  <tr>
+    <td><code>4c3eab2</code></td>
+    <td>spring<br><code>fix/upload-content-validation</code></td>
+    <td>S3 업로드 검증</td>
+    <td><span class="badge todo">로컬 미push</span></td>
+  </tr>
+</table>
+
+<h2>9. 남은 것</h2>
+
+<div class="callout danger">
+  <strong>순서가 있다 — Groq 키 재발급이 선행이다.</strong>
+  <code>SIEM judge</code>와 <code>GuardDuty 트리아지</code>가 쓰는 Groq 키가 <strong>노출된 상태</strong>다.
+  스위치를 켜기 전에 재발급하지 않으면 노출된 키로 대응 파이프라인이 돌게 된다.
+</div>
+
+<div class="card">
+  <h4><span class="badge todo">남은 순서</span></h4>
+  <ul>
+    <li><strong>① Groq 키 재발급</strong> — 노출됨. 스위치 켜기 전 <strong>선행</strong></li>
+    <li><strong>② 계정별 apply</strong> — workload는 <code>persistent → terraform →
+        cloudwatch-notifications</code>, Log는 <code>log-admin</code></li>
+    <li><strong>③ <code>verify-auto-response</code>로 드라이런 상태 확인</strong>(종료코드 2가 정상)</li>
+    <li><strong>④ 로그를 보며 대응 스위치를 개별 활성화</strong> — 한꺼번에 켜지 않는다</li>
+    <li><strong>⑤ push / PR</strong> — 미push 3커밋 push, 세 브랜치 main 병합</li>
+  </ul>
+</div>
+
+<footer>
+  담당 wherekyj · Workload 828885965304 · Log 564186750363 ·
+  이전 세션 <code>docs/2026-08-13-work-report.html</code> (DB 비밀번호 제거) ·
+  이번 세션은 그 위에 <strong>탐지 4→10 · 대응 1→8 · SIEM 크로스계정 연결</strong>을 얹은 확장 —
+  전부 드라이런 기본, 스위치는 아직 꺼짐
+</footer>
+
+</div>
+</body>
+</html>
