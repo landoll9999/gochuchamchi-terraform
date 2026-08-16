@@ -12,9 +12,9 @@ locals {
   ])
   aws_errors_dashboard = jsonencode({
     id                   = null
-    uid                  = "gochuchamchi-aws-errors"
-    title                = "Gochuchamchi AWS Errors"
-    tags                 = ["aws", "errors", "cloudwatch"]
+    uid                  = "gochuchamchi-service-dependencies"
+    title                = "01 Service & Dependencies"
+    tags                 = ["operations", "service", "dependencies", "cloudwatch"]
     timezone             = "browser"
     schemaVersion        = 41
     version              = 1
