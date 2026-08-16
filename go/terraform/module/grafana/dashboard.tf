@@ -15,12 +15,13 @@ locals {
 
   eks_logs_dashboard = jsonencode({
     id       = null
-    uid      = "gochuchamchi-eks-logs"
-    title    = "Gochuchamchi EKS Logs"
+    uid      = "gochuchamchi-application-logs"
+    title    = "03 Application Logs"
     timezone = "browser"
 
     tags = [
-      "gochuchamchi",
+      "operations",
+      "application",
       "eks",
       "cloudwatch",
       "logs"

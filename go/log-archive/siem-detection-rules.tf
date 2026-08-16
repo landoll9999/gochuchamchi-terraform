@@ -146,11 +146,40 @@ variable "siem_trusted_automation_principals" {
   default     = []
 }
 
+variable "siem_db_expected_principals" {
+  description = <<-EOT
+    RDS 감사에서 "정상"으로 보는 DB 접속 주체(정규식 조각) 목록. 이 목록을 벗어난
+    유저가 **성공적으로** 접속하면 db-unexpected-principal 룰이 후보로 올린다.
+
+    IAM 토큰 전환의 검증 축이기도 하다 — 구 비밀번호 계정 gochuchamchi_app 은
+    여기 없으므로, 그 계정의 접속이 한 건이라도 잡히면 "비밀번호 계정이 아직
+    태어나고 있다"는 신호가 된다(= verify-db-iam-only.ps1 이 수동으로 보던 것을
+    상시 자동으로 본다). 배스천 운영 계정 admin, 앱 IAM 계정, 엔진 내부 계정만 넣는다.
+  EOT
+  type        = list(string)
+  default     = ["admin", "gochuchamchi_app_iam", "mariadb\\.sys", "mysql\\.sys", "rdsadmin"]
+}
+
+variable "siem_app_upload_burst_threshold" {
+  description = <<-EOT
+    앱 상품 등록(POST /shop/register) 폭증 룰의 임계값. lookback 안에서 한 주체가
+    이 수를 넘겨 등록하면 후보로 올린다. 상품 이미지 업로드는 확장자·Content-Type
+    검증이 약해(spring S3Service) 신뢰 도메인(CloudFront)에 임의 HTML/SVG를 뿌리는
+    통로가 될 수 있어, 그 남용을 빈도로 잡는다. 정상 판매자의 다건 등록은 판정이 거른다.
+  EOT
+  type        = number
+  default     = 10
+}
+
 
 locals {
   # 룰이 조회할 대상 (탐지용 뷰 / 원본 테이블)
   siem_detection_view = "\"${aws_glue_catalog_database.security_logs.name}\".\"${local.security_events_detection_view_name}\""
   siem_flow_table     = "\"${aws_glue_catalog_database.security_logs.name}\".\"${aws_glue_catalog_table.vpc_flow_logs.name}\""
+  # EKS audit 는 탐지용 통합 뷰에 넣지 않는다(양이 커 시간당 스캔 상한 위험 — vpc_flow와
+  # 같은 이유). 대신 아래 EKS 룰이 원본 테이블을 직접 조회하고, 파티션은
+  # eks_control_plane_recent_partition(오늘+어제)으로 프루닝한다.
+  siem_eks_table = "\"${aws_glue_catalog_database.security_logs.name}\".\"${aws_glue_catalog_table.eks_control_plane_logs.name}\""
 
   # 뷰 조회 공통 시간 조건. 뷰의 event_time은 timestamp WITHOUT TIME ZONE이라
   # current_timestamp(WITH TIME ZONE)와 직접 비교하면 타입 오류가 난다.
@@ -201,6 +230,10 @@ locals {
     ? ""
     : "  AND NOT regexp_like(dstaddr, '${var.siem_egress_ignore_dst_regex}')\n"
   )
+
+  # RDS 감사에서 정상으로 보는 DB 접속 주체. 이 정규식을 벗어난 유저의 성공 접속이
+  # db-unexpected-principal 룰의 후보다. (목록은 var.siem_db_expected_principals)
+  siem_db_expected_principal_regex = "^(${join("|", var.siem_db_expected_principals)})$"
 
 
   # ===========================================================================
@@ -407,6 +440,228 @@ locals {
         ${local.siem_egress_ignore_clause}GROUP BY srcaddr, dstaddr
         HAVING sum(bytes) >= ${var.siem_egress_bytes_threshold}
         ORDER BY total_bytes DESC
+        LIMIT 50
+      SQL
+    }
+
+    # -----------------------------------------------------------------------
+    # 룰 5 — DB 인증 실패 폭증
+    #
+    # RDS 감사(source_type='rds')의 CONNECT 실패만 본다. 앱 로그인 실패(룰 2)와
+    # 다른 계층이다 — 여긴 "DB 엔진이 직접 거부한" 접속이다. IAM 토큰 만료·리전
+    # 오설정 같은 정상 사유도 걸리지만, 그 판별은 판정 계층이 한다.
+    # -----------------------------------------------------------------------
+    "db-auth-failure" = {
+      seq          = 24
+      severity     = "HIGH"
+      always_alert = false
+      title        = "DB 인증 실패 폭증"
+      why          = "같은 출발지/DB 유저에서 RDS 접속 실패(CONNECT 실패)가 임계값(${var.siem_auth_failure_threshold}건)을 넘었습니다. actor가 gochuchamchi_app_iam이고 앱 배포 직후라면 IAM 토큰 발급 경로(리전/권한/만료) 문제일 가능성이 높고, 낯선 유저명이거나 여러 유저명이 한 IP에서 나오면 유효 계정 탐색입니다. require_secure_transport=1이라 비 TLS 접속도 여기서 실패로 잡힙니다."
+
+      query = <<-SQL
+        SELECT
+          concat('db-auth-fail:', COALESCE(source_ip, '-'), '|', COALESCE(actor, '-')) AS alert_key,
+          COALESCE(source_ip, '-')  AS source_ip,
+          COALESCE(actor, '-')      AS actor,
+          count(*)                  AS failures,
+          min(event_time)           AS first_seen,
+          max(event_time)           AS last_seen
+        FROM ${local.siem_detection_view}
+        WHERE ${local.siem_recent_window}
+          AND source_type = 'rds'
+          AND action LIKE 'CONNECT%'
+          AND outcome = 'failure'
+        GROUP BY source_ip, actor
+        HAVING count(*) >= ${var.siem_auth_failure_threshold}
+        ORDER BY failures DESC
+        LIMIT 50
+      SQL
+    }
+
+    # -----------------------------------------------------------------------
+    # 룰 6 — 예상 밖 DB 계정 접속
+    #
+    # 허용 목록(var.siem_db_expected_principals)을 벗어난 유저의 성공 접속을
+    # 한 건씩 올린다. 집계하지 않는다 — 한 건이 곧 사건이다. IAM 토큰 전환의
+    # 상시 검증이기도 하다: 구 비밀번호 계정 gochuchamchi_app 이 목록에 없으므로,
+    # 그 접속이 잡히면 "비밀번호 계정이 아직 만들어지고 있다"는 신호다.
+    # -----------------------------------------------------------------------
+    "db-unexpected-principal" = {
+      seq          = 25
+      severity     = "CRITICAL"
+      always_alert = true
+      title        = "예상 밖 DB 계정 접속"
+      why          = "허용 목록에 없는 DB 유저가 RDS에 성공적으로 접속했습니다. 이 프로젝트의 정상 접속 주체는 배스천 운영 계정(admin)·앱 IAM 계정(gochuchamchi_app_iam)·엔진 내부 계정뿐입니다. actor가 구 비밀번호 계정 gochuchamchi_app이면 IAM 토큰 전환이 되돌아가고 있다는 신호이고, 완전히 낯선 유저명이면 계정 신설·탈취를 의심하세요. 배스천에서 사람이 수동 작업 중이었는지 먼저 확인하세요."
+
+      query = <<-SQL
+        SELECT
+          concat('db-principal:', COALESCE(actor, '-'), '|', COALESCE(source_ip, '-')) AS alert_key,
+          event_time,
+          COALESCE(actor, '-')     AS actor,
+          COALESCE(source_ip, '-') AS source_ip,
+          action,
+          outcome
+        FROM ${local.siem_detection_view}
+        WHERE ${local.siem_recent_window}
+          AND source_type = 'rds'
+          AND action LIKE 'CONNECT%'
+          AND outcome = 'success'
+          AND NOT regexp_like(COALESCE(actor, ''), '${local.siem_db_expected_principal_regex}')
+        ORDER BY event_time DESC
+        LIMIT 50
+      SQL
+    }
+
+    # -----------------------------------------------------------------------
+    # 룰 7 — 컨테이너 셸 접근 (kubectl exec / attach)
+    #
+    # EKS audit 원본을 직접 본다(통합 뷰 미포함). verb=create + subresource가
+    # exec/attach 인 요청은 사람이 파드 안으로 들어간 것이다. 정상 운영에서는
+    # 거의 없어 한 건씩 그대로 올린다(always_alert). 인가 거부(code=403)된
+    # 시도도 올린다 — 침해 주체가 권한을 재는 신호다.
+    # -----------------------------------------------------------------------
+    "eks-pod-exec" = {
+      seq          = 26
+      severity     = "CRITICAL"
+      always_alert = true
+      title        = "컨테이너 셸 접근(kubectl exec/attach)"
+      why          = "누군가 파드 안으로 exec/attach 했습니다. 이 클러스터는 배포를 GitOps로만 하므로 사람이 파드에 직접 들어갈 일이 정상 운영에는 거의 없습니다. actor가 사람 IAM 주체이고 계획된 디버깅이면 정상일 수 있으나, 서비스어카운트나 낯선 주체면 침해 후 횡이동을 의심하세요. code=403이면 시도가 거부된 것이지만 시도 자체가 신호입니다."
+
+      query = <<-SQL
+        SELECT
+          concat('eks-exec:',
+            COALESCE(json_extract_scalar(message, '$.user.username'), '-'), '|',
+            COALESCE(json_extract_scalar(message, '$.objectRef.namespace'), '-'), '/',
+            COALESCE(json_extract_scalar(message, '$.objectRef.name'), '-'))          AS alert_key,
+          CAST(try(from_iso8601_timestamp(json_extract_scalar(message, '$.requestReceivedTimestamp'))) AS timestamp) AS event_time,
+          json_extract_scalar(message, '$.user.username')                            AS actor,
+          try(json_extract_scalar(message, '$.sourceIPs[0]'))                        AS source_ip,
+          json_extract_scalar(message, '$.objectRef.namespace')                      AS namespace,
+          json_extract_scalar(message, '$.objectRef.name')                           AS pod,
+          json_extract_scalar(message, '$.objectRef.subresource')                    AS subresource,
+          json_extract_scalar(message, '$.responseStatus.code')                      AS code
+        FROM ${local.siem_eks_table}
+        WHERE ${local.eks_control_plane_recent_partition}
+          AND try(json_extract_scalar(message, '$.kind')) = 'Event'
+          AND json_extract_scalar(message, '$.verb') = 'create'
+          AND json_extract_scalar(message, '$.objectRef.subresource') IN ('exec', 'attach')
+          AND CAST(try(from_iso8601_timestamp(json_extract_scalar(message, '$.requestReceivedTimestamp'))) AS timestamp)
+              >= CAST(current_timestamp AS timestamp) - INTERVAL '${var.siem_rule_lookback_minutes}' MINUTE
+        ORDER BY event_time DESC
+        LIMIT 50
+      SQL
+    }
+
+    # -----------------------------------------------------------------------
+    # 룰 8 — K8s 인가 거부 폭증 (HTTP 403)
+    #
+    # 같은 주체/출발지에서 API 거부가 몰리면 권한 탐색이다. WITH 로 audit 이벤트를
+    # 먼저 파싱해 GROUP BY 를 단순화한다. resources 로 무엇을 노렸는지 보인다.
+    # -----------------------------------------------------------------------
+    "eks-forbidden-burst" = {
+      seq          = 27
+      severity     = "HIGH"
+      always_alert = false
+      title        = "K8s 인가 거부 폭증"
+      why          = "같은 주체/출발지에서 K8s API 인가 거부(403)가 임계값(${var.siem_auth_failure_threshold}건)을 넘었습니다. 탈취된 서비스어카운트 토큰이나 잘못 배포된 워크로드가 권한 밖 리소스를 훑는 중일 수 있습니다. resources에 secrets·rolebindings 같은 민감 리소스가 섞여 있으면 권한 상승 시도, 한 리소스에 몰려 있으면 배포 설정 오류일 가능성이 높습니다."
+
+      query = <<-SQL
+        WITH audit AS (
+          SELECT
+            json_extract_scalar(message, '$.user.username')                          AS actor,
+            try(json_extract_scalar(message, '$.sourceIPs[0]'))                      AS source_ip,
+            json_extract_scalar(message, '$.objectRef.resource')                     AS resource,
+            json_extract_scalar(message, '$.responseStatus.code')                    AS code,
+            CAST(try(from_iso8601_timestamp(json_extract_scalar(message, '$.requestReceivedTimestamp'))) AS timestamp) AS event_time
+          FROM ${local.siem_eks_table}
+          WHERE ${local.eks_control_plane_recent_partition}
+            AND try(json_extract_scalar(message, '$.kind')) = 'Event'
+        )
+        SELECT
+          concat('eks-forbidden:', COALESCE(actor, '-'), '|', COALESCE(source_ip, '-')) AS alert_key,
+          COALESCE(actor, '-')      AS actor,
+          COALESCE(source_ip, '-')  AS source_ip,
+          count(*)                  AS forbidden_count,
+          array_join(slice(array_sort(array_agg(DISTINCT resource)), 1, 8), ',') AS resources,
+          min(event_time)           AS first_seen,
+          max(event_time)           AS last_seen
+        FROM audit
+        WHERE code = '403'
+          AND event_time >= CAST(current_timestamp AS timestamp) - INTERVAL '${var.siem_rule_lookback_minutes}' MINUTE
+        GROUP BY actor, source_ip
+        HAVING count(*) >= ${var.siem_auth_failure_threshold}
+        ORDER BY forbidden_count DESC
+        LIMIT 50
+      SQL
+    }
+
+    # -----------------------------------------------------------------------
+    # 룰 9 — 관리자 경로 무단 접근
+    #
+    # 앱이 인가 거부한 요청 중 관리자 경로(/admin)만 특정한다. 인증 실패 폭증
+    # 룰(룰 2)은 앱 거부를 임계 8로 집계하지만, 관리 경로는 한두 건도 의미가
+    # 있어(일반 유저가 관리 API를 직접 호출) 낮은 임계로 따로 본다. SecurityConfig
+    # 상 /admin/**는 ADMIN/SUPERADMIN 전용이므로 그 외 주체의 접근은 403이 된다.
+    # -----------------------------------------------------------------------
+    "app-admin-path-probe" = {
+      seq          = 28
+      severity     = "HIGH"
+      always_alert = false
+      title        = "관리자 경로 무단 접근"
+      why          = "일반 권한 주체가 관리자 전용 경로(/admin)에 접근해 거부(403)됐습니다. 정상 유저는 이 경로 자체를 볼 일이 없으므로, 브라우저 오조작이 아니라면 권한 상승을 노린 탐색입니다. actor가 로그인 계정이면 그 계정의 세션이 탈취됐거나 내부자가 권한 밖을 시도하는 것이고, 여러 경로를 훑고 있으면(sample_actions) 자동화 스캔입니다."
+
+      query = <<-SQL
+        SELECT
+          concat('app-admin-probe:', COALESCE(source_ip, '-'), '|', COALESCE(actor, '-')) AS alert_key,
+          COALESCE(source_ip, '-')  AS source_ip,
+          COALESCE(actor, '-')      AS actor,
+          count(*)                  AS denied_admin_hits,
+          array_join(slice(array_sort(array_agg(DISTINCT action)), 1, 5), ' | ') AS sample_actions,
+          min(event_time)           AS first_seen,
+          max(event_time)           AS last_seen
+        FROM ${local.siem_detection_view}
+        WHERE ${local.siem_recent_window}
+          AND source_type = 'application'
+          AND outcome = 'blocked'
+          AND regexp_like(action, '(?i)/admin(/|$| )')
+        GROUP BY source_ip, actor
+        HAVING count(*) >= 3
+        ORDER BY denied_admin_hits DESC
+        LIMIT 50
+      SQL
+    }
+
+    # -----------------------------------------------------------------------
+    # 룰 10 — 상품 등록(이미지 업로드) 폭증
+    #
+    # 한 주체가 짧은 시간에 상품 등록을 대량으로 하면 업로드 통로 남용이다.
+    # S3Service가 업로드 확장자·Content-Type을 검증하지 않아, 이미지 대신 임의
+    # HTML/SVG를 신뢰 도메인(CloudFront)에 올리는 데 쓰일 수 있다. 정상 판매자의
+    # 다건 등록도 걸리지만 그 판별은 판정 계층이 한다(재현율 우선).
+    # -----------------------------------------------------------------------
+    "app-upload-burst" = {
+      seq          = 29
+      severity     = "MEDIUM"
+      always_alert = false
+      title        = "상품 등록(업로드) 폭증"
+      why          = "한 주체가 임계값(${var.siem_app_upload_burst_threshold}건) 넘게 상품을 등록했습니다. 상품 이미지 업로드는 확장자·MIME 검증이 약해, 대량 등록은 신뢰 도메인에 악성 콘텐츠(HTML/SVG 피싱)를 뿌리거나 스토리지를 소진시키는 통로일 수 있습니다. actor가 신규·미검증 판매자면 특히 의심하고, 오래된 정상 판매자의 재고 갱신이면 판정이 걸러 줍니다."
+
+      query = <<-SQL
+        SELECT
+          concat('app-upload:', COALESCE(actor, '-'))                    AS alert_key,
+          COALESCE(actor, '-')      AS actor,
+          COALESCE(source_ip, '-')  AS source_ip,
+          count(*)                  AS registrations,
+          min(event_time)           AS first_seen,
+          max(event_time)           AS last_seen
+        FROM ${local.siem_detection_view}
+        WHERE ${local.siem_recent_window}
+          AND source_type = 'application'
+          AND outcome = 'success'
+          AND regexp_like(action, '(?i)POST\s+\S*/shop/register')
+        GROUP BY actor, source_ip
+        HAVING count(*) >= ${var.siem_app_upload_burst_threshold}
+        ORDER BY registrations DESC
         LIMIT 50
       SQL
     }

@@ -76,6 +76,94 @@ variable "isolation_history_retention_days" {
   default     = 90
 }
 
+# ---------------------------------------------------------------------------
+# (2026-08-13) WAF 자동 차단: 네트워크 기반 finding 의 공격자 IP 를 엣지에서 막는다
+# ---------------------------------------------------------------------------
+
+variable "waf_response_enabled" {
+  description = "네트워크 기반 GuardDuty finding 의 원격 IP 를 WAF 차단 목록에 자동 추가할지. 기본 false(드라이런) — 관찰 후 켠다. 격리·키 대응과 독립적인 부가 대응이다."
+  type        = bool
+  default     = false
+}
+
+variable "waf_blocklist_ip_set_name" {
+  description = "격리 Lambda 가 IP 를 넣고 빼는 CLOUDFRONT WAF IP set 이름(../persistent 소유). 비우면 Lambda 가 WAF 대응을 건너뛴다."
+  type        = string
+  default     = "gochuchamchi-guardduty-blocklist"
+}
+
+variable "waf_block_ttl_hours" {
+  description = "WAF 자동 차단 IP 의 유효 시간(시간). 만료되면 audit 경로(매시간)가 목록에서 뺀다 — WAF IP set 에는 TTL 이 없어 코드로 해제한다."
+  type        = number
+  default     = 24
+}
+
+variable "protected_response_ips" {
+  description = "WAF 자동 차단에서 제외할 IP(관리자 IP 등). 사설/내부 IP 는 코드가 자동 제외하므로 여기엔 공인 IP 만 넣는다."
+  type        = list(string)
+  default     = []
+}
+
+# ---------------------------------------------------------------------------
+# (2026-08-13) 침해 파드 K8s 격리: EKS 런타임 finding 의 파드에 deny-all NetworkPolicy
+# ---------------------------------------------------------------------------
+
+variable "pod_response_enabled" {
+  description = "EKS 런타임 finding 의 대상 파드에 deny-all NetworkPolicy 를 자동 적용할지. 기본 false(드라이런). Lambda 는 배스천을 SSM 으로 시켜 kubectl 을 돌린다(gochuchamchi 네임스페이스 한정)."
+  type        = bool
+  default     = false
+}
+
+# ---------------------------------------------------------------------------
+# (2026-08-13) 대응 입력원 확대: Security Hub finding 도 격리 Lambda 로
+# ---------------------------------------------------------------------------
+
+variable "securityhub_response_enabled" {
+  description = <<-EOT
+    Security Hub 의 HIGH/CRITICAL finding(GuardDuty 제품 제외)을 격리 Lambda 로
+    보낼지. 기본 false — 리소스(EventBridge 규칙)는 두고 배선(state)만 끈다.
+    이건 '입력원' 스위치이고, 실제 격리 실행은 여전히 isolation_enabled 등
+    개별 대응 스위치가 게이트한다(이중 게이트). GuardDuty 는 이미 직접 경로로
+    처리되므로 Lambda 가 ProductName=GuardDuty 를 걸러 이중 대응을 막는다.
+  EOT
+  type        = bool
+  default     = false
+}
+
+# ---------------------------------------------------------------------------
+# (2026-08-13) 추가 대응 4종 스위치 (전부 기본 드라이런 — 관찰 후 개별로 켠다)
+# ---------------------------------------------------------------------------
+
+variable "iam_subject_response_enabled" {
+  description = "탈취 의심 IAM 주체(역할/사용자)에 deny-all 정책을 자동 부착할지. 기본 false. 키 비활성화가 못 잡는 AssumedRole/SSO 세션 대응. 정상 역할에 붙으면 서비스가 마비되므로 protected_iam_principals 로 반드시 걸러야 한다."
+  type        = bool
+  default     = false
+}
+
+variable "protected_iam_principals" {
+  description = "IAM 주체 격리에서 제외할 역할/사용자 이름(파드 역할·CI 역할·운영자 등 절대 막으면 안 되는 것). iam_subject_response_enabled 를 켤 때 반드시 채운다."
+  type        = list(string)
+  default     = []
+}
+
+variable "s3_response_enabled" {
+  description = "S3 대상 finding 시 버킷에 PublicAccessBlock 을 자동 강제할지. 기본 false. 퍼블릭 차단은 보수적이라 상대적으로 안전하다."
+  type        = bool
+  default     = false
+}
+
+variable "sg_response_enabled" {
+  description = "격리 시 원본 SG 의 0.0.0.0/0 위험 인그레스(민감포트/광범위)를 자동 제거할지. 기본 false. 대상을 좁혔지만 정상 규칙 오제거 위험이 있으니 관찰 후 켠다."
+  type        = bool
+  default     = false
+}
+
+variable "snapshot_on_isolate_enabled" {
+  description = "EC2 격리 시 EBS 볼륨 포렌식 스냅샷을 자동으로 뜰지. 기본 false. 읽기 전용이라 안전하고 비용만 소폭 든다."
+  type        = bool
+  default     = false
+}
+
 # ============================================================
 # 격리/복구 이력 저장소 (2026-08-12)
 #
@@ -305,6 +393,91 @@ resource "aws_lambda_permission" "allow_eventbridge_isolation" {
 # 격리 Lambda
 # ============================================================
 
+# ============================================================
+# 입력원 2: Security Hub HIGH/CRITICAL finding → 격리 Lambda (2026-08-13)
+#   GuardDuty 외 소스(Inspector·Config 등)의 finding 을 대응에 편입한다.
+#   ProductName=GuardDuty 는 이미 위 직접 경로가 처리하므로 패턴에서 제외해
+#   이중 트리거를 막는다. 리소스는 항상 두고 state 로만 배선을 켠다(트리아지와
+#   같은 방식 — 껐다 켜는 데 IAM 전파 대기가 없다).
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "securityhub_finding" {
+  name        = "gochuchamchi-securityhub-finding-critical"
+  description = "Security Hub HIGH/CRITICAL finding(GuardDuty 제외)을 자동대응 Lambda로 보냅니다."
+
+  event_pattern = jsonencode({
+    source      = ["aws.securityhub"]
+    detail-type = ["Security Hub Findings - Imported"]
+
+    detail = {
+      findings = {
+        Severity    = { Label = ["HIGH", "CRITICAL"] }
+        Workflow    = { Status = ["NEW"] }
+        RecordState = ["ACTIVE"]
+        ProductName = [{ "anything-but" = ["GuardDuty"] }]
+      }
+    }
+  })
+
+  state = var.securityhub_response_enabled ? "ENABLED" : "DISABLED"
+
+  tags = {
+    Name = "gochuchamchi-securityhub-finding-critical"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "securityhub_isolation_lambda" {
+  rule      = aws_cloudwatch_event_rule.securityhub_finding.name
+  target_id = "InvokeIsolationLambdaFromSecurityHub"
+  arn       = aws_lambda_function.guardduty_isolation.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_securityhub" {
+  statement_id  = "AllowEventBridgeSecurityHubInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.guardduty_isolation.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.securityhub_finding.arn
+}
+
+# ============================================================
+# 입력원 3: Log 계정 SIEM detector 의 urgent 판정 → 격리 Lambda (2026-08-13, 크로스계정)
+#   Log 계정이 이 default 버스로 put 하는 권한은 log-account-eventbridge.tf 의
+#   event_permission 이 이미 계정 단위로 부여한다(이벤트 종류 무관). 여기서는 그
+#   이벤트를 격리 Lambda 로 라우팅만 한다. Lambda 는 sourceIps 를 WAF 24h 차단으로만
+#   처리하고, 실제 차단은 waf_response_enabled 가 게이트한다(Log 쪽 스위치와 이중).
+# ============================================================
+
+resource "aws_cloudwatch_event_rule" "siem_response" {
+  name        = "gochuchamchi-siem-response"
+  description = "Log 계정 SIEM detector의 urgent 대응 요청(공격자 IP)을 격리 Lambda로 라우팅"
+
+  event_pattern = jsonencode({
+    source      = ["gochuchamchi.siem"]
+    detail-type = ["SIEM Response Request"]
+  })
+
+  state = "ENABLED"
+
+  tags = {
+    Name = "gochuchamchi-siem-response"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "siem_response_isolation" {
+  rule      = aws_cloudwatch_event_rule.siem_response.name
+  target_id = "InvokeIsolationLambdaFromSiem"
+  arn       = aws_lambda_function.guardduty_isolation.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_siem_response" {
+  statement_id  = "AllowEventBridgeSiemResponseInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.guardduty_isolation.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.siem_response.arn
+}
+
 data "archive_file" "guardduty_isolation" {
   type        = "zip"
   source_file = "${path.module}/isolation_function.py"
@@ -462,7 +635,9 @@ data "aws_iam_policy_document" "guardduty_isolation" {
   # --- 미복구 감시(audit 모드)가 격리 태그로 인스턴스를 찾는다 ---
   #     ec2:DescribeInstances 는 위 DescribeTargets 에 이미 있음.
 
-  # --- 격리/복구/자격증명 대응 이력 적재 ---
+  # --- 격리/복구/자격증명 대응 이력 적재 + WAF 차단 만료 조회/삭제 ---
+  #     GetItem/DeleteItem 은 WAF 자동 차단의 만료 청소(sweep)가 각 IP 의
+  #     만료 시각을 읽고, 해제 후 그 항목을 지우는 데 쓴다.
   statement {
     sid    = "WriteIsolationHistory"
     effect = "Allow"
@@ -470,9 +645,124 @@ data "aws_iam_policy_document" "guardduty_isolation" {
     actions = [
       "dynamodb:PutItem",
       "dynamodb:Query",
+      "dynamodb:GetItem",
+      "dynamodb:DeleteItem",
     ]
 
     resources = [aws_dynamodb_table.isolation_history.arn]
+  }
+
+  # --- WAF 자동 차단: 네트워크 기반 finding 의 원격 IP 를 CLOUDFRONT IP set 에
+  #     넣고 뺀다. IP set 은 ../persistent 소유이고 CLOUDFRONT scope 라 us-east-1
+  #     이지만, ARN 을 특정 이름의 IP set 으로 좁힌다(Id 는 와일드카드) ---
+  statement {
+    sid    = "ManageWafBlocklist"
+    effect = "Allow"
+
+    actions = [
+      "wafv2:GetIPSet",
+      "wafv2:UpdateIPSet",
+    ]
+
+    resources = [
+      "arn:aws:wafv2:us-east-1:${data.aws_caller_identity.current.account_id}:global/ipset/${var.waf_blocklist_ip_set_name}/*",
+    ]
+  }
+
+  # --- IP set 을 이름으로 찾으려면 목록 조회가 필요하다. ListIPSets 는 리소스
+  #     수준 제한을 지원하지 않아 * 이지만, 읽기 전용이라 노출 표면이 작다 ---
+  statement {
+    sid    = "ListWafIpSets"
+    effect = "Allow"
+
+    actions = ["wafv2:ListIPSets"]
+
+    resources = ["*"]
+  }
+
+  # --- 파드 격리: 배스천을 SSM 으로 시켜 kubectl(deny-all NetworkPolicy)을 돌린다.
+  #     Lambda 는 EKS 프라이빗 API 에 직접 붙지 않는다 — 이미 gochuchamchi 네임스페이스
+  #     edit 권한이 있는 배스천을 경유한다. SendCommand 는 document 와 instance 를
+  #     각각 좁히고(둘 다 매칭돼야 호출됨), instance 는 배스천 태그로만 한정한다 ---
+  statement {
+    sid       = "SendCommandRunShellDocument"
+    effect    = "Allow"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ssm:${var.region}::document/AWS-RunShellScript"]
+  }
+
+  statement {
+    sid       = "SendCommandToBastionOnly"
+    effect    = "Allow"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Name"
+      values   = ["gochuchamchi-bastion"]
+    }
+  }
+
+  statement {
+    sid       = "ReadSsmCommandResult"
+    effect    = "Allow"
+    actions   = ["ssm:GetCommandInvocation"]
+    resources = ["*"]
+  }
+
+  # --- ① IAM 주체 격리: 탈취 의심 역할/사용자에 deny-all 인라인 정책 부착/제거.
+  #     키 비활성화가 못 잡는 AssumedRole/SSO 세션 대응 ---
+  statement {
+    sid    = "QuarantineIamPrincipal"
+    effect = "Allow"
+    actions = [
+      "iam:PutRolePolicy",
+      "iam:PutUserPolicy",
+      "iam:DeleteRolePolicy",
+      "iam:DeleteUserPolicy",
+    ]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/*",
+    ]
+  }
+
+  # --- ② S3 버킷 퍼블릭 차단: 침해로 퍼블릭화된 버킷을 되돌린다 ---
+  statement {
+    sid       = "BlockS3Public"
+    effect    = "Allow"
+    actions   = ["s3:PutBucketPublicAccessBlock"]
+    resources = ["arn:aws:s3:::*"]
+  }
+
+  # --- ③ 위험 SG 규칙 제거 (DescribeSecurityGroups 는 DescribeTargets 에 이미 있음) ---
+  statement {
+    sid       = "RemoveRiskySgRules"
+    effect    = "Allow"
+    actions   = ["ec2:RevokeSecurityGroupIngress"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:security-group/*"]
+  }
+
+  # --- ④ 격리 시 EBS 포렌식 스냅샷 (읽기 전용 증거 보존) ---
+  statement {
+    sid       = "ForensicSnapshot"
+    effect    = "Allow"
+    actions   = ["ec2:CreateSnapshots"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "TagForensicSnapshot"
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:snapshot/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values   = ["CreateSnapshots"]
+    }
   }
 
   # --- 결과 통보: 알림 허브로만 발행 가능 ---
@@ -503,8 +793,9 @@ resource "aws_lambda_function" "guardduty_isolation" {
   filename         = data.archive_file.guardduty_isolation.output_path
   source_code_hash = data.archive_file.guardduty_isolation.output_base64sha256
 
-  # SG 생성 + ENI 교체 + SNS 발행까지. Describe 재시도 여유 포함
-  timeout     = 60
+  # SG 생성 + ENI 교체 + SNS 발행까지. 파드 격리 경로는 배스천 SSM 명령 폴링(최대
+  # 50s)이 붙으므로 여유를 둔다.
+  timeout     = 120
   memory_size = 128
 
   environment {
@@ -521,6 +812,23 @@ resource "aws_lambda_function" "guardduty_isolation" {
       CREDENTIAL_RESPONSE_ENABLED = var.credential_response_enabled ? "true" : "false"
       PROTECTED_ACCESS_KEY_IDS    = join(",", var.protected_access_key_ids)
       QUARANTINE_STALE_HOURS      = tostring(var.quarantine_stale_hours)
+
+      # (2026-08-13) WAF 자동 차단
+      WAF_RESPONSE_ENABLED      = var.waf_response_enabled ? "true" : "false"
+      WAF_BLOCKLIST_IP_SET_NAME = var.waf_blocklist_ip_set_name
+      WAF_BLOCK_TTL_HOURS       = tostring(var.waf_block_ttl_hours)
+      PROTECTED_IPS             = join(",", var.protected_response_ips)
+
+      # (2026-08-13) 침해 파드 K8s 격리 (배스천 SSM 경유)
+      POD_RESPONSE_ENABLED = var.pod_response_enabled ? "true" : "false"
+      BASTION_TAG_NAME     = "gochuchamchi-bastion"
+
+      # (2026-08-13) 추가 대응 4종 (IAM 주체 격리 / S3 퍼블릭 차단 / SG 규칙 제거 / EBS 스냅샷)
+      IAM_SUBJECT_RESPONSE_ENABLED = var.iam_subject_response_enabled ? "true" : "false"
+      PROTECTED_IAM_PRINCIPALS     = join(",", var.protected_iam_principals)
+      S3_RESPONSE_ENABLED          = var.s3_response_enabled ? "true" : "false"
+      SG_RESPONSE_ENABLED          = var.sg_response_enabled ? "true" : "false"
+      SNAPSHOT_ON_ISOLATE_ENABLED  = var.snapshot_on_isolate_enabled ? "true" : "false"
     }
   }
 

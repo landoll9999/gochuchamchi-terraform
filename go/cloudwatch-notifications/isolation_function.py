@@ -32,9 +32,12 @@
       살아 있어 EBS/메모리 포렌식이 가능하다 — terminate보다 격리를 쓰는 이유.
 """
 
+import ipaddress
 import json
 import logging
 import os
+import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -47,6 +50,7 @@ ec2 = boto3.client("ec2")
 sns = boto3.client("sns")
 iam = boto3.client("iam")
 dynamodb = boto3.client("dynamodb")
+s3 = boto3.client("s3")
 
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 MIN_SEVERITY = float(os.environ.get("MIN_SEVERITY", "7"))
@@ -71,6 +75,39 @@ PROTECTED_INSTANCE_TAG_KEYS = {
     if k.strip()
 }
 QUARANTINE_STALE_HOURS = float(os.environ.get("QUARANTINE_STALE_HOURS", "12"))
+
+# --- (2026-08-13) WAF 자동 차단 설정 ------------------------------------------
+# 네트워크 기반 finding 의 공격자 원격 IP 를 CLOUDFRONT WAF IP set 에 넣어 엣지에서
+# 막는다. 격리·키 비활성화와 독립적인 부가 대응이다. 기본 드라이런(false)이라
+# 관찰 후 켠다. IP set 은 CLOUDFRONT scope 라 us-east-1 wafv2 클라이언트로 다룬다.
+WAF_RESPONSE_ENABLED = os.environ.get("WAF_RESPONSE_ENABLED", "false").lower() == "true"
+WAF_BLOCKLIST_IP_SET_NAME = os.environ.get("WAF_BLOCKLIST_IP_SET_NAME", "")
+WAF_BLOCK_TTL_HOURS = float(os.environ.get("WAF_BLOCK_TTL_HOURS", "24"))
+# WAF 자동 차단에서 제외할 IP(관리자 IP 등). 사설/내부 IP 는 코드가 자동 제외한다.
+PROTECTED_IPS = {ip.strip() for ip in os.environ.get("PROTECTED_IPS", "").split(",") if ip.strip()}
+
+# --- (2026-08-13) 침해 파드 K8s 격리 설정 ------------------------------------
+# EKS 런타임 finding 의 대상 파드에 deny-all NetworkPolicy 를 적용해 네트워크를
+# 끊는다(파드는 살려 포렌식 — EC2 격리와 같은 철학). Lambda 는 EKS 프라이빗 API 에
+# 직접 붙지 않고, 이미 gochuchamchi 네임스페이스 edit 권한이 있는 배스천을 SSM 으로
+# 시켜 kubectl 을 돌린다(provision_app_db_iam_user 와 같은 경로). 기본 드라이런.
+POD_RESPONSE_ENABLED = os.environ.get("POD_RESPONSE_ENABLED", "false").lower() == "true"
+BASTION_TAG_NAME = os.environ.get("BASTION_TAG_NAME", "gochuchamchi-bastion")
+
+# --- (2026-08-13) 추가 대응 4종 설정 (전부 기본 드라이런) --------------------
+# ① IAM 주체 격리: 키 비활성화가 못 잡는 AssumedRole/SSO 세션을 deny-all 정책으로.
+#    정상 역할에 붙으면 서비스가 마비되므로 보호 목록으로 반드시 걸러야 한다.
+IAM_SUBJECT_RESPONSE_ENABLED = os.environ.get("IAM_SUBJECT_RESPONSE_ENABLED", "false").lower() == "true"
+PROTECTED_IAM_PRINCIPALS = {
+    p.strip() for p in os.environ.get("PROTECTED_IAM_PRINCIPALS", "").split(",") if p.strip()
+}
+# ② S3 버킷 퍼블릭 차단  ③ 위험 SG 규칙 제거  ④ 격리 시 EBS 포렌식 스냅샷
+S3_RESPONSE_ENABLED = os.environ.get("S3_RESPONSE_ENABLED", "false").lower() == "true"
+SG_RESPONSE_ENABLED = os.environ.get("SG_RESPONSE_ENABLED", "false").lower() == "true"
+SNAPSHOT_ON_ISOLATE_ENABLED = os.environ.get("SNAPSHOT_ON_ISOLATE_ENABLED", "false").lower() == "true"
+
+# IAM 주체 격리로 붙이는 인라인 정책 이름(복구 때 이 이름으로 지운다).
+QUARANTINE_DENY_POLICY_NAME = "gochuchamchi-quarantine-deny"
 
 QUARANTINE_TAG = "gochuchamchi:quarantined"
 QUARANTINE_TIME_TAG = "gochuchamchi:quarantine-time"
@@ -100,11 +137,42 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if event.get("action") == "recover":
         return recover_instance(event.get("instanceId", ""))
 
+    # ── 파드 격리 복구 분기 (라벨만 떼면 deny-all 셀렉터에서 빠져 정상화) ──
+    if event.get("action") == "recover-pod":
+        return recover_pod(event.get("namespace", ""), event.get("name", ""))
+
+    # ── IAM 주체 격리 복구 분기 (deny-all 인라인 정책 제거) ──────────────
+    if event.get("action") == "recover-iam":
+        return recover_iam_principal(event.get("kind", ""), event.get("name", ""))
+
     # ── 미복구 격리 감시 분기 (EventBridge 스케줄이 매시간 호출) ──────
+    #     같은 스케줄에서 만료된 WAF 차단 IP 도 함께 걷어낸다(TTL 자동 해제).
     if event.get("action") == "audit":
-        return audit_stale_quarantines()
+        stale = audit_stale_quarantines()
+        waf_expired = sweep_expired_waf_blocks()
+        if waf_expired.get("removed"):
+            stale["wafExpired"] = waf_expired["removed"]
+        return stale
 
     detail = event.get("detail", {})
+
+    # SIEM 크로스계정 대응 요청(Log 계정 detector 가 보낸 urgent 대상 IP).
+    if event.get("source") == "gochuchamchi.siem" or detail.get("responseSource") == "siem":
+        return handle_siem_response(detail)
+
+    # Security Hub 이벤트(findings 배열)면 GuardDuty 유사 형태로 정규화해 태운다.
+    if "findings" in detail:
+        return handle_securityhub(detail)
+
+    return process_finding(detail)
+
+
+def process_finding(detail: dict[str, Any]) -> dict[str, Any]:
+    """GuardDuty finding(또는 Security Hub 에서 정규화된 유사 detail)을 대응 처리한다.
+
+    Security Hub 입력원도 같은 대응(격리·키·WAF·파드)을 재사용하도록 lambda_handler
+    본문에서 분리했다. detail 은 GuardDuty finding 의 detail 스키마를 따른다.
+    """
     finding_id = detail.get("id", "unknown")
     finding_type = detail.get("type", "unknown")
     severity = float(detail.get("severity", 0))
@@ -125,6 +193,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             result["detail"] = f"severity {severity} < 기준 {MIN_SEVERITY}"
             return finish(result)
 
+        # ── 1-a. 네트워크 기반 finding: 공격자 원격 IP 를 WAF 에서 차단 ──────
+        #     격리·키 비활성화와 독립적인 부가 대응이다. finding 이 EC2·키 대상이
+        #     아니어도(순수 정찰·스캔 등) 원격 IP 만 있으면 엣지에서 막는다.
+        #     결과는 result['wafBlock'] 에 담겨 아래 대응·통보와 함께 나간다.
+        block_remote_ip(detail, result)
+
         # ── 1-b. 자격증명 대상 finding: 액세스키 비활성화로 대응 ─────
         #     네트워크 격리(SG 교체)가 통하지 않는 유형이다. 탈취된 키는
         #     "어디서든" 쓸 수 있어 인스턴스를 가둬도 소용이 없으므로,
@@ -135,9 +209,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         instance_id = extract_instance_id(detail)
         if not instance_id:
-            # S3/EKS 컨트롤플레인 등 — SG 격리로도 키 무효화로도 대응 불가.
-            # 통보 경로(Rule 1)가 이미 Discord로 알렸으므로 여기선 기록만.
-            result["detail"] = "EC2·자격증명 대상이 아닌 finding — 자동대응 불가, 수동 확인 필요"
+            # EC2 대상이 아니다. EKS 런타임 finding 이면 대상 파드를 격리한다.
+            namespace, name, _ = extract_pod(detail)
+            if namespace and name:
+                return isolate_pod(detail, result)
+            # S3 대상 finding 이면 버킷 퍼블릭 차단으로 대응한다(② S3 퍼블릭 차단).
+            if block_s3_public(detail, result):
+                return result
+            # 그 외(컨트롤플레인 등) — 자동대응 불가. 통보 경로가 이미 알렸으니 기록만.
+            result["detail"] = "EC2·자격증명·파드·S3 대상이 아닌 finding — 자동대응 불가, 수동 확인 필요"
             return finish(result)
 
         result["instanceId"] = instance_id
@@ -226,6 +306,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             f"ENI {len(enis)}개를 검역 SG {quarantine_sg}로 교체, "
             f"기존 SG: {sorted(current_sgs)}"
         )
+        # 부가 대응: 원본 SG 위험 규칙 제거(③) + EBS 포렌식 스냅샷(④).
+        # 둘 다 격리와 독립적이고, 실패해도 격리는 이미 끝났으므로 삼킨다.
+        remove_risky_sg_rules(instance, result)
+        snapshot_instance(instance, result)
         return finish(result)
 
     except Exception as error:  # noqa: BLE001 — 실패도 반드시 통보돼야 함
@@ -344,14 +428,10 @@ def disable_access_key(
     result["userName"] = user_name or "(unknown)"
     result["userType"] = user_type or "(unknown)"
 
-    # 정적 키가 아니면 이 API 로 손댈 수 없다 — SSO/AssumedRole 이 여기 해당.
+    # 정적 키가 아니면 이 API 로 손댈 수 없다(SSO/AssumedRole). 키 비활성화 대신
+    # IAM 주체에 deny-all 정책을 붙여 세션을 막는다(① IAM 주체 격리).
     if user_type != "IAMUser" or not user_name:
-        result["action"] = "manual-required"
-        result["detail"] = (
-            f"userType={user_type} — 정적 IAM 액세스키가 아니라 자동 비활성화 불가. "
-            "임시 자격증명이면 원 주체(역할/SSO 세션) 차단이 필요하다."
-        )
-        return finish(result)
+        return quarantine_iam_principal(user_name, user_type, result)
 
     if access_key_id in PROTECTED_ACCESS_KEY_IDS:
         result["action"] = "skipped"
@@ -445,6 +525,108 @@ def extract_instance_id(detail: dict[str, Any]) -> str | None:
         return None
 
     return resource.get("instanceDetails", {}).get("instanceId")
+
+
+# =============================================================================
+# Security Hub 입력원 (2026-08-13) — GuardDuty 외 소스의 finding 도 대응에 태운다
+# =============================================================================
+
+
+def _securityhub_instance_id(finding: dict[str, Any]) -> str | None:
+    """ASFF finding 의 Resources 에서 EC2 인스턴스 ID 를 꺼낸다(없으면 None)."""
+    for resource in finding.get("Resources", []):
+        if resource.get("Type") != "AwsEc2Instance":
+            continue
+        rid = resource.get("Id", "")
+        # ARN(arn:aws:ec2:...:instance/i-xxxx) 또는 이미 i-xxxx 형태 둘 다 처리
+        if "/" in rid:
+            return rid.rsplit("/", 1)[-1]
+        if rid.startswith("i-"):
+            return rid
+    return None
+
+
+def handle_securityhub(detail: dict[str, Any]) -> dict[str, Any]:
+    """Security Hub 이벤트의 각 finding 을 GuardDuty 유사 detail 로 정규화해 처리한다.
+
+    - GuardDuty 제품 finding 은 건너뛴다: 이미 직접 EventBridge 경로로 처리돼
+      이중 대응이 된다. Security Hub 를 태우는 목적은 Inspector·Config 등
+      GuardDuty 가 아닌 소스를 대응에 편입하는 것이다.
+    - HIGH/CRITICAL 만 본다(EventBridge 패턴에서 이미 거르지만 이중 방어).
+    - Security Hub finding 은 원격 IP·파드가 구조화돼 있지 않아 EC2 인스턴스
+      대상만 격리로 연결한다. 그 외는 통보·기록만 한다(수동 확인).
+    """
+    findings = detail.get("findings", [])
+    processed = 0
+    last_result: dict[str, Any] | None = None
+
+    for finding in findings:
+        product = finding.get("ProductName", "")
+        if product == "GuardDuty":
+            continue
+
+        label = finding.get("Severity", {}).get("Label", "")
+        if label not in ("HIGH", "CRITICAL"):
+            continue
+
+        instance_id = _securityhub_instance_id(finding)
+        pseudo_detail = {
+            "id": finding.get("Id", "unknown"),
+            "type": (finding.get("Types") or [product or "securityhub"])[0],
+            "severity": 9.0 if label == "CRITICAL" else 7.0,
+            "resource": (
+                {"resourceType": "Instance", "instanceDetails": {"instanceId": instance_id}}
+                if instance_id
+                else {}
+            ),
+        }
+
+        try:
+            last_result = process_finding(pseudo_detail)
+            processed += 1
+        except Exception:  # noqa: BLE001 — 한 finding 실패가 배치의 나머지를 막지 않는다
+            logger.exception("Security Hub finding 처리 실패: %s", finding.get("Id"))
+
+    logger.info("Security Hub 이벤트 처리: %d건", processed)
+    return {"source": "securityhub", "processed": processed, "last": last_result}
+
+
+def handle_siem_response(detail: dict[str, Any]) -> dict[str, Any]:
+    """Log 계정 SIEM detector 가 크로스계정으로 넘긴 urgent 대상 IP 를 WAF 로 막는다.
+
+    SIEM 이 이미 판정(malicious 확신)을 마친 공인 IP 만 온다. 여기서는 WAF 차단
+    (24h 자동 만료)만 한다 — 크로스계정으로 들어온 신호에 인스턴스 격리·키
+    비활성화 같은 강한 대응은 걸지 않는다. 신호가 조작·오탐이어도 하루 뒤 스스로
+    풀리는 대응으로 한정해 영향 반경을 좁힌다. 실제 차단 여부는 WAF_RESPONSE_ENABLED
+    가 다시 게이트한다(Log 쪽 RESPONSE_ENABLED 와 이중 스위치).
+    """
+    result: dict[str, Any] = {
+        "source": "siem",
+        "findingId": detail.get("ruleId", "siem"),
+        "findingType": f"siem:{detail.get('ruleId', '')}",
+        "action": "none",
+        "detail": "",
+    }
+
+    ips = detail.get("sourceIps", [])
+    if not ips:
+        result["detail"] = "SIEM 대응 요청에 sourceIps 가 없음"
+        return finish(result)
+
+    outcomes: list[str] = []
+    for ip in ips:
+        sub: dict[str, Any] = {}
+        pseudo = {
+            "service": {
+                "action": {"networkConnectionAction": {"remoteIpDetails": {"ipAddressV4": ip}}}
+            }
+        }
+        block_remote_ip(pseudo, sub)
+        outcomes.append(sub.get("wafBlock", f"{ip}: no-op"))
+
+    result["action"] = "siem-waf-block"
+    result["detail"] = ("; ".join(outcomes))[:1000]
+    return finish(result)
 
 
 def describe_instance(instance_id: str) -> dict[str, Any] | None:
@@ -590,3 +772,627 @@ def finish(result: dict[str, Any]) -> dict[str, Any]:
 
     logger.info("격리 결과: %s", json.dumps(result, ensure_ascii=False))
     return result
+
+
+# =============================================================================
+# WAF 자동 차단 (2026-08-13) — 네트워크 기반 finding 의 원격 IP 를 엣지에서 막는다
+# =============================================================================
+
+
+def extract_remote_ip(detail: dict[str, Any]) -> str | None:
+    """네트워크 기반 finding 에서 공격자의 원격 IPv4 를 꺼낸다.
+
+    GuardDuty 는 finding 타입마다 원격 IP 위치가 다르다. 알려진 위치를 순서대로
+    본다. 사설/내부 IP 는 여기서 거르지 않는다(호출부에서 처리).
+    """
+    action = detail.get("service", {}).get("action", {})
+
+    for key in ("networkConnectionAction", "awsApiCallAction", "kubernetesApiCallAction"):
+        ip = action.get(key, {}).get("remoteIpDetails", {}).get("ipAddressV4")
+        if ip:
+            return ip
+
+    # 포트 스캔은 여러 소스가 있을 수 있어 첫 원격 IP 만 취한다.
+    for probe in action.get("portProbeAction", {}).get("portProbeDetails", []):
+        ip = probe.get("remoteIpDetails", {}).get("ipAddressV4")
+        if ip:
+            return ip
+
+    return None
+
+
+def _is_internal_ip(ip: str) -> bool:
+    """사설/루프백/링크로컬 IP 인지. 파싱 실패도 True(=차단 대상에서 뺀다)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    return addr.is_private or addr.is_loopback or addr.is_link_local
+
+
+def _find_ip_set(waf: Any, name: str) -> dict[str, Any] | None:
+    """CLOUDFRONT scope IP set 을 이름으로 찾는다(없으면 None).
+
+    Lambda 는 IP set 의 Id 를 배포 시점에 모른다(상시 계층이 만든다). 이름으로
+    조회해 Id/LockToken 을 얻는다 — 계층 간 Terraform 결합을 만들지 않는다.
+    """
+    resp = waf.list_ip_sets(Scope="CLOUDFRONT", Limit=100)
+    for item in resp.get("IPSets", []):
+        if item["Name"] == name:
+            return item
+    return None
+
+
+def block_remote_ip(detail: dict[str, Any], result: dict[str, Any]) -> None:
+    """네트워크 기반 finding 의 원격 IP 를 WAF 차단 목록에 넣는다(부가 대응).
+
+    격리·키 비활성화와 독립적이다. 결과는 result['wafBlock'] 에 담아 기존 대응과
+    함께 통보·기록되게 한다. 대상이 없거나 실패해도 예외를 던지지 않는다 — 이
+    부가 대응의 실패가 주 대응(격리)을 막으면 안 된다.
+    """
+    if not WAF_BLOCKLIST_IP_SET_NAME:
+        return
+
+    ip = extract_remote_ip(detail)
+    if not ip:
+        return
+    result["remoteIp"] = ip
+
+    if ip in PROTECTED_IPS:
+        result["wafBlock"] = f"skipped-protected: {ip}"
+        return
+    if _is_internal_ip(ip):
+        result["wafBlock"] = f"skipped-internal: {ip}"
+        return
+
+    if not WAF_RESPONSE_ENABLED:
+        result["wafBlock"] = (
+            f"dry-run: WAF_RESPONSE_ENABLED=false — 실제였다면 {ip} 를 "
+            f"{WAF_BLOCK_TTL_HOURS:g}시간 차단했음"
+        )
+        return
+
+    try:
+        waf = boto3.client("wafv2", region_name="us-east-1")
+        ip_set = _find_ip_set(waf, WAF_BLOCKLIST_IP_SET_NAME)
+        if not ip_set:
+            result["wafBlock"] = f"ip-set-not-found: {WAF_BLOCKLIST_IP_SET_NAME}"
+            return
+
+        current = waf.get_ip_set(Name=ip_set["Name"], Scope="CLOUDFRONT", Id=ip_set["Id"])
+        addresses = set(current["IPSet"]["Addresses"])
+        cidr = f"{ip}/32"
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=WAF_BLOCK_TTL_HOURS)
+
+        if cidr in addresses:
+            result["wafBlock"] = f"already-blocked: {ip} (만료 시각 갱신)"
+        else:
+            addresses.add(cidr)
+            waf.update_ip_set(
+                Name=ip_set["Name"],
+                Scope="CLOUDFRONT",
+                Id=ip_set["Id"],
+                Addresses=sorted(addresses),
+                LockToken=current["LockToken"],
+            )
+            result["wafBlock"] = f"blocked: {ip} ({WAF_BLOCK_TTL_HOURS:g}h)"
+            logger.info("WAF 차단 추가: %s (만료 %s)", cidr, expires_at.isoformat())
+
+        # 같은 IP 를 다시 차단해도 만료 시각만 새로 쓴다(멱등).
+        _record_waf_block(cidr, expires_at)
+    except Exception as error:  # noqa: BLE001 — WAF 차단 실패가 주 대응을 뒤집지 않는다
+        logger.exception("WAF IP 차단 실패")
+        result["wafBlock"] = f"failed: {type(error).__name__}: {error}"
+
+
+def _record_waf_block(cidr: str, expires_at: datetime) -> None:
+    """WAF 차단 IP 의 만료 시각을 DynamoDB 에 기록한다(만료 청소가 이걸 읽는다).
+
+    targetId=waf-block:<cidr>, eventTime='active' 로 IP 당 항목 하나만 유지한다.
+    blockExpiresAt 은 만료 청소가 보는 값, expiresAt(TTL)은 DynamoDB 자동 삭제용.
+    """
+    if not HISTORY_TABLE:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        dynamodb.put_item(
+            TableName=HISTORY_TABLE,
+            Item={
+                "targetId": {"S": f"waf-block:{cidr}"},
+                "eventTime": {"S": "active"},
+                "action": {"S": "waf-block"},
+                "blockExpiresAt": {"N": str(int(expires_at.timestamp()))},
+                "expiresAt": {
+                    "N": str(int((now + timedelta(days=HISTORY_RETENTION_DAYS)).timestamp()))
+                },
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("WAF 차단 이력 적재 실패 (차단 자체는 이미 수행됨)")
+
+
+def _get_block_expiry(cidr: str) -> int | None:
+    """차단 IP 의 만료 시각(unix) 을 DynamoDB 에서 읽는다. 없으면 None."""
+    if not HISTORY_TABLE:
+        return None
+    try:
+        resp = dynamodb.get_item(
+            TableName=HISTORY_TABLE,
+            Key={"targetId": {"S": f"waf-block:{cidr}"}, "eventTime": {"S": "active"}},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("WAF 차단 만료 조회 실패")
+        return None
+    item = resp.get("Item")
+    if not item or "blockExpiresAt" not in item:
+        return None
+    return int(item["blockExpiresAt"]["N"])
+
+
+def _delete_block_record(cidr: str) -> None:
+    """만료돼 해제한 차단 IP 의 DynamoDB 항목을 지운다."""
+    if not HISTORY_TABLE:
+        return
+    try:
+        dynamodb.delete_item(
+            TableName=HISTORY_TABLE,
+            Key={"targetId": {"S": f"waf-block:{cidr}"}, "eventTime": {"S": "active"}},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("WAF 차단 이력 삭제 실패")
+
+
+def sweep_expired_waf_blocks() -> dict[str, Any]:
+    """만료된 WAF 차단 IP 를 목록에서 뺀다(audit 경로가 매시간 호출).
+
+    IP set 에는 TTL 이 없다. 이 청소가 없으면 사고가 지나갔는데도 IP 가 영구히
+    막혀 나중에 그 주소를 배정받은 정상 사용자까지 걸린다. 각 항목의
+    blockExpiresAt 을 보고 지난 것만 제거한다. 만료 기록이 없는(수동으로 넣은
+    것으로 보이는) IP 는 건드리지 않는다.
+    """
+    summary: dict[str, Any] = {"removed": [], "kept": 0}
+    if not WAF_BLOCKLIST_IP_SET_NAME:
+        return summary
+
+    try:
+        waf = boto3.client("wafv2", region_name="us-east-1")
+        ip_set = _find_ip_set(waf, WAF_BLOCKLIST_IP_SET_NAME)
+        if not ip_set:
+            return summary
+
+        current = waf.get_ip_set(Name=ip_set["Name"], Scope="CLOUDFRONT", Id=ip_set["Id"])
+        addresses = current["IPSet"]["Addresses"]
+        if not addresses:
+            return summary
+
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        keep: list[str] = []
+        for cidr in addresses:
+            expiry = _get_block_expiry(cidr)
+            if expiry is not None and expiry < now_ts:
+                summary["removed"].append(cidr)
+            else:
+                keep.append(cidr)
+        summary["kept"] = len(keep)
+
+        if summary["removed"]:
+            waf.update_ip_set(
+                Name=ip_set["Name"],
+                Scope="CLOUDFRONT",
+                Id=ip_set["Id"],
+                Addresses=keep,
+                LockToken=current["LockToken"],
+            )
+            for cidr in summary["removed"]:
+                _delete_block_record(cidr)
+            logger.info("WAF 차단 만료 해제: %s", summary["removed"])
+    except Exception:  # noqa: BLE001 — 청소 실패가 다른 감사 결과를 막지 않는다
+        logger.exception("WAF 차단 만료 청소 실패")
+
+    return summary
+
+
+# =============================================================================
+# 침해 파드 K8s 격리 (2026-08-13) — 배스천 SSM 경유 kubectl 로 deny-all 적용
+# =============================================================================
+
+# RFC1123: 소문자·숫자·'-'·'.', 처음과 끝은 영숫자. SSM 으로 넘기는 값이라 셸
+# 인젝션을 막기 위해 finding 에서 온 namespace/name 을 이 패턴으로 강제 검증한다.
+_K8S_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
+
+
+def _valid_k8s_name(value: str | None) -> bool:
+    return bool(value) and bool(_K8S_NAME_RE.match(value))
+
+
+def extract_pod(detail: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """EKS finding 에서 (namespace, 워크로드명, 워크로드유형)을 꺼낸다.
+
+    GuardDuty 는 resource.kubernetesDetails.kubernetesWorkloadDetails 에 담는다.
+    EKS 런타임/감사 finding 이 아니면 전부 None 이다.
+    """
+    workload = (
+        detail.get("resource", {})
+        .get("kubernetesDetails", {})
+        .get("kubernetesWorkloadDetails", {})
+    )
+    return workload.get("namespace"), workload.get("name"), workload.get("type")
+
+
+def find_bastion() -> str | None:
+    """실행 중인 배스천 인스턴스 ID 를 태그로 찾는다(매일 재생성되어 ID 고정 불가)."""
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [BASTION_TAG_NAME]},
+            {"Name": "instance-state-name", "Values": ["running"]},
+        ]
+    )
+    for reservation in resp.get("Reservations", []):
+        for instance in reservation.get("Instances", []):
+            return instance["InstanceId"]
+    return None
+
+
+def run_ssm_shell(
+    instance_id: str, commands: list[str], timeout_seconds: int = 50
+) -> tuple[str, str, str]:
+    """배스천에서 셸 명령을 실행하고 (상태, stdout, stderr)를 반환한다.
+
+    Lambda 타임아웃(120s) 안에서 끝나도록 폴링 상한을 둔다. kubectl 작업은 보통
+    수 초지만 SSM 에이전트가 명령을 받는 데 약간 지연이 있다.
+    """
+    ssm = boto3.client("ssm")
+    resp = ssm.send_command(
+        InstanceIds=[instance_id],
+        DocumentName="AWS-RunShellScript",
+        Parameters={"commands": commands},
+    )
+    command_id = resp["Command"]["CommandId"]
+
+    deadline = time.monotonic() + timeout_seconds
+    status, out, err = "Pending", "", ""
+    while time.monotonic() < deadline:
+        time.sleep(3)
+        try:
+            inv = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+        except ssm.exceptions.InvocationDoesNotExist:
+            continue  # 아직 인보케이션이 등록되기 전
+        status = inv["Status"]
+        out = inv.get("StandardOutputContent", "")
+        err = inv.get("StandardErrorContent", "")
+        if status not in ("Pending", "InProgress", "Delayed"):
+            break
+    return status, out, err
+
+
+def _pod_quarantine_commands(namespace: str, name: str) -> list[str]:
+    """대상 파드에 격리 라벨을 붙이고 deny-all NetworkPolicy 를 적용하는 명령."""
+    network_policy = "\n".join(
+        [
+            "apiVersion: networking.k8s.io/v1",
+            "kind: NetworkPolicy",
+            "metadata:",
+            "  name: gochuchamchi-quarantine",
+            f"  namespace: {namespace}",
+            "  labels:",
+            "    gochuchamchi.io/managed-by: guardduty-isolation",
+            "spec:",
+            "  podSelector:",
+            "    matchLabels:",
+            '      gochuchamchi.io/quarantine: "true"',
+            "  policyTypes:",
+            "  - Ingress",
+            "  - Egress",
+        ]
+    )
+    return [
+        "set -e",
+        f"kubectl -n {namespace} label pod {name} gochuchamchi.io/quarantine=true --overwrite",
+        f"kubectl apply -f - <<'YAML'\n{network_policy}\nYAML",
+        f"kubectl -n {namespace} get networkpolicy gochuchamchi-quarantine -o name",
+        "echo POD_QUARANTINE_DONE",
+    ]
+
+
+def isolate_pod(detail: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """EKS 런타임 finding 의 대상 파드에 deny-all NetworkPolicy 를 적용한다.
+
+    파드를 삭제하지 않고 네트워크만 끊는다 — EC2 격리와 같은 이유로, 살아 있는
+    파드가 있어야 메모리·파일시스템 포렌식이 가능하다. 라벨 셀렉터 방식이라
+    복구는 라벨만 떼면 된다(recover-pod).
+    """
+    namespace, name, _ = extract_pod(detail)
+    result["podNamespace"] = namespace
+    result["podWorkload"] = name
+
+    if not (_valid_k8s_name(namespace) and _valid_k8s_name(name)):
+        result["action"] = "manual-required"
+        result["detail"] = f"파드 대상 이름이 유효하지 않음(ns={namespace}, name={name}) — 수동 확인"
+        return finish(result)
+
+    # 배스천 access entry 는 gochuchamchi 네임스페이스 edit 로 한정돼 있다. 다른
+    # 네임스페이스(kube-system 등)는 배스천 권한 밖이라 사람이 직접 대응해야 한다.
+    if namespace != "gochuchamchi":
+        result["action"] = "manual-required"
+        result["incidentTier"] = "P1"
+        result["detail"] = (
+            f"침해 의심 파드가 '{namespace}' 네임스페이스라 배스천 권한(gochuchamchi 전용) "
+            "밖이다. 시스템 네임스페이스일 수 있으니 담당자를 호출해 직접 격리할 것."
+        )
+        return finish(result)
+
+    if not POD_RESPONSE_ENABLED:
+        result["action"] = "dry-run"
+        result["detail"] = (
+            f"POD_RESPONSE_ENABLED=false — 실제였다면 {namespace}/{name} 에 "
+            "격리 라벨 + deny-all NetworkPolicy 를 적용했음"
+        )
+        return finish(result)
+
+    bastion = find_bastion()
+    if not bastion:
+        result["action"] = "failed"
+        result["detail"] = "배스천 인스턴스를 찾지 못함 — 파드 격리는 배스천 SSM 경유다"
+        return finish(result)
+
+    status, out, err = run_ssm_shell(bastion, _pod_quarantine_commands(namespace, name))
+    result["ssmStatus"] = status
+    if status == "Success":
+        result["action"] = "pod-isolated"
+        result["detail"] = (
+            f"{namespace}/{name} 에 격리 라벨 + deny-all NetworkPolicy 적용 "
+            '(복구: {"action":"recover-pod","namespace":"%s","name":"%s"})' % (namespace, name)
+        )
+    else:
+        result["action"] = "failed"
+        result["detail"] = f"파드 격리 SSM 실패 (status={status}): {(err or out)[:400]}"
+    return finish(result)
+
+
+def recover_pod(namespace: str, name: str) -> dict[str, Any]:
+    """격리 라벨을 떼어 파드를 deny-all 셀렉터에서 빼낸다.
+
+    NetworkPolicy 자체는 지우지 않는다 — 같은 네임스페이스에 아직 격리된 다른
+    파드가 남아 있을 수 있어서다. 라벨만 떼면 이 파드는 셀렉터에서 빠져 정상화된다.
+    """
+    result: dict[str, Any] = {
+        "action": "recover-pod",
+        "podNamespace": namespace,
+        "podWorkload": name,
+        "detail": "",
+    }
+
+    if not (_valid_k8s_name(namespace) and _valid_k8s_name(name)):
+        result["action"] = "failed"
+        result["detail"] = (
+            'namespace/name 이 유효하지 않음 — '
+            '{"action":"recover-pod","namespace":"gochuchamchi","name":"<pod>"} 형식으로 호출'
+        )
+        return finish(result)
+
+    bastion = find_bastion()
+    if not bastion:
+        result["action"] = "failed"
+        result["detail"] = "배스천 인스턴스를 찾지 못함"
+        return finish(result)
+
+    commands = [
+        f"kubectl -n {namespace} label pod {name} gochuchamchi.io/quarantine- || true",
+        "echo POD_RECOVER_DONE",
+    ]
+    status, out, err = run_ssm_shell(bastion, commands)
+    result["ssmStatus"] = status
+    if status == "Success":
+        result["action"] = "pod-recovered"
+        result["detail"] = f"{namespace}/{name} 격리 라벨 제거 — 네트워크 정상화"
+    else:
+        result["action"] = "failed"
+        result["detail"] = f"파드 복구 SSM 실패 (status={status}): {(err or out)[:400]}"
+    return finish(result)
+
+
+# =============================================================================
+# 추가 대응 4종 (2026-08-13)
+#   ① IAM 주체 격리  ② S3 퍼블릭 차단  ③ 위험 SG 규칙 제거  ④ EBS 포렌식 스냅샷
+# =============================================================================
+
+
+def quarantine_iam_principal(user_name: str | None, user_type: str | None, result: dict[str, Any]) -> dict[str, Any]:
+    """① 탈취 의심 IAM 주체(역할/사용자)에 deny-all 인라인 정책을 부착한다.
+
+    액세스키 비활성화가 못 잡는 AssumedRole·SSO 세션까지 막는다 — 이 계정은 SSO라
+    finding 주체가 대개 역할이다. 정상 역할에 붙이면 그 역할의 모든 세션이
+    마비되므로 보호 목록·드라이런·복구를 반드시 통과시킨다.
+    """
+    # AssumedRole 은 userName 이 "역할명" 또는 "역할명/세션명"으로 온다. 역할명만 취한다.
+    principal = (user_name or "").split("/")[0]
+    if user_type == "AssumedRole" and principal:
+        target, kind = principal, "role"
+    elif user_type == "IAMUser" and user_name:
+        target, kind = user_name, "user"
+    else:
+        result["action"] = "manual-required"
+        result["detail"] = f"userType={user_type} — 격리할 IAM 주체를 특정할 수 없다(Root/연합 등). 수동 차단 필요."
+        return finish(result)
+
+    result["iamPrincipal"] = f"{kind}:{target}"
+
+    if target in PROTECTED_IAM_PRINCIPALS:
+        result["action"] = "skipped"
+        result["detail"] = f"보호 목록(PROTECTED_IAM_PRINCIPALS)의 주체 {target} — 자동 격리 생략, 수동 판단"
+        return finish(result)
+
+    if not IAM_SUBJECT_RESPONSE_ENABLED:
+        result["action"] = "dry-run"
+        result["detail"] = (
+            f"IAM_SUBJECT_RESPONSE_ENABLED=false — 실제였다면 {kind} {target} 에 deny-all 정책을 붙였음"
+        )
+        return finish(result)
+
+    deny_policy = json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {"Sid": "GochuchamchiQuarantineDenyAll", "Effect": "Deny", "Action": "*", "Resource": "*"}
+            ],
+        }
+    )
+    try:
+        if kind == "role":
+            iam.put_role_policy(RoleName=target, PolicyName=QUARANTINE_DENY_POLICY_NAME, PolicyDocument=deny_policy)
+        else:
+            iam.put_user_policy(UserName=target, PolicyName=QUARANTINE_DENY_POLICY_NAME, PolicyDocument=deny_policy)
+    except iam.exceptions.NoSuchEntityException:
+        result["action"] = "skipped"
+        result["detail"] = f"{kind} {target} 가 이미 없음"
+        return finish(result)
+
+    result["action"] = "iam-quarantined"
+    result["detail"] = (
+        f'{kind} {target} 에 deny-all 정책 부착 (복구: {{"action":"recover-iam","kind":"{kind}","name":"{target}"}})'
+    )
+    logger.info("IAM 주체 격리: %s %s", kind, target)
+    return finish(result)
+
+
+def recover_iam_principal(kind: str, name: str) -> dict[str, Any]:
+    """IAM 주체 격리 복구 — deny-all 인라인 정책을 제거한다."""
+    result: dict[str, Any] = {"action": "recover-iam", "iamPrincipal": f"{kind}:{name}", "detail": ""}
+    if kind not in ("role", "user") or not name:
+        result["action"] = "failed"
+        result["detail"] = '형식: {"action":"recover-iam","kind":"role|user","name":"<name>"}'
+        return finish(result)
+    try:
+        if kind == "role":
+            iam.delete_role_policy(RoleName=name, PolicyName=QUARANTINE_DENY_POLICY_NAME)
+        else:
+            iam.delete_user_policy(UserName=name, PolicyName=QUARANTINE_DENY_POLICY_NAME)
+    except iam.exceptions.NoSuchEntityException:
+        result["action"] = "skipped"
+        result["detail"] = "격리 정책이 이미 없음(이미 복구됐거나 격리된 적 없음)"
+        return finish(result)
+    result["action"] = "iam-recovered"
+    result["detail"] = f"{kind} {name} 의 deny-all 정책 제거 — 권한 정상화"
+    return finish(result)
+
+
+def block_s3_public(detail: dict[str, Any], result: dict[str, Any]) -> bool:
+    """② S3 대상 finding 의 버킷에 PublicAccessBlock 을 강제한다.
+
+    S3 대상이 아니면 False 를 돌려 호출부가 다음 분기로 넘어가게 한다. S3 대상이면
+    (드라이런 포함) 처리하고 True 를 돌린다.
+    """
+    buckets = detail.get("resource", {}).get("s3BucketDetails", [])
+    names = [b.get("name") for b in buckets if b.get("name")]
+    if not names:
+        return False
+    result["s3Buckets"] = names
+
+    if not S3_RESPONSE_ENABLED:
+        result["action"] = "dry-run"
+        result["detail"] = f"S3_RESPONSE_ENABLED=false — 실제였다면 {names} 에 PublicAccessBlock 을 강제했음"
+        finish(result)
+        return True
+
+    blocked = []
+    for name in names:
+        try:
+            s3.put_public_access_block(
+                Bucket=name,
+                PublicAccessBlockConfiguration={
+                    "BlockPublicAcls": True,
+                    "IgnorePublicAcls": True,
+                    "BlockPublicPolicy": True,
+                    "RestrictPublicBuckets": True,
+                },
+            )
+            blocked.append(name)
+        except Exception:  # noqa: BLE001
+            logger.exception("S3 퍼블릭 차단 실패: %s", name)
+
+    result["action"] = "s3-public-blocked" if blocked else "failed"
+    result["detail"] = (
+        f"버킷 {blocked} 에 PublicAccessBlock 강제" if blocked else f"버킷 {names} 퍼블릭 차단 전부 실패"
+    )
+    finish(result)
+    return True
+
+
+# 0.0.0.0/0 로 열렸을 때 특히 위험한 포트(원격 접속·DB·컨테이너/오케스트레이터 API).
+_SENSITIVE_PORTS = {22, 3389, 3306, 5432, 6379, 27017, 9200, 2375, 6443}
+
+
+def _is_risky_port_range(perm: dict[str, Any]) -> bool:
+    """전체 개방된 규칙이 위험한가 — 모든 프로토콜/민감 포트/광범위 범위."""
+    if perm.get("IpProtocol") == "-1":
+        return True
+    from_p, to_p = perm.get("FromPort"), perm.get("ToPort")
+    if from_p is None or to_p is None:
+        return True
+    if any(from_p <= p <= to_p for p in _SENSITIVE_PORTS):
+        return True
+    return (to_p - from_p) >= 1000
+
+
+def remove_risky_sg_rules(instance: dict[str, Any], result: dict[str, Any]) -> None:
+    """③ 격리 대상 인스턴스의 원본 SG 에서 0.0.0.0/0 위험 인그레스를 제거한다.
+
+    격리(SG 교체)와 별개로 원본 SG 자체를 고쳐, 그 SG 를 공유하는 다른 자원까지
+    보호한다. 전체 개방(0.0.0.0/0 또는 ::/0) + 민감 포트/광범위 범위만 대상으로
+    좁혀 정상 규칙을 잘못 지우지 않는다.
+    """
+    if not SG_RESPONSE_ENABLED:
+        return
+    sg_ids = list({sg["GroupId"] for sg in instance.get("SecurityGroups", [])})
+    if not sg_ids:
+        return
+    try:
+        described = ec2.describe_security_groups(GroupIds=sg_ids)["SecurityGroups"]
+    except Exception:  # noqa: BLE001
+        logger.exception("SG 조회 실패")
+        return
+
+    removed: dict[str, int] = {}
+    for sg in described:
+        risky = []
+        for perm in sg.get("IpPermissions", []):
+            open_v4 = any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
+            open_v6 = any(r.get("CidrIpv6") == "::/0" for r in perm.get("Ipv6Ranges", []))
+            if (open_v4 or open_v6) and _is_risky_port_range(perm):
+                risky.append(perm)
+        if risky:
+            try:
+                ec2.revoke_security_group_ingress(GroupId=sg["GroupId"], IpPermissions=risky)
+                removed[sg["GroupId"]] = len(risky)
+            except Exception:  # noqa: BLE001
+                logger.exception("SG 규칙 제거 실패: %s", sg["GroupId"])
+
+    if removed:
+        result["sgRulesRemoved"] = removed
+        logger.info("위험 SG 규칙 제거: %s", removed)
+
+
+def snapshot_instance(instance: dict[str, Any], result: dict[str, Any]) -> None:
+    """④ 격리한 인스턴스의 EBS 볼륨 스냅샷을 떠 증거를 보존한다(읽기 전용)."""
+    if not SNAPSHOT_ON_ISOLATE_ENABLED:
+        return
+    instance_id = instance["InstanceId"]
+    try:
+        response = ec2.create_snapshots(
+            InstanceSpecification={"InstanceId": instance_id, "ExcludeBootVolume": False},
+            Description=f"gochuchamchi forensic snapshot for quarantined {instance_id}",
+            TagSpecifications=[
+                {
+                    "ResourceType": "snapshot",
+                    "Tags": [
+                        {"Key": "gochuchamchi:forensic", "Value": "true"},
+                        {"Key": "gochuchamchi:source-instance", "Value": instance_id},
+                    ],
+                }
+            ],
+        )
+        snapshot_ids = [s["SnapshotId"] for s in response.get("Snapshots", [])]
+        result["forensicSnapshots"] = snapshot_ids
+        logger.info("포렌식 스냅샷 생성: %s", snapshot_ids)
+    except Exception:  # noqa: BLE001
+        logger.exception("포렌식 스냅샷 생성 실패")

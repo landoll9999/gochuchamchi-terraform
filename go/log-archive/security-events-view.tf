@@ -110,12 +110,12 @@ locals {
   security_events_views = {
     (local.security_events_view_name) = {
       days    = var.security_events_window_days
-      sources = ["cloudtrail", "vpc_flow", "waf", "alb", "application"]
+      sources = ["cloudtrail", "vpc_flow", "waf", "alb", "application", "rds", "eks"]
     }
 
     (local.security_events_detection_view_name) = {
       days    = var.security_events_detection_window_days
-      sources = ["cloudtrail", "waf", "alb", "application"]
+      sources = ["cloudtrail", "waf", "alb", "application", "rds"]
     }
   }
 
@@ -146,6 +146,8 @@ locals {
       t_waf         = aws_glue_catalog_table.waf_logs.name
       t_alb         = aws_glue_catalog_table.alb_access_logs.name
       t_application = aws_glue_catalog_table.application_logs.name
+      t_rds         = aws_glue_catalog_table.rds_audit_logs.name
+      t_eks         = aws_glue_catalog_table.eks_control_plane_logs.name
 
       date_floor = "date_format(current_date - INTERVAL '${cfg.days}' DAY, '%Y/%m/%d')"
 
@@ -285,6 +287,76 @@ locals {
       WHERE (
           $${ymd_window}
         )
+    SQL
+
+    # -- 6) RDS 감사 로그 — 누가 DB에 접속해 무슨 작업을 했나 ---------------------
+    #    원문은 파싱 안 된 message 한 컬럼(rds-audit-analytics.tf). MariaDB
+    #    SERVER_AUDIT 의 CSV 한 줄이다:
+    #      timestamp,serverhost,username,clienthost,connid,queryid,operation,db,object,retcode
+    #    앞쪽 6개 필드는 콤마가 없어 split_part 로 안전하게 뽑힌다. object(9번째)에는
+    #    쿼리 텍스트가 들어가 콤마가 섞일 수 있으나, 우리가 쓰는 필드(1·3·4·7·8)는
+    #    전부 그 앞이라 어긋나지 않는다. retcode 는 위치가 밀릴 수 있어 줄 끝에서
+    #    정규식으로 직접 집는다. 파싱이 깨져도 뷰 전체가 죽지 않도록 try()로 감싼다.
+    #      operation=CONNECT + retcode!=0  →  인증 실패(access denied)
+    #      actor 는 DB 유저명(gochuchamchi_app_iam 등), source_ip 는 clienthost.
+    rds = <<-SQL
+      SELECT
+        CAST(try(date_parse(split_part(message, ',', 1), '%Y%m%d %H:%i:%s')) AS timestamp) AS event_time,
+        'rds'                                                                         AS source_type,
+        NULLIF(split_part(message, ',', 4), '')                                       AS source_ip,
+        NULLIF(split_part(message, ',', 3), '')                                       AS actor,
+        trim(concat(
+          upper(split_part(message, ',', 7)), ' ',
+          COALESCE(NULLIF(split_part(message, ',', 8), ''), '-')
+        ))                                                                            AS action,
+        NULLIF(split_part(message, ',', 8), '')                                       AS target,
+        CASE
+          WHEN regexp_extract(message, ',([0-9]+)\s*$', 1) = '0'  THEN 'success'
+          WHEN regexp_like(message, ',[0-9]+\s*$')                THEN 'failure'
+          ELSE 'unknown'
+        END                                                                           AS outcome,
+        concat(
+          'op=', COALESCE(NULLIF(split_part(message, ',', 7), ''), '-'),
+          ' rc=', COALESCE(regexp_extract(message, ',([0-9]+)\s*$', 1), '-')
+        )                                                                             AS detail
+      FROM "$${db}"."$${t_rds}"
+      WHERE (
+          $${ymd_window}
+        )
+    SQL
+
+    # -- 7) EKS 제어평면 감사 — 누가 K8s API에 무슨 동작을 했나 ------------------
+    #    audit event JSON 만 파싱한다(kind='Event'). api/authenticator 평문 로그는
+    #    kind 가 없어 자동 제외된다. sourceIPs 는 배열이라 첫 요소만 본다 — 대개
+    #    호출자 실제 IP(kubectl)거나 내부 노드 IP다. responseStatus.code 403 은
+    #    인가 거부(blocked), 그 밖 4xx/5xx 는 실패로 본다.
+    eks = <<-SQL
+      SELECT
+        CAST(try(from_iso8601_timestamp(json_extract_scalar(message, '$.requestReceivedTimestamp'))) AS timestamp) AS event_time,
+        'eks'                                                                         AS source_type,
+        try(json_extract_scalar(message, '$.sourceIPs[0]'))                           AS source_ip,
+        json_extract_scalar(message, '$.user.username')                               AS actor,
+        trim(concat(
+          COALESCE(json_extract_scalar(message, '$.verb'), '-'), ' ',
+          COALESCE(json_extract_scalar(message, '$.objectRef.resource'), '-'),
+          COALESCE(concat('/', json_extract_scalar(message, '$.objectRef.subresource')), '')
+        ))                                                                            AS action,
+        concat(
+          COALESCE(json_extract_scalar(message, '$.objectRef.namespace'), '-'), ':',
+          COALESCE(json_extract_scalar(message, '$.objectRef.name'), '-')
+        )                                                                             AS target,
+        CASE
+          WHEN try(CAST(json_extract_scalar(message, '$.responseStatus.code') AS integer)) = 403 THEN 'blocked'
+          WHEN try(CAST(json_extract_scalar(message, '$.responseStatus.code') AS integer)) >= 400 THEN 'failure'
+          ELSE 'success'
+        END                                                                           AS outcome,
+        concat('stage=', COALESCE(json_extract_scalar(message, '$.stage'), '-'),
+               ' code=', COALESCE(json_extract_scalar(message, '$.responseStatus.code'), '-')) AS detail
+      FROM "$${db}"."$${t_eks}"
+      WHERE (
+          $${ymd_window}
+        )
+        AND try(json_extract_scalar(message, '$.kind')) = 'Event'
     SQL
   }
 

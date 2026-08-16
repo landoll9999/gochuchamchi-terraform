@@ -50,7 +50,8 @@ $suite = @(
     @{ key = "notify";  name = "알림 경로";                    file = "verify-notifications.ps1"; args = @(); slow = $false },
     @{ key = "logs";    name = "로그 파이프라인";              file = "verify-log-pipeline.ps1";  args = @(); slow = $false },
     @{ key = "waf";     name = "WAF (우회·SQLi·로그·알람)";    file = "verify-waf.ps1";           args = @(); slow = $true  },
-    @{ key = "schema";  name = "schema.sql 동기화";            file = "verify-schema-sync.ps1";   args = @(); slow = $true  }
+    @{ key = "schema";  name = "schema.sql 동기화";            file = "verify-schema-sync.ps1";   args = @(); slow = $true  },
+    @{ key = "autoresp"; name = "자동대응 (WAF/파드/SIEM/GuardDuty)"; file = "verify-auto-response.ps1"; args = @(); slow = $false }
 )
 
 if ($Only.Count -gt 0) { $suite = $suite | Where-Object { $Only -contains $_.key } }

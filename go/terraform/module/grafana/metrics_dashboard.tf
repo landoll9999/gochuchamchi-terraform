@@ -1,9 +1,9 @@
 locals {
   eks_health_dashboard = jsonencode({
     id                   = null
-    uid                  = "gochuchamchi-eks-health"
-    title                = "Gochuchamchi EKS Health"
-    tags                 = ["eks", "cloudwatch", "health"]
+    uid                  = "gochuchamchi-platform-health"
+    title                = "02 Platform Health"
+    tags                 = ["operations", "platform", "eks", "cloudwatch"]
     timezone             = "browser"
     schemaVersion        = 41
     version              = 1

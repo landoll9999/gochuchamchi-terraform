@@ -381,16 +381,16 @@ resource "helm_release" "grafana" {
       # Grafana 시작 시 자동으로 등록할 대시보드
       dashboards = {
         gochuchamchi = {
-          "eks-logs-overview" = {
-            json = local.eks_logs_dashboard
+          "01-service-dependencies" = {
+            json = local.aws_errors_dashboard
           }
 
-          "eks-health-overview" = {
+          "02-platform-health" = {
             json = local.eks_health_dashboard
           }
 
-          "aws-errors-overview" = {
-            json = local.aws_errors_dashboard
+          "03-application-logs" = {
+            json = local.eks_logs_dashboard
           }
         }
       }

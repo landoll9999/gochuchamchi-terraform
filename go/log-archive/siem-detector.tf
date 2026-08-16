@@ -153,6 +153,29 @@ variable "siem_judge_daily_call_limit" {
   default     = 300
 }
 
+variable "siem_response_enabled" {
+  description = <<-EOT
+    urgent 판정을 workload 계정 자동대응(WAF 24h 차단)으로 넘길지. 기본 false.
+    이 파이프라인은 원래 '알리는 것'까지만 하므로(detector docstring) 이 경계를
+    넘는 스위치는 명시적으로 켜야 한다. 켜도 조건이 좁다 — severity CRITICAL/HIGH
+    + verdict=malicious + confidence>=siem_response_min_confidence + 공인 source_ip.
+    실제 차단은 workload 격리 Lambda 의 waf_response_enabled 가 다시 게이트한다(이중).
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "siem_response_min_confidence" {
+  description = "자동대응을 넘기기 위한 malicious 판정의 최소 확신도(0~1). 낮추면 오탐 대응이 는다."
+  type        = number
+  default     = 0.8
+
+  validation {
+    condition     = var.siem_response_min_confidence >= 0.5 && var.siem_response_min_confidence <= 1.0
+    error_message = "siem_response_min_confidence는 0.5~1.0 사이여야 합니다."
+  }
+}
+
 variable "siem_judge_benign_min_confidence" {
   description = <<-EOT
     benign 판정으로 알림을 생략하려면 필요한 최소 확신도(0~1).
@@ -392,6 +415,15 @@ data "aws_iam_policy_document" "siem_detector" {
       values   = [local.siem_metric_namespace]
     }
   }
+
+  # (2026-08-13) urgent 판정을 workload 계정 자동대응으로 넘긴다(크로스계정 PutEvents).
+  # 대상은 workload 의 default 이벤트 버스 하나로 좁힌다.
+  statement {
+    sid       = "DispatchResponseToWorkload"
+    effect    = "Allow"
+    actions   = ["events:PutEvents"]
+    resources = ["arn:aws:events:${var.region}:${var.workload_account_id}:event-bus/default"]
+  }
 }
 
 resource "aws_iam_role_policy" "siem_detector" {
@@ -504,14 +536,20 @@ resource "aws_lambda_function" "siem_detector" {
       JUDGE_DAILY_CALL_LIMIT      = tostring(var.siem_judge_daily_call_limit)
       JUDGE_BENIGN_MIN_CONFIDENCE = tostring(var.siem_judge_benign_min_confidence)
       JUDGE_STRICT_MASKING        = tostring(var.siem_judge_strict_masking)
-      GROQ_SECRET_ARN             = aws_secretsmanager_secret.siem_groq_api_key.arn
-      GROQ_SECRET_KEY             = "api_key"
-      GROQ_ENDPOINT               = var.siem_groq_endpoint
-      GROQ_MODEL                  = var.siem_groq_model
-      GROQ_TIMEOUT_SECONDS        = tostring(var.siem_groq_timeout_seconds)
-      GROQ_MAX_ROWS               = tostring(var.siem_max_rows_in_alert)
-      GROQ_MAX_TOKENS             = tostring(var.siem_groq_max_tokens)
-      GROQ_REASONING_EFFORT       = var.siem_groq_reasoning_effort
+
+      # (2026-08-13) 자동대응 연결 (크로스계정). RESPONSE_ENABLED=false 면 dispatch 는
+      # 조용히 통과한다. 버스 ARN 은 항상 넣되 스위치가 게이트한다.
+      RESPONSE_ENABLED        = tostring(var.siem_response_enabled)
+      RESPONSE_EVENT_BUS_ARN  = "arn:aws:events:${var.region}:${var.workload_account_id}:event-bus/default"
+      RESPONSE_MIN_CONFIDENCE = tostring(var.siem_response_min_confidence)
+      GROQ_SECRET_ARN         = aws_secretsmanager_secret.siem_groq_api_key.arn
+      GROQ_SECRET_KEY         = "api_key"
+      GROQ_ENDPOINT           = var.siem_groq_endpoint
+      GROQ_MODEL              = var.siem_groq_model
+      GROQ_TIMEOUT_SECONDS    = tostring(var.siem_groq_timeout_seconds)
+      GROQ_MAX_ROWS           = tostring(var.siem_max_rows_in_alert)
+      GROQ_MAX_TOKENS         = tostring(var.siem_groq_max_tokens)
+      GROQ_REASONING_EFFORT   = var.siem_groq_reasoning_effort
     }
   }
 
