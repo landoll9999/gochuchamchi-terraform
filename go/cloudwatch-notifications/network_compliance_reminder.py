@@ -146,7 +146,7 @@ def _format_noncompliant(
     lines.extend(
         [
             "",
-            "이 알림은 상태가 복구될 때까지 1시간마다 반복됩니다.",
+            "이 알림은 위반 내용이 바뀌거나 상태가 복구될 때 다시 통보됩니다.",
         ]
     )
     return "\n".join(lines)
@@ -169,10 +169,19 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
         raise
 
     if noncompliant:
-        _publish(
-            "[P1] Network state remains noncompliant",
-            _format_noncompliant(noncompliant, unevaluated),
-        )
+        current_fingerprint = _fingerprint(noncompliant)
+        # 같은 비준수 상태가 이어지는 동안에는 매시간 재통보하지 않는다.
+        # 처음 비준수로 바뀌었거나(직전이 준수) 위반 리소스 구성이 달라졌을 때만 통보한다.
+        if (
+            not previous.get("wasNoncompliant")
+            or previous.get("fingerprint") != current_fingerprint
+        ):
+            _publish(
+                "[P1] Network state remains noncompliant",
+                _format_noncompliant(noncompliant, unevaluated),
+            )
+        else:
+            LOG.info("동일한 비준수 상태 지속 — 재통보 생략(fingerprint 일치)")
     elif unevaluated:
         # 평가 대기/누락 상태를 COMPLIANT로 간주하면 이전 위험 상태를 거짓으로
         # RESOLVED 처리하게 된다. 직전 상태는 보존하고 검사 불완전만 통보한다.
