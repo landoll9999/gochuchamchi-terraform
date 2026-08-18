@@ -44,3 +44,20 @@ resource "aws_s3_account_public_access_block" "this" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+# ---------------------------------------------------------------------------
+# IMDSv2 계정 기본값 (2026-08-18, Prowler 감사 ec2_instance_account_imdsv2_enabled)
+#
+# 왜 — 모든 인스턴스(EKS 노드·bastion·NAT)는 launch template에서 이미 명시적으로
+# http_tokens=required 지만, "계정 기본값"은 미설정이었다. 명시적 설정을 빠뜨린
+# 인스턴스가 실수로 새로 생기면 IMDSv1(토큰 없는 SSRF 자격증명 탈취)로 열린다.
+# 이 기본값은 그런 인스턴스에만 적용되고, metadata_options를 명시한 기존 인스턴스는
+# 인스턴스 설정이 우선하므로 영향이 없다 — 순수한 미래 안전망이다.
+#
+# hop_limit·tags는 지정하지 않는다(no-preference) — 인스턴스별 설정(노드=1)을
+# 존중하고, 여기서는 IMDSv2 강제(http_tokens)만 계정 차원에서 보증한다.
+# ---------------------------------------------------------------------------
+resource "aws_ec2_instance_metadata_defaults" "this" {
+  http_tokens   = "required"
+  http_endpoint = "enabled"
+}
