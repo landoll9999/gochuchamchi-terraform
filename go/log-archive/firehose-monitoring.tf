@@ -19,13 +19,11 @@ resource "aws_cloudwatch_log_metric_filter" "firehose_delivery_errors" {
   pattern        = "ERROR"
 
   metric_transformation {
-    name      = "FirehoseDeliveryErrors"
+    # Literal log filter patterns do not support extracted dimensions. Keep
+    # each delivery source isolated by giving it a distinct metric name.
+    name      = "FirehoseDeliveryErrors-${each.key}"
     namespace = "Gochuchamchi/LogArchive"
     value     = "1"
-
-    dimensions = {
-      Source = each.key
-    }
   }
 }
 
@@ -36,16 +34,13 @@ resource "aws_cloudwatch_metric_alarm" "firehose_delivery_errors" {
   alarm_description   = "P2: ${each.key} Firehose가 S3 전달 오류를 기록함. 중앙 로그 보존 누락 여부를 즉시 조사할 것."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
-  metric_name         = "FirehoseDeliveryErrors"
+  metric_name         = "FirehoseDeliveryErrors-${each.key}"
   namespace           = "Gochuchamchi/LogArchive"
   period              = 300
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
 
-  dimensions = {
-    Source = each.key
-  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "firehose_delivery_freshness" {

@@ -515,10 +515,6 @@ resource "aws_lambda_function" "siem_detector" {
   timeout     = 480
   memory_size = 256
 
-  # 두 주기가 겹쳐 도는 것을 막는다. 겹치면 같은 후보를 두 번 판정해
-  # 호출 상한만 태운다.
-  reserved_concurrent_executions = 1
-
   environment {
     variables = {
       ATHENA_WORKGROUP = aws_athena_workgroup.security_logs.name
