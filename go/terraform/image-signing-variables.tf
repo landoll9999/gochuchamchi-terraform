@@ -12,7 +12,7 @@ variable "image_signing_github_environment" {
 variable "image_signature_validation_action" {
   description = "Kyverno image signature action: Audit records failures; Deny blocks unsigned images"
   type        = string
-  default     = "Audit"
+  default     = "Deny"
 
   validation {
     condition     = contains(["Audit", "Deny"], var.image_signature_validation_action)
