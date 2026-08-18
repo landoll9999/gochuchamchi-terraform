@@ -182,9 +182,9 @@ variable "waf_login_rate_limit_per_5min" {
 }
 
 variable "waf_login_rate_limit_action" {
-  description = "로그인 전용 WAF rule 동작. 운영 관찰 기간에는 COUNT, 차단 전환 시 BLOCK."
+  description = "로그인 전용 WAF rule 동작. COUNT=관찰만, BLOCK=실제 차단. 관찰 기간을 거쳐 BLOCK으로 전환했다(2026-08-13). 임계는 waf_login_rate_limit_per_5min(기본 50)."
   type        = string
-  default     = "COUNT"
+  default     = "BLOCK"
 
   validation {
     condition     = contains(["COUNT", "BLOCK"], var.waf_login_rate_limit_action)
