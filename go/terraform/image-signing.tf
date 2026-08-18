@@ -81,7 +81,8 @@ module "kyverno_ecr_pod_identity" {
 }
 
 # -----------------------------------------------------------------------------
-# 네임스페이스 범위 Kyverno ImageValidatingPolicy
+# 네임스페이스 범위 Kyverno 서명검증 정책 (고전형 verifyImages Policy)
+# 신형 IVPol은 kyverno v1.18.2 버그(#15286)로 못 쓴다 — 차트 template 주석 참고.
 # -----------------------------------------------------------------------------
 
 resource "helm_release" "image_signature_policy" {
@@ -94,11 +95,16 @@ resource "helm_release" "image_signature_policy" {
   values = [
     yamlencode({
       validationAction = var.image_signature_validation_action
-      failurePolicy    = var.image_signature_validation_action == "Deny" ? "Fail" : "Ignore"
-      imageRepository  = data.aws_ecr_repository.gochuchamchi.repository_url
-      publicKey        = data.aws_kms_public_key.image_signing.public_key_pem
-      mutateDigest     = var.image_signature_validation_action == "Deny"
-      verifyDigest     = var.image_signature_validation_action == "Deny"
+      # 고전형 verifyImages는 공용 웹훅이라 Ignore로도 미서명을 거부한다(실증).
+      # Fail(fail-closed)은 kyverno 장애 시 gochuchamchi 파드 전체를 막으므로 별도
+      # 실측 후에만 승격한다 — 기본은 안전한 Ignore.
+      failurePolicy   = "Ignore"
+      imageRepository = data.aws_ecr_repository.gochuchamchi.repository_url
+      publicKey       = data.aws_kms_public_key.image_signing.public_key_pem
+      # A' 설계: digest 고정은 CI/GitOps에서 한다. kyverno의 digest 치환/강제는 끈다.
+      # verifyDigest는 write-back을 digest로 전환한 뒤(A' 2단계) 켠다.
+      mutateDigest = false
+      verifyDigest = false
     })
   ]
 

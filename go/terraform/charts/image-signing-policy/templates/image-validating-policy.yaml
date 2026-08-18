@@ -1,41 +1,46 @@
-apiVersion: policies.kyverno.io/v1
-kind: NamespacedImageValidatingPolicy
+# 컨테이너 이미지 서명 검증 — 고전형 verifyImages 정책.
+#
+# 왜 IVPol(NamespacedImageValidatingPolicy)이 아니라 고전형인가 (2026-08-18):
+#   kyverno v1.18.2에서 IVPol의 digest-mutation fine-grained 웹훅이 404를 내고
+#   (kyverno #15286), Deny로 켜면 failurePolicy=Fail이 gochuchamchi ns 전체 파드
+#   생성을 막았다(실증). validationConfigurations.mutateDigest=false로도 그 웹훅이
+#   사라지지 않아 config로는 못 고친다. 고전형 verifyImages는 공용 resource
+#   웹훅(mutate.kyverno.svc-*)을 쓰므로 이 버그의 영향을 받지 않고, 같은 cosign
+#   공개키로 정상 enforcement된다 — 미서명 digest 거부/서명 통과를 실제 admission으로
+#   확인했다. #15286이 고쳐진 v1.19+로 올린 뒤 IVPol로 되돌리면 된다(고전형은
+#   kyverno v1.20에서 제거 예정이므로 그 전에 마이그레이션).
+apiVersion: kyverno.io/v1
+kind: Policy
 metadata:
   name: verify-gochuchamchi-image-signature
 spec:
-  validationActions:
-    - {{ .Values.validationAction | quote }}
+  # validationAction(Audit/Deny)을 고전형 필드로 매핑한다: Deny -> Enforce.
+  validationFailureAction: {{ if eq .Values.validationAction "Deny" }}Enforce{{ else }}Audit{{ end }}
+  # 공용 웹훅이라 Ignore로도 정책 위반(미서명)은 거부된다(실증). Ignore는 웹훅
+  # "연결 실패"만 통과시키므로 kyverno가 죽어도 배포가 막히지 않는 fail-open이다.
   failurePolicy: {{ .Values.failurePolicy | quote }}
-  webhookConfiguration:
-    timeoutSeconds: 20
-  evaluation:
-    background:
-      enabled: false
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [""]
-        apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["pods"]
-  matchImageReferences:
-    - glob: {{ printf "%s:*" .Values.imageRepository | quote }}
-    - glob: {{ printf "%s@sha256:*" .Values.imageRepository | quote }}
-  attestors:
-    - name: releaseSigner
-      cosign:
-        key:
-          data: |
-{{ .Values.publicKey | indent 12 }}
-  validationConfigurations:
-    mutateDigest: {{ .Values.mutateDigest }}
-    required: true
-    verifyDigest: {{ .Values.verifyDigest }}
-  credentials:
-    allowInsecureRegistry: false
-    providers:
-      - amazon
-  validations:
-    - expression: >-
-        images.containers.map(image,
-        verifyImageSignatures(image, [attestors.releaseSigner])).all(result, result > 0)
-      message: Image must be signed by the protected gochuchamchi release signing job.
+  webhookTimeoutSeconds: 30
+  background: false
+  rules:
+    - name: verify-cosign-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - {{ printf "%s:*" .Values.imageRepository | quote }}
+            - {{ printf "%s@sha256:*" .Values.imageRepository | quote }}
+          # mutateDigest=false: 태그->digest 치환을 kyverno가 하지 않는다(A' 설계는
+          # CI가 digest를 고정해 GitOps에 기록). verifyDigest=false: 아직 태그로
+          # 배포하므로 digest 강제는 끈다 — write-back을 digest로 바꾼 뒤 켠다(A' 2단계).
+          mutateDigest: {{ .Values.mutateDigest }}
+          verifyDigest: {{ .Values.verifyDigest }}
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keys:
+                    publicKeys: |-
+{{ .Values.publicKey | indent 22 }}
