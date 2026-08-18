@@ -55,6 +55,17 @@ resource "helm_release" "kyverno" {
 
   values = [
     yamlencode({
+      # 차트 기본값은 text(ANSI 색상 코드 포함)·verbosity 2인데, verbosity 2는
+      # TRACE까지 stderr로 내보낸다. reports-controller가 시스템 DaemonSet을
+      # 재평가할 때마다 "failed to apply rule" TRACE가 찍혀 CloudWatch ERROR
+      # 패널을 도배했다(2026-08-18). json은 색상 코드 제거, verbosity 1은 v=2
+      # 트레이스 억제 — 에러·경고·감사 이벤트는 그대로 나온다.
+      features = {
+        logging = {
+          format    = "json"
+          verbosity = 1
+        }
+      }
       admissionController = {
         # (v8 병합, main 브랜치 보안 작업) Kyverno가 권장하는 HA 최소 수는 3대다.
         # 서명 정책이 Audit인 동안에는 기존 비용 절충(1대)을 유지하고,
@@ -115,6 +126,25 @@ resource "helm_release" "kyverno_policies" {
       # 준수 현황을 Audit으로 계량하는 용도이므로 Ignore를 유지한다. 별도의 이미지
       # 서명 정책은 Deny 승격 시 failurePolicy=Fail과 admission HA를 함께 적용한다.
       failurePolicy = "Ignore"
+
+      # 시스템 DaemonSet(kube-proxy·aws-node·fluent-bit·neuron-monitor)은 hostPath가
+      # 동작 요건이라 이 정책을 구조적으로 통과할 수 없다 — 고칠 수 없는 대상이
+      # 재평가마다 fail을 만들어 PolicyReport 현황판만 오염시킨다(2026-08-18).
+      # kinds를 Pod로 적는 이유: autogen이 규칙을 DaemonSet 등 컨트롤러용으로 변환할
+      # 때 exclude도 함께 변환된다(로그의 autogen-host-path가 그 규칙). 앱 네임스페이스는
+      # 계속 계량 대상이므로 restricted 준수 측정이라는 원래 목적은 훼손되지 않는다.
+      policyExclude = {
+        "disallow-host-path" = {
+          any = [
+            {
+              resources = {
+                kinds      = ["Pod"]
+                namespaces = ["kube-system", "amazon-cloudwatch"]
+              }
+            }
+          ]
+        }
+      }
     })
   ]
 }
