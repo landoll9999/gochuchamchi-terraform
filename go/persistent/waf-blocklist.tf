@@ -17,8 +17,9 @@
 resource "aws_wafv2_ip_set" "guardduty_blocklist" {
   provider = aws.us_east_1
 
-  name        = "gochuchamchi-guardduty-blocklist"
-  description = "Attacker IPs auto-added by the GuardDuty isolation Lambda; expired entries swept hourly"
+  name = "gochuchamchi-guardduty-blocklist"
+  # WAF description 은 허용 문자가 좁다(세미콜론 불가, 한글 불가 — 2026-08-18/08-03 실증).
+  description = "Attacker IPs auto-added by the GuardDuty isolation Lambda. Expired entries swept hourly"
   scope       = "CLOUDFRONT"
 
   ip_address_version = "IPV4"

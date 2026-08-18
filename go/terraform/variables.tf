@@ -75,6 +75,33 @@ variable "argocd_gitops_repo" {
   default     = "gochuchamchi-gitops"
 }
 
+# GitHub App 인증 (2026-08-18) — read/write PAT를 대체한다.
+# App ID와 Installation ID는 비밀이 아니다(앱 관리 페이지에 그대로 보이는 식별자).
+# 비밀은 개인키뿐이고 Secrets Manager(gochuchamchi/argocd/*-github-app-key)에만 있다.
+variable "argocd_read_github_app" {
+  description = "Argo CD가 gitops 저장소를 읽을 때 쓰는 GitHub App (gochuchamchi-argocd-read, Contents: Read-only)"
+  type = object({
+    app_id          = string
+    installation_id = string
+  })
+  default = {
+    app_id          = "4630231"
+    installation_id = "154526863"
+  }
+}
+
+variable "image_updater_github_app" {
+  description = "Image Updater가 gitops에 write-back할 때 쓰는 GitHub App (gochuchamchi-image-updater, Contents: Read/write)"
+  type = object({
+    app_id          = string
+    installation_id = string
+  })
+  default = {
+    app_id          = "4630259"
+    installation_id = "154527300"
+  }
+}
+
 # (2026-08-04 백로그 B3) argocd_git_pat 변수 제거 — PAT는 이제 Terraform을 아예
 # 거치지 않는다. Secrets Manager(gochuchamchi/argocd/git-pat)에 CLI로 1회 주입하면
 # ESO가 클러스터로 동기화함 (eso.tf 참고). TF_VAR_argocd_git_pat 환경변수도 불필요.

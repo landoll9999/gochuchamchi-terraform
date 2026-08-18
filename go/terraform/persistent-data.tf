@@ -41,12 +41,16 @@ data "aws_secretsmanager_secret" "argocd_git_pat" {
   name = "gochuchamchi/argocd/git-pat"
 }
 
-data "aws_secretsmanager_secret" "argocd_gitops_read_pat" {
-  name = "gochuchamchi/argocd/gitops-read-pat"
+# GitHub App 개인키 (2026-08-18) — read/write PAT를 대체한다 (eso.tf 참고).
+# 구 read/write PAT 컨테이너는 AWS에 롤백용으로 남아 있지만 여기서 더는 조회하지
+# 않는다 — 참조를 남기면 나중에 그 컨테이너가 정리될 때 daily-up plan이 통째로
+# 죽는다(2026-08-13 PR #7에서 실제로 겪은 유형).
+data "aws_secretsmanager_secret" "argocd_read_github_app_key" {
+  name = "gochuchamchi/argocd/gitops-read-github-app-key"
 }
 
-data "aws_secretsmanager_secret" "argocd_image_updater_write_pat" {
-  name = "gochuchamchi/argocd/image-updater-write-pat"
+data "aws_secretsmanager_secret" "image_updater_github_app_key" {
+  name = "gochuchamchi/argocd/image-updater-github-app-key"
 }
 
 # 워크로드 데이터 CMK — 별칭으로 조회 (2026-08-07 kms.tf에서 persistent로 이동)

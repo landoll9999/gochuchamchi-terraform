@@ -91,45 +91,36 @@ resource "null_resource" "inject_git_pat" {
   }
 }
 
-# 기존 공용 PAT는 롤백용으로 남겨 둔다. 새 read/write PAT는 별도 Secret에만 주입한다.
-resource "null_resource" "inject_gitops_read_pat" {
+# GitHub App 개인키 자동 주입 (2026-08-18) — read/write PAT 주입을 대체한다.
+# PEM은 여러 줄이라 환경변수에 값을 직접 담지 않고 "파일 경로"를 받는다.
+# 경로가 없으면 조용히 건너뛰고(수동 CLI 주입 경로 유지), 값이 이미 있으면 덮어쓰지
+# 않는다(inject_git_pat과 같은 원칙 — 로테이션은 의도한 사람이 명시적으로).
+# 이 시크릿들은 ../persistent 소유라 재구축을 건너 살아남으므로, 이 자동 주입이 실제로
+# 도는 것은 완전 신규 계정 구축 때뿐이다.
+resource "null_resource" "inject_github_app_keys" {
   triggers = {
-    secret_arn = data.aws_secretsmanager_secret.argocd_gitops_read_pat.arn
+    read_key_arn    = data.aws_secretsmanager_secret.argocd_read_github_app_key.arn
+    updater_key_arn = data.aws_secretsmanager_secret.image_updater_github_app_key.arn
   }
 
   provisioner "local-exec" {
     interpreter = ["PowerShell", "-ExecutionPolicy", "Bypass", "-Command"]
     command     = <<-EOT
-      $secretId = '${data.aws_secretsmanager_secret.argocd_gitops_read_pat.name}'
-      $region   = '${var.region}'
-      $profile  = '${var.aws_profile}'
-      if (-not $env:ARGOCD_GITOPS_READ_PAT) { Write-Host "ARGOCD_GITOPS_READ_PAT is not set; skipping read PAT injection."; exit 0 }
-      $null = aws secretsmanager get-secret-value --secret-id $secretId --region $region --profile $profile 2>$null
-      if ($LASTEXITCODE -eq 0) { Write-Host "Read PAT already exists; skipping injection."; exit 0 }
-      $null = aws secretsmanager put-secret-value --secret-id $secretId --secret-string "$env:ARGOCD_GITOPS_READ_PAT" --region $region --profile $profile
-      if ($LASTEXITCODE -ne 0) { Write-Error "Read PAT injection failed."; exit 1 }
-      Write-Host "Read PAT injected."
-    EOT
-  }
-}
-
-resource "null_resource" "inject_image_updater_write_pat" {
-  triggers = {
-    secret_arn = data.aws_secretsmanager_secret.argocd_image_updater_write_pat.arn
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["PowerShell", "-ExecutionPolicy", "Bypass", "-Command"]
-    command     = <<-EOT
-      $secretId = '${data.aws_secretsmanager_secret.argocd_image_updater_write_pat.name}'
-      $region   = '${var.region}'
-      $profile  = '${var.aws_profile}'
-      if (-not $env:ARGOCD_IMAGE_UPDATER_WRITE_PAT) { Write-Host "ARGOCD_IMAGE_UPDATER_WRITE_PAT is not set; skipping write PAT injection."; exit 0 }
-      $null = aws secretsmanager get-secret-value --secret-id $secretId --region $region --profile $profile 2>$null
-      if ($LASTEXITCODE -eq 0) { Write-Host "Write PAT already exists; skipping injection."; exit 0 }
-      $null = aws secretsmanager put-secret-value --secret-id $secretId --secret-string "$env:ARGOCD_IMAGE_UPDATER_WRITE_PAT" --region $region --profile $profile
-      if ($LASTEXITCODE -ne 0) { Write-Error "Write PAT injection failed."; exit 1 }
-      Write-Host "Write PAT injected."
+      $region  = '${var.region}'
+      $profile = '${var.aws_profile}'
+      $targets = @(
+        @{ SecretId = '${data.aws_secretsmanager_secret.argocd_read_github_app_key.name}'; KeyFile = $env:ARGOCD_READ_APP_KEY_FILE },
+        @{ SecretId = '${data.aws_secretsmanager_secret.image_updater_github_app_key.name}'; KeyFile = $env:IMAGE_UPDATER_APP_KEY_FILE }
+      )
+      foreach ($t in $targets) {
+        if (-not $t.KeyFile) { Write-Host "$($t.SecretId): key file env var not set; skipping."; continue }
+        if (-not (Test-Path $t.KeyFile)) { Write-Error "$($t.SecretId): key file not found: $($t.KeyFile)"; exit 1 }
+        $null = aws secretsmanager get-secret-value --secret-id $t.SecretId --region $region --profile $profile 2>$null
+        if ($LASTEXITCODE -eq 0) { Write-Host "$($t.SecretId): value already exists; skipping (rotation is manual)."; continue }
+        $null = aws secretsmanager put-secret-value --secret-id $t.SecretId --secret-string ("file://" + $t.KeyFile) --region $region --profile $profile
+        if ($LASTEXITCODE -ne 0) { Write-Error "$($t.SecretId): injection failed."; exit 1 }
+        Write-Host "$($t.SecretId): private key injected."
+      }
     EOT
   }
 }
@@ -148,8 +139,8 @@ module "eso_pod_identity" {
       sid     = "ReadDesignatedSecretsOnly"
       actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
       resources = [
-        data.aws_secretsmanager_secret.argocd_gitops_read_pat.arn,
-        data.aws_secretsmanager_secret.argocd_image_updater_write_pat.arn,
+        data.aws_secretsmanager_secret.argocd_read_github_app_key.arn,
+        data.aws_secretsmanager_secret.image_updater_github_app_key.arn,
       ]
     }
   ]
@@ -198,25 +189,31 @@ resource "helm_release" "eso_config" {
   depends_on = [
     helm_release.external_secrets,
     helm_release.argocd,
-    null_resource.inject_gitops_read_pat,
-    null_resource.inject_image_updater_write_pat,
+    null_resource.inject_github_app_keys,
   ]
 
   values = [
     yamlencode({
-      region             = var.region
-      readPatSecretName  = data.aws_secretsmanager_secret.argocd_gitops_read_pat.name
-      writePatSecretName = data.aws_secretsmanager_secret.argocd_image_updater_write_pat.name
-      repoURL            = local.gitops_repo_url
-      username           = var.argocd_github_owner
+      region                  = var.region
+      repoURL                 = local.gitops_repo_url
+      readAppKeySecretName    = data.aws_secretsmanager_secret.argocd_read_github_app_key.name
+      updaterAppKeySecretName = data.aws_secretsmanager_secret.image_updater_github_app_key.name
+      readApp = {
+        appID          = var.argocd_read_github_app.app_id
+        installationID = var.argocd_read_github_app.installation_id
+      }
+      updaterApp = {
+        appID          = var.image_updater_github_app.app_id
+        installationID = var.image_updater_github_app.installation_id
+      }
     })
   ]
 }
 
-output "argocd_git_pat_inject_commands" {
+output "argocd_github_app_key_inject_commands" {
   value = {
-    read  = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_gitops_read_pat.name} --secret-string '<READ_PAT>' --region ${var.region} --profile ${var.aws_profile}"
-    write = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_image_updater_write_pat.name} --secret-string '<WRITE_PAT>' --region ${var.region} --profile ${var.aws_profile}"
+    read  = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.argocd_read_github_app_key.name} --secret-string file://<argocd-read>.pem --region ${var.region} --profile ${var.aws_profile}"
+    write = "aws secretsmanager put-secret-value --secret-id ${data.aws_secretsmanager_secret.image_updater_github_app_key.name} --secret-string file://<image-updater>.pem --region ${var.region} --profile ${var.aws_profile}"
   }
-  description = "Argo CD read PAT 및 Image Updater write PAT 수동 주입/로테이션 명령"
+  description = "GitHub App 개인키 수동 주입/로테이션 명령 (PEM은 여러 줄이라 반드시 file:// 로 전달)"
 }

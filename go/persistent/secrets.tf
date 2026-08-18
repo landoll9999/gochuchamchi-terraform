@@ -54,3 +54,38 @@ resource "aws_secretsmanager_secret" "argocd_image_updater_write_pat" {
     prevent_destroy = true
   }
 }
+
+# ---------------------------------------------------------------------------
+# GitHub App 개인키 컨테이너 (2026-08-18) — 위 read/write PAT를 대체한다.
+#
+# ArgoCD(읽기)와 Image Updater(쓰기)가 각각 별도 GitHub App으로 gitops 저장소에
+# 인증한다. 여기 담기는 값은 각 App의 개인키(.pem 전문)다. App ID/Installation ID는
+# 비밀이 아니라서(앱 페이지에 그대로 보이는 식별자) ../terraform/variables.tf에
+# 평문 변수로 둔다. PAT와 달리 만료가 없고, 실통신은 개인키로 1시간짜리 설치 토큰을
+# 그때그때 자동 발급받으므로 로테이션 달력이 필요 없다.
+#
+# 값 주입(사람이 1회, PEM은 파일로 전달 — 여러 줄이라 문자열 인자로 넣지 말 것):
+#   aws secretsmanager put-secret-value --secret-id gochuchamchi/argocd/gitops-read-github-app-key `
+#     --secret-string file://<...>.pem --region ap-northeast-2 --profile admin
+#
+# 위 PAT 컨테이너 3개는 지우지 않는다 — 코드 revert 시 롤백 경로(값이 비어도 무해).
+# ---------------------------------------------------------------------------
+resource "aws_secretsmanager_secret" "argocd_read_github_app_key" {
+  name                    = "gochuchamchi/argocd/gitops-read-github-app-key"
+  description             = "GitHub App gochuchamchi-argocd-read (App ID 4630231, Contents: Read-only) private key for Argo CD"
+  recovery_window_in_days = 0
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_secretsmanager_secret" "image_updater_github_app_key" {
+  name                    = "gochuchamchi/argocd/image-updater-github-app-key"
+  description             = "GitHub App gochuchamchi-image-updater (App ID 4630259, Contents: Read/write) private key for Argo CD Image Updater"
+  recovery_window_in_days = 0
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
