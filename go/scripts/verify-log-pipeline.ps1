@@ -83,31 +83,54 @@ function Test-LogGroup {
         }
     }
 
-    # 최근 유입 — 스트림의 마지막 이벤트 시각으로 본다.
-    # (filter-log-events 로 본문을 끌어오면 느리고 양이 크다)
-    $stRaw = aws logs describe-log-streams --log-group-name $Name --order-by LastEventTime --descending --max-items 1 --region $Rgn --output json
+    # 스트림 존재 — "한 번도 안 쌓임"(실패)과 "쌓이다 멎음"(미결)을 가른다.
+    # --query 로 개수만 받아 스트림 이름이 콘솔에 닿을 일 자체를 없앤다.
+    # (not_null 가드가 붙은 이유는 아래 filter-log-events 주석 참고)
+    $stCntRaw = aws logs describe-log-streams --log-group-name $Name --max-items 1 --region $Rgn --query 'length(not_null(logStreams,`[]`))' --output text
     if ($LASTEXITCODE -ne 0) {
         $script:pending += "$Label 스트림 조회 실패 — 유입 확인 못 함"
         return
     }
-    $streams = ($stRaw | Out-String | ConvertFrom-Json).logStreams
-    if (-not $streams -or $streams.Count -eq 0) {
+    if ("$stCntRaw".Trim() -eq "0") {
         $script:fail += "$Label 에 로그 스트림이 하나도 없다 — 아무것도 안 쌓이고 있다"
         Write-Host "    ✖ 스트림 없음" -ForegroundColor Red
         return
     }
-    $last = $streams[0].lastEventTimestamp
-    if (-not $last) {
-        $script:pending += "$Label 마지막 이벤트 시각을 못 읽음"
+
+    # 최근 유입 — 최근 $FreshMin 분 창의 이벤트 개수를 직접 센다.
+    #   전에는 describe-log-streams 의 lastEventTimestamp 로 봤는데, 그 필드는
+    #   eventually-consistent 라 최대 1시간 낡는다 — 실제로는 25분간 120건이
+    #   적재 중인데 57분 전을 가리켜 거짓 미결이 났다(2026-08-18 실측).
+    #   filter-log-events 는 창을 좁히고 --max-items 로 상한을 걸면 느리지도
+    #   크지도 않다. --query 는 성능만이 아니라 회피용으로도 필수다 — 이벤트
+    #   본문(비ASCII)이 콘솔에 닿으면 cp949 로 깨진다(상단 PYTHONIOENCODING 주석).
+    $startMs = [DateTimeOffset]::UtcNow.AddMinutes(-$FreshMin).ToUnixTimeMilliseconds()
+    $evtCntRaw = aws logs filter-log-events --log-group-name $Name --start-time $startMs --max-items 1000 --region $Rgn --query 'length(not_null(events,`[]`))' --output text
+    if ($LASTEXITCODE -ne 0) {
+        $script:pending += "$Label 이벤트 조회 실패 — 유입 확인 못 함"
         return
     }
-    $lastTime = [DateTimeOffset]::FromUnixTimeMilliseconds($last).ToLocalTime()
-    $ageMin   = [math]::Round(((Get-Date) - $lastTime.LocalDateTime).TotalMinutes)
-    if ($ageMin -le $FreshMin) {
-        Write-Host ("    ✔ 최근 유입 {0} ({1}분 전)" -f $lastTime.ToString('HH:mm:ss'), $ageMin) -ForegroundColor Green
+    # 자동 페이지네이션이 돌면 length() 가 페이지당 한 줄씩 여러 개 찍히고
+    # (2026-08-18 실측: "100" "0" 두 줄), --max-items 에 잘리면 결과 키가 아예
+    # 없는 페이지가 하나 더 나와 length(null) 오류로 죽는다 — 그래서 쿼리에
+    # not_null(...,`[]`) 가드를 걸었다. 줄들은 전부 합산해야 창 전체 개수다.
+    $evtCnt = 0
+    foreach ($ln in @($evtCntRaw)) {
+        $t = "$ln".Trim()
+        if ($t -eq "") { continue }
+        if ($t -notmatch '^\d+$') {
+            $script:pending += "$Label 이벤트 개수를 못 읽음: $t"
+            return
+        }
+        $evtCnt += [int]$t
+    }
+    if ($evtCnt -gt 0) {
+        # ${} 필수 — "$evtCnt건" 이라 쓰면 한글 '건'까지 변수명으로 붙어 빈 값이 된다.
+        $shown = if ($evtCnt -ge 1000) { "1000건 이상" } else { "${evtCnt}건" }
+        Write-Host ("    ✔ 최근 {0}분 유입 {1}" -f $FreshMin, $shown) -ForegroundColor Green
     } else {
-        $script:pending += "$Label 마지막 로그가 $ageMin 분 전 — 유입이 멎었을 수 있다"
-        Write-Host ("    … 마지막 유입 {0} ({1}분 전)" -f $lastTime.ToString('HH:mm:ss'), $ageMin) -ForegroundColor Yellow
+        $script:pending += "$Label 최근 $FreshMin 분 이벤트 0건 — 유입이 멎었을 수 있다"
+        Write-Host ("    … 최근 {0}분 이벤트 없음" -f $FreshMin) -ForegroundColor Yellow
     }
 }
 
