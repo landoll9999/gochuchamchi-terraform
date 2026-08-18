@@ -223,6 +223,12 @@ def route_event(event: dict[str, Any]) -> dict[str, Any]:
     if source == "gochuchamchi.plaintext":
         return handle_plaintext_event(event)
 
+    if event.get("detail-type") in (
+        "AWS API Call via CloudTrail",
+        "AWS Console Sign In via CloudTrail",
+    ):
+        return handle_cloudtrail_change_event(event)
+
     return handle_alarm_event(event)
 
 
@@ -485,6 +491,55 @@ def handle_plaintext_event(event: dict[str, Any]) -> dict[str, Any]:
     send_discord_message(get_discord_webhook_url(), discord_payload)
 
     return {"plaintext": True}
+
+
+def handle_cloudtrail_change_event(event: dict[str, Any]) -> dict[str, Any]:
+    """콘솔/IAM/루트 변경 이벤트를 변경 주체 중심으로 표시한다.
+
+    drift-detection.tf의 EventBridge 룰은 CloudTrail 원본 JSON을 SNS로 보낸다.
+    이를 CloudWatch Alarm 형식으로 오해하면 제목과 상태가 UNKNOWN으로 표시되므로
+    변경 API, 주체, 출발 IP, 성공/실패를 직접 렌더링한다.
+    """
+    detail = event.get("detail", {})
+    identity = detail.get("userIdentity", {})
+    session_issuer = identity.get("sessionContext", {}).get("sessionIssuer", {})
+
+    actor = (
+        identity.get("arn")
+        or session_issuer.get("arn")
+        or identity.get("principalId")
+        or "unknown"
+    )
+    event_name = detail.get("eventName", "unknown")
+    event_source = detail.get("eventSource", event.get("source", "unknown"))
+    source_ip = detail.get("sourceIPAddress", "unknown")
+    error_code = detail.get("errorCode")
+    outcome = f"실패: {error_code}" if error_code else "성공"
+    is_root = identity.get("type") == "Root"
+
+    title_prefix = "🚨 루트 활동" if is_root else "⚠️ 인프라 수동 변경"
+    color = 15158332 if is_root or error_code else 15105570
+
+    discord_payload = {
+        "username": "Gochuchamchi Drift Detection",
+        "embeds": [
+            {
+                "title": f"{title_prefix}: {trim_text(event_name, 140)}",
+                "color": color,
+                "fields": [
+                    {"name": "서비스", "value": f"`{trim_text(event_source, 200)}`", "inline": True},
+                    {"name": "결과", "value": f"`{trim_text(outcome, 200)}`", "inline": True},
+                    {"name": "변경 주체", "value": trim_text(actor), "inline": False},
+                    {"name": "출발 IP", "value": f"`{trim_text(source_ip, 200)}`", "inline": True},
+                    {"name": "변경 시각", "value": trim_text(event.get("time", "unknown")), "inline": True},
+                ],
+                "footer": {"text": "CloudTrail → EventBridge → SNS → Discord"},
+            }
+        ],
+    }
+
+    send_discord_message(get_discord_webhook_url(), discord_payload)
+    return {"cloudTrailEvent": event_name, "actor": actor, "outcome": outcome}
 
 
 def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
