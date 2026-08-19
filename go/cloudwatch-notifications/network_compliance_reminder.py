@@ -161,7 +161,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
     except Exception as error:  # noqa: BLE001 — 검사 장애도 반드시 통보
         LOG.exception("AWS Config 준수 검사 실패")
         _publish(
-            "[P1] Network compliance check failed",
+            "[PIPELINE][P1] Network compliance check failed",
             "[NETWORK COMPLIANCE CHECK FAILED]\n"
             f"AWS Config 상태를 확인하지 못했습니다: {type(error).__name__}: {error}\n"
             "자동 복구는 수행하지 않았습니다. Lambda와 AWS Config 상태를 확인하세요.",
@@ -177,7 +177,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
             or previous.get("fingerprint") != current_fingerprint
         ):
             _publish(
-                "[P1] Network state remains noncompliant",
+                "[SEC][P1] Network state remains noncompliant",
                 _format_noncompliant(noncompliant, unevaluated),
             )
         else:
@@ -186,7 +186,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
         # 평가 대기/누락 상태를 COMPLIANT로 간주하면 이전 위험 상태를 거짓으로
         # RESOLVED 처리하게 된다. 직전 상태는 보존하고 검사 불완전만 통보한다.
         _publish(
-            "[P2] Network compliance evaluation incomplete",
+            "[PIPELINE][P2] Network compliance evaluation incomplete",
             "[NETWORK COMPLIANCE - EVALUATION INCOMPLETE]\n"
             "다음 AWS Config 규칙의 평가 결과를 확인할 수 없습니다:\n"
             + "\n".join(f"- {item}" for item in unevaluated)
@@ -200,7 +200,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:  # no
         }
     elif previous.get("wasNoncompliant"):
         _publish(
-            "[RESOLVED] Network compliance restored",
+            "[SEC][P1][RESOLVED] Network compliance restored",
             "[NETWORK COMPLIANCE - RESOLVED]\n"
             "이전 실행에서 발견된 네트워크 위험 상태가 모두 복구되었습니다.\n"
             f"확인 시각(UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}",

@@ -266,17 +266,124 @@ def incident_tier_for_guardduty(detail: dict[str, Any], severity: float) -> str:
     return "P3"
 
 
+def classify_alarm(alarm_name: str) -> dict[str, str]:
+    """Return one routing decision for a CloudWatch alarm.
+
+    Domain, priority and investigation guidance live in one function so a new
+    alarm cannot silently get a security label from one mapping and an OPS
+    runbook from another. Rules are ordered from specific to broad.
+    """
+    name = alarm_name.lower()
+
+    if "high-security-event" in name:
+        return {
+            "domain": "SEC",
+            "tier": "P2",
+            "first_check": "Athena → HIGH/CRITICAL 애플리케이션 보안 이벤트",
+            "recommended_action": "행위자·출발 IP·관리자 작업과 같은 시간대의 WAF·ALB 기록을 확인하세요.",
+        }
+    if any(marker in name for marker in ("login-failure", "access-denied")):
+        return {
+            "domain": "SEC",
+            "tier": "P2",
+            "first_check": "Athena → 인증·권한 보안 로그",
+            "recommended_action": "동일 IP·계정의 반복 여부와 로그인 성공·관리자 경로 접근을 함께 확인하세요.",
+        }
+    if "waf-sqli" in name:
+        return {
+            "domain": "SEC",
+            "tier": "P2",
+            "first_check": "Athena → WAF 차단 상세·애플리케이션 실패 상관 쿼리",
+            "recommended_action": "차단 후 동일 IP 요청이 애플리케이션까지 도달했는지 확인하세요.",
+        }
+    # Firehose stream names contain their source (for example
+    # firehose-waf-delivery-error). Do not mistake that source label for a WAF
+    # security alarm; pipeline rules below own those names.
+    if "waf-" in name and "firehose-" not in name:
+        return {
+            "domain": "SEC",
+            "tier": "P3",
+            "first_check": "Athena → WAF 차단 요청·공격 IP 집계",
+            "recommended_action": "규칙·IP·URI의 반복성과 내부 5xx·권한 거부 동반 여부를 확인하세요.",
+        }
+
+    if "firehose-" in name and "delivery-error" in name:
+        return {
+            "domain": "PIPELINE",
+            "tier": "P2",
+            "first_check": "CloudWatch → Firehose 오류 로그·전달 스트림",
+            "recommended_action": "S3 전달 권한, 오류 출력 경로와 최근 적재 시각을 확인하세요.",
+        }
+    if any(marker in name for marker in ("firehose-", "alerts-dlq-has-messages", "detector-not-running", "triage-errors")):
+        tier = "P2" if any(marker in name for marker in ("alerts-dlq", "detector-not-running", "triage-errors")) else "P3"
+        return {
+            "domain": "PIPELINE",
+            "tier": tier,
+            "first_check": "CloudWatch → Lambda·Firehose·SQS DLQ 상태",
+            "recommended_action": "로그 유입과 마지막 정상 실행 시각을 확인해 관제 공백 여부를 판단하세요.",
+        }
+
+    if any(marker in name for marker in ("http-5xx", "target-5xx")):
+        return {
+            "domain": "OPS",
+            "tier": "P2",
+            "first_check": "Grafana → ALB Target·CloudWatch 애플리케이션 로그",
+            "recommended_action": "비정상 Target, 예외 로그, 최근 배포와 RDS·Redis 의존성을 확인하세요.",
+        }
+    if "unhealthy-host" in name:
+        return {
+            "domain": "OPS",
+            "tier": "P2",
+            "first_check": "Grafana → ALB Target 상태·Pod 상태",
+            "recommended_action": "Readiness 실패, Pod 재시작과 최근 롤링 업데이트를 확인하세요.",
+        }
+    if "rds-free-storage-low" in name:
+        return {
+            "domain": "OPS",
+            "tier": "P2",
+            "first_check": "Grafana → RDS 저장공간 대시보드",
+            "recommended_action": "증가 추세, 로그·임시 테이블과 스토리지 확장 필요성을 확인하세요.",
+        }
+    if any(marker in name for marker in ("http-4xx", "target-4xx")):
+        return {
+            "domain": "OPS",
+            "tier": "P3",
+            "first_check": "Grafana → 애플리케이션 4xx 로그",
+            "recommended_action": "상위 URI·상태 코드와 정상 사용자 오류인지 확인하세요.",
+        }
+    if "redis-evictions" in name:
+        return {
+            "domain": "OPS",
+            "tier": "P3",
+            "first_check": "Grafana → Redis 메모리·Eviction 대시보드",
+            "recommended_action": "메모리 사용량, maxmemory 정책과 세션 증가 추세를 확인하세요.",
+        }
+    if "rds-cpu-high" in name:
+        return {
+            "domain": "OPS",
+            "tier": "P4",
+            "first_check": "Grafana → RDS CPU·연결 수",
+            "recommended_action": "지속 시간, DB 연결 수와 Slow Query를 확인하세요.",
+        }
+    if "redis-memory-high" in name:
+        return {
+            "domain": "OPS",
+            "tier": "P4",
+            "first_check": "Grafana → Redis 메모리 대시보드",
+            "recommended_action": "세션 수, 키 증가와 Eviction 발생 여부를 확인하세요.",
+        }
+
+    return {
+        "domain": "UNCLASSIFIED",
+        "tier": "P3",
+        "first_check": "CloudWatch Alarm 상세",
+        "recommended_action": "알람 원인과 영향을 확인한 뒤 classify_alarm() 분류표에 등록하세요.",
+    }
+
+
 def incident_tier_for_alarm(alarm_name: str) -> str:
-    """Classify CloudWatch security alarms without turning routine signals into P1."""
-    if "high-security-event" in alarm_name:
-        return "P2"
-    if "firehose-" in alarm_name and "delivery-error" in alarm_name:
-        return "P2"
-    if any(marker in alarm_name for marker in ("http-5xx", "login-failure", "access-denied", "waf-sqli")):
-        return "P2"
-    if any(marker in alarm_name for marker in ("waf-", "http-4xx", "target-4xx", "firehose")):
-        return "P3"
-    return "P4"
+    """Backward-compatible tier accessor used by existing callers/tests."""
+    return classify_alarm(alarm_name)["tier"]
 
 
 def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -304,7 +411,7 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
         "username": "Gochuchamchi GuardDuty",
         "embeds": [
             {
-                "title": f"🛡️ [{label}] {trim_text(title, 200)}",
+                "title": f"🛡️ [SEC][{incident_tier}] {trim_text(title, 200)}",
                 "color": severity_color(severity),
                 "fields": [
                     {
@@ -334,6 +441,16 @@ def handle_guardduty_event(event: dict[str, Any]) -> dict[str, Any]:
                             if will_isolate
                             else "통보만 — 격리 조건(High 이상 + EC2) 미충족"
                         ),
+                        "inline": False,
+                    },
+                    {
+                        "name": "첫 확인",
+                        "value": "GuardDuty → Security Hub → 필요 시 Athena 원본 로그",
+                        "inline": False,
+                    },
+                    {
+                        "name": "권장 조치",
+                        "value": "Finding의 대상·출발 IP와 자동 대응 결과 알림을 확인하세요.",
                         "inline": False,
                     },
                     {
@@ -373,7 +490,6 @@ def handle_triage_event(event: dict[str, Any]) -> dict[str, Any]:
     tier = event.get("tier", "-")
     action = event.get("action", "-")
     icon = event.get("icon", "❔")
-    label = event.get("label", action)
 
     verdict_value = verdict.get("verdict")
     if verdict_value:
@@ -446,7 +562,7 @@ def handle_triage_event(event: dict[str, Any]) -> dict[str, Any]:
         "username": "Gochuchamchi GuardDuty",
         "embeds": [
             {
-                "title": f"{icon} [{label}] {trim_text(finding.get('title', finding_type), 180)}",
+                "title": f"{icon} [SEC][{tier}] {trim_text(finding.get('title', finding_type), 180)}",
                 "description": trim_text(finding.get("description", ""), 500),
                 "color": event.get("color", 9807270),
                 "fields": fields,
@@ -475,14 +591,52 @@ def handle_plaintext_event(event: dict[str, Any]) -> dict[str, Any]:
     바뀔 때마다 조용히 깨진다.
     """
     detail = event.get("detail", {})
+    subject = str(detail.get("subject", "알림"))
+    message = str(detail.get("message", ""))
+    combined = f"{subject}\n{message}".lower()
+    explicit_domain = next(
+        (domain for domain in ("SEC", "OPS", "PIPELINE", "DEPLOY", "UNCLASSIFIED") if f"[{domain}]" in subject),
+        None,
+    )
+    explicit_tier = next((f"P{level}" for level in range(1, 5) if f"[P{level}]" in subject), None)
+    display_subject = subject
+    while display_subject.startswith("[") and "]" in display_subject:
+        token, remainder = display_subject[1:].split("]", 1)
+        if token not in {"SEC", "OPS", "PIPELINE", "DEPLOY", "UNCLASSIFIED", "P1", "P2", "P3", "P4", "RESOLVED"}:
+            break
+        display_subject = remainder.lstrip()
+
+    if explicit_domain:
+        domain, tier = explicit_domain, explicit_tier or "P3"
+        if domain == "SEC":
+            first_check = "AWS Config·Security Hub → 필요 시 Athena 변경 이력"
+            recommended_action = "위반 리소스와 최근 변경 주체를 확인하고 승인된 복구 절차를 따르세요."
+        elif domain == "PIPELINE":
+            first_check = "CloudWatch → 검사 Lambda 로그·AWS Config 평가 상태"
+            recommended_action = "마지막 정상 검사 시각과 권한·Config Recorder 상태를 확인하세요."
+        else:
+            first_check = "알림 본문에 지정된 서비스 콘솔"
+            recommended_action = "영향 범위와 최근 변경을 확인하세요."
+    elif any(marker in combined for marker in ("iam 활동", "root", "루트", "cloudtrail")):
+        domain, tier = "SEC", "P1" if any(marker in combined for marker in ("root", "루트")) else "P2"
+        first_check = "Athena CloudTrail 저장 쿼리 → 해당 계정 Event history"
+        recommended_action = "행위자·출발 IP·변경 API가 승인된 작업인지 확인하세요."
+    else:
+        domain, tier = "UNCLASSIFIED", "P3"
+        first_check = "SNS 원문과 발행 EventBridge 규칙"
+        recommended_action = "발행자를 확인한 뒤 평문 알림 분류 규칙에 등록하세요."
 
     discord_payload = {
         "username": "Gochuchamchi Alert",
         "embeds": [
             {
-                "title": f"📣 {trim_text(detail.get('subject', '알림'), 180)}",
+                "title": f"📣 [{domain}][{tier}] {trim_text(display_subject, 160)}",
                 "color": 15105570,
-                "description": trim_text(detail.get("message", ""), 3800),
+                "description": trim_text(message, 3000),
+                "fields": [
+                    {"name": "첫 확인", "value": first_check, "inline": False},
+                    {"name": "권장 조치", "value": recommended_action, "inline": False},
+                ],
                 "footer": {"text": "EventBridge → SNS → Discord (평문 메시지)"},
             }
         ],
@@ -517,6 +671,7 @@ def handle_cloudtrail_change_event(event: dict[str, Any]) -> dict[str, Any]:
     outcome = f"실패: {error_code}" if error_code else "성공"
     is_root = identity.get("type") == "Root"
 
+    incident_tier = "P1" if is_root else "P2"
     title_prefix = "🚨 루트 활동" if is_root else "⚠️ 인프라 수동 변경"
     color = 15158332 if is_root or error_code else 15105570
 
@@ -524,7 +679,7 @@ def handle_cloudtrail_change_event(event: dict[str, Any]) -> dict[str, Any]:
         "username": "Gochuchamchi Drift Detection",
         "embeds": [
             {
-                "title": f"{title_prefix}: {trim_text(event_name, 140)}",
+                "title": f"[SEC][{incident_tier}] {title_prefix}: {trim_text(event_name, 120)}",
                 "color": color,
                 "fields": [
                     {"name": "서비스", "value": f"`{trim_text(event_source, 200)}`", "inline": True},
@@ -532,6 +687,8 @@ def handle_cloudtrail_change_event(event: dict[str, Any]) -> dict[str, Any]:
                     {"name": "변경 주체", "value": trim_text(actor), "inline": False},
                     {"name": "출발 IP", "value": f"`{trim_text(source_ip, 200)}`", "inline": True},
                     {"name": "변경 시각", "value": trim_text(event.get("time", "unknown")), "inline": True},
+                    {"name": "첫 확인", "value": "Athena CloudTrail 저장 쿼리 → 해당 계정 Event history", "inline": False},
+                    {"name": "권장 조치", "value": "행위자와 변경 창을 확인하고 미승인 변경이면 권한 회수·영향 조사를 시작하세요.", "inline": False},
                 ],
                 "footer": {"text": "CloudTrail → EventBridge → SNS → Discord"},
             }
@@ -576,12 +733,26 @@ def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
         "audit-clean": ("✅ 격리 감사 이상 없음", 3066993),
     }
     action_text, color = action_render.get(action, (f"❓ {action}", 9807270))
+    action_tier = {
+        "manual-review": "P1",
+        "isolated": "P1",
+        "failed": "P1",
+        "key-disabled": "P1",
+        "manual-required": "P2",
+        "stale-quarantine": "P2",
+        "dry-run": "P3",
+        "skipped": "P3",
+        "none": "P3",
+        "already-isolated": "P3",
+        "recovered": "P4",
+        "audit-clean": "P4",
+    }.get(action, "P3")
 
     discord_payload = {
         "username": "Gochuchamchi Isolation",
         "embeds": [
             {
-                "title": f"{action_text}: {target}",
+                "title": f"[SEC][{action_tier}] {action_text}: {target}",
                 "color": color,
                 "fields": [
                     {
@@ -592,6 +763,16 @@ def handle_isolation_event(event: dict[str, Any]) -> dict[str, Any]:
                     {
                         "name": "상세",
                         "value": trim_text(action_detail),
+                        "inline": False,
+                    },
+                    {
+                        "name": "첫 확인",
+                        "value": "GuardDuty Finding → 격리 Lambda 로그 → DynamoDB 대응 이력",
+                        "inline": False,
+                    },
+                    {
+                        "name": "권장 조치",
+                        "value": "대응 성공 여부와 서비스 영향을 확인하고, 오탐일 때만 수동 복구하세요.",
                         "inline": False,
                     },
                 ],
@@ -614,7 +795,8 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
     previous_state = detail.get("previousState", {})
 
     alarm_name = detail.get("alarmName", "알 수 없는 CloudWatch Alarm")
-    incident_tier = incident_tier_for_alarm(alarm_name)
+    classification = classify_alarm(alarm_name)
+    incident_tier = classification["tier"]
     new_state = current_state.get("value", "UNKNOWN")
     old_state = previous_state.get("value", "UNKNOWN")
     reason = current_state.get("reason", "상태 변경 원인 없음")
@@ -629,7 +811,7 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
             {
                 "title": (
                     f"{state_icon(new_state)} "
-                    f"[{incident_tier}] CloudWatch Alarm: {alarm_name}"
+                    f"[{classification['domain']}][{incident_tier}] CloudWatch Alarm: {alarm_name}"
                 ),
                 "color": state_color(new_state),
                 "fields": [
@@ -651,6 +833,16 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
                     {
                         "name": "변경 시각",
                         "value": trim_text(changed_at),
+                        "inline": False,
+                    },
+                    {
+                        "name": "첫 확인",
+                        "value": classification["first_check"],
+                        "inline": False,
+                    },
+                    {
+                        "name": "권장 조치",
+                        "value": classification["recommended_action"],
                         "inline": False,
                     },
                     {
@@ -679,5 +871,6 @@ def handle_alarm_event(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "alarmName": alarm_name,
         "state": new_state,
+        "domain": classification["domain"],
         "incidentTier": incident_tier,
     }

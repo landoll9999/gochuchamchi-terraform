@@ -170,7 +170,7 @@ def embed_rule_hit(payload):
             "inline": True,
         },
         {
-            "name": "원본 확인",
+            "name": "첫 확인",
             "value": truncate(
                 f"[Athena 실행 결과]({payload.get('console_url', '')})\n"
                 f"저장 쿼리: `{payload.get('rule_name', '')}`",
@@ -206,7 +206,7 @@ def embed_rule_hit(payload):
     fields.append({"name": "판정 출처", "value": truncate(source, MAX_FIELD_VALUE), "inline": False})
 
     return {
-        "title": truncate(f"{icon} [{severity}] {payload.get('title', payload.get('rule_id', 'SIEM'))}", 256),
+        "title": truncate(f"{icon} [SEC][{severity}] {payload.get('title', payload.get('rule_id', 'SIEM'))}", 256),
         "description": truncate("\n".join(description), MAX_DESCRIPTION),
         "color": color,
         "fields": fields,
@@ -218,13 +218,18 @@ def embed_rule_hit(payload):
 def embed_operational(payload):
     """탐지가 멈춘 상태. 내용이 없는 알림이 아니라 '알림이 없는 이유'다."""
     fields = [
+        {
+            "name": "첫 확인",
+            "value": "CloudWatch → SIEM Detector Lambda 로그·Athena 실행 상태",
+            "inline": False,
+        },
         {"name": "상세", "value": truncate(payload.get("detail", "-"), MAX_FIELD_VALUE), "inline": False}
     ]
     if payload.get("hint"):
         fields.append({"name": "확인할 것", "value": truncate(payload["hint"], MAX_FIELD_VALUE), "inline": False})
 
     return {
-        "title": truncate(f"⚙️ [탐지 파이프라인] {payload.get('title', '고장')}", 256),
+        "title": truncate(f"⚙️ [PIPELINE][P2] {payload.get('title', '탐지 파이프라인 고장')}", 256),
         "description": (
             "**탐지 자체가 정상 동작하지 않았습니다.** 이 시간대는 관제 공백으로 봐야 합니다."
         ),
@@ -240,13 +245,23 @@ def embed_cloudwatch_alarm(payload):
 
     return {
         "title": truncate(
-            f"{'🚨' if is_alarm else '✅'} [알람] {payload.get('AlarmName', '이름 없음')}", 256
+            f"{'🚨' if is_alarm else '✅'} [PIPELINE][P2] {payload.get('AlarmName', '이름 없음')}", 256
         ),
         "description": truncate(payload.get("AlarmDescription") or "설명 없음", MAX_DESCRIPTION),
         "color": ALARM_COLOR if is_alarm else ALARM_OK_COLOR,
         "fields": [
             {"name": "상태", "value": payload.get("NewStateValue", "-"), "inline": True},
             {"name": "계정", "value": payload.get("AWSAccountId", "-"), "inline": True},
+            {
+                "name": "첫 확인",
+                "value": "CloudWatch → Lambda·SQS DLQ·마지막 정상 탐지 실행",
+                "inline": False,
+            },
+            {
+                "name": "권장 조치",
+                "value": "관제 공백 여부를 확인하고 실패 메시지·권한·시크릿 상태를 점검하세요.",
+                "inline": False,
+            },
             {
                 "name": "사유",
                 "value": truncate(payload.get("NewStateReason", "-"), MAX_FIELD_VALUE),
@@ -260,7 +275,7 @@ def embed_cloudwatch_alarm(payload):
 def embed_unknown(raw_message, subject):
     """모르는 형식이어도 버리지 않는다."""
     return {
-        "title": truncate(f"📄 {subject or 'SNS 메시지'}", 256),
+        "title": truncate(f"📄 [UNCLASSIFIED][P3] {subject or 'SNS 메시지'}", 256),
         "description": truncate(f"```\n{raw_message}\n```", MAX_DESCRIPTION),
         "color": 0xA0AEC0,
         "footer": {"text": "미분류 메시지 · 렌더러 확인 필요 · Log 계정"},
