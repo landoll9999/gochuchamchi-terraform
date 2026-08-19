@@ -15,3 +15,9 @@ variable "auto_enable_new_controls" {
   type        = bool
   default     = true
 }
+
+variable "disabled_control_ids" {
+  description = "DISABLED로 설정할 FSBP Control ID 목록(이 프로젝트에서 미사용인 서비스). securityhub-* Config 규칙·ResourceCompliance CI·finding 비용을 줄인다."
+  type        = list(string)
+  default     = []
+}

@@ -41,3 +41,22 @@ resource "aws_securityhub_standards_subscription" "this" {
     delete = "10m"
   }
 }
+
+data "aws_caller_identity" "current" {}
+
+# 이 프로젝트에서 쓰지 않는 서비스의 FSBP Control을 DISABLED 처리한다.
+# 표준 구독으로 Control이 생성된 뒤에 상태만 바꾸므로 subscription에 의존한다.
+# 리소스가 없어 판정 노이즈와 securityhub-* Config 규칙·CI·finding 비용만
+# 만들던 Control을 꺼서 비용을 줄인다.
+resource "aws_securityhub_standards_control" "disabled" {
+  for_each = toset(var.disabled_control_ids)
+
+  standards_control_arn = "arn:${data.aws_partition.current.partition}:securityhub:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:control/aws-foundational-security-best-practices/v/1.0.0/${each.value}"
+
+  control_status  = "DISABLED"
+  disabled_reason = "Service not used in this project; disabled to reduce Config CI and Security Hub finding cost."
+
+  depends_on = [
+    aws_securityhub_standards_subscription.this
+  ]
+}
