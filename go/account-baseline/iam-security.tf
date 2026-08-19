@@ -3,6 +3,7 @@
 #   1. IAM Access Analyzer — 외부에 노출된 리소스 정책 상시 탐지
 #   2. MFA 강제 IAM 그룹 — 콘솔 사용자용
 #   3. Region Guard — 허용 리전 밖 API 호출 명시적 Deny (단일 계정이라 SCP 불가)
+#   4. 계정 패스워드 정책 — IAM 사용자 콘솔 비밀번호 CIS 요구치 (1.8/1.9)
 #
 # ⚠️⚠️ 그룹 멤버십은 기본값이 "비어 있음"이고, 반드시 비워둔 채 유지 조건을
 #      이해하고 넣어야 한다. 07/29에 작업 계정이 explicit deny 그룹(3pro)에
@@ -156,6 +157,19 @@ resource "aws_iam_policy" "region_guard" {
 resource "aws_iam_group_policy_attachment" "console_admins_region_guard" {
   group      = aws_iam_group.console_admins.name
   policy_arn = aws_iam_policy.region_guard.arn
+}
+
+# ---------------------------------------------------------------------------
+# 4. 계정 패스워드 정책 — IAM 사용자 콘솔 비밀번호 규칙 (CIS 1.8/1.9)
+#    SSO(Identity Center) 로그인과는 무관하고 IAM 사용자 콘솔 비번에만 적용된다.
+#    AWS 기본값(8자, 재사용 제한 없음)을 CIS 3.0 요구치로 상향.
+#    만료(max_password_age)는 두지 않는다 — CIS 3.0도 주기적 강제 변경을
+#    요구하지 않으며(NIST 정렬), 1인 운영에서 만료는 잠금 사고 위험만 늘린다.
+# ---------------------------------------------------------------------------
+resource "aws_iam_account_password_policy" "cis" {
+  minimum_password_length        = 14   # CIS 1.8
+  password_reuse_prevention      = 24   # CIS 1.9 — 직전 24개 비밀번호 재사용 금지
+  allow_users_to_change_password = true # force_mfa 정책의 iam:ChangePassword 허용과 짝
 }
 
 
