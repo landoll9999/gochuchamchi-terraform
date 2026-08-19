@@ -25,6 +25,31 @@ resource "aws_s3_bucket_public_access_block" "k8s_manifests" {
   restrict_public_buckets = true
 }
 
+# HTTP(비 TLS) 접근 거부 — 다른 버킷들과 동일한 전송 중 암호화 강제 (CIS 2.1.1)
+resource "aws_s3_bucket_policy" "k8s_manifests" {
+  bucket = aws_s3_bucket.k8s_manifests.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.k8s_manifests.arn,
+          "${aws_s3_bucket.k8s_manifests.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
 # 실제 값 자동 조회 (RDS 엔드포인트) — module 내부 output 이름에 의존하지 않도록
 # db_instance_identifier로 직접 조회. RDS가 다 만들어진 뒤에 조회되도록 depends_on 필수
 data "aws_db_instance" "this" {
