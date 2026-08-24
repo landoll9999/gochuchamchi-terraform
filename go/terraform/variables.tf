@@ -75,6 +75,23 @@ variable "argocd_gitops_repo" {
   default     = "gochuchamchi-gitops"
 }
 
+variable "argocd_gitops_branch" {
+  description = "Argo CD가 동기화할 GitOps 브랜치. 전환 검증 중에는 기능 브랜치를 명시하고 완료 후 main으로 되돌린다."
+  type        = string
+  default     = "main"
+
+  validation {
+    condition     = length(trimspace(var.argocd_gitops_branch)) > 0 && !strcontains(var.argocd_gitops_branch, "*")
+    error_message = "argocd_gitops_branch에는 와일드카드 없는 정확한 브랜치 이름을 지정하세요."
+  }
+}
+
+variable "argocd_application_auto_sync" {
+  description = "Argo CD Application 자동 동기화 여부. Web/Admin 1차 인프라 준비 중에는 false로 두고 수동 검증 후 true로 복구한다."
+  type        = bool
+  default     = true
+}
+
 # GitHub App 인증 (2026-08-18) — read/write PAT를 대체한다.
 # App ID와 Installation ID는 비밀이 아니다(앱 관리 페이지에 그대로 보이는 식별자).
 # 비밀은 개인키뿐이고 Secrets Manager(gochuchamchi/argocd/*-github-app-key)에만 있다.

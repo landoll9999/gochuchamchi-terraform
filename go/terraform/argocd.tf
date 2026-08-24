@@ -110,7 +110,8 @@ resource "helm_release" "gochuchamchi_application" {
   values = [
     yamlencode({
       repoURL              = local.gitops_repo_url
-      gitBranch            = "main"
+      gitBranch            = var.argocd_gitops_branch
+      autoSync             = var.argocd_application_auto_sync
       destinationNamespace = "gochuchamchi"
       appImage             = data.aws_ecr_repository.gochuchamchi.repository_url
     })

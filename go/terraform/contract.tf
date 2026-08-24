@@ -34,17 +34,17 @@ locals {
 
     cluster_name    = module.eks.cluster_name
     namespace       = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
-    service_account = kubernetes_service_account_v1.gochuchamchi_app.metadata[0].name
+    service_account = kubernetes_service_account_v1.gochuchamchi_web.metadata[0].name
     service_accounts = {
-      web   = kubernetes_service_account_v1.gochuchamchi_app.metadata[0].name
+      web   = kubernetes_service_account_v1.gochuchamchi_web.metadata[0].name
       admin = kubernetes_service_account_v1.gochuchamchi_admin.metadata[0].name
     }
 
     # ---- terraform이 만들어 주는 것 (gitops는 "참조만" 한다) --------------------
     config_maps = [
       {
-        name  = kubernetes_config_map_v1.gochuchamchi_config.metadata[0].name
-        keys  = sort(keys(kubernetes_config_map_v1.gochuchamchi_config.data))
+        name  = kubernetes_config_map_v1.gochuchamchi_web_config.metadata[0].name
+        keys  = sort(keys(kubernetes_config_map_v1.gochuchamchi_web_config.data))
         owner = "terraform (k8s-deploy.tf)"
       },
       {
@@ -59,7 +59,7 @@ locals {
       # DB 비밀번호가 없어졌고, 그 Secret 을 만들던 배스천 프로비저닝도 제거했다.
       # 아래 forbidden_refs 로 옮겼다 — gitops 가 계속 참조하면 검증에서 잡힌다.
       {
-        name  = kubernetes_secret_v1.gochuchamchi_redis_secret.metadata[0].name
+        name  = kubernetes_secret_v1.gochuchamchi_web_redis_secret.metadata[0].name
         keys  = ["SPRING_DATA_REDIS_PASSWORD"]
         owner = "terraform (k8s-deploy.tf)"
       },

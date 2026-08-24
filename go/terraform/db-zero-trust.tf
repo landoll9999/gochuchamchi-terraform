@@ -73,8 +73,8 @@ locals {
 # =============================================================================
 
 resource "aws_iam_policy" "app_db_iam_auth" {
-  name        = "gochuchamchi-web-db-iam-auth"
-  description = "Web 파드가 gochuchamchi_web_iam 유저로만 RDS IAM 토큰 인증을 하도록 허용"
+  name        = "gochuchamchi-app-db-iam-auth"
+  description = "전환 중 구 App 파드가 gochuchamchi_app_iam 유저로 계속 접속하도록 유지"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -83,6 +83,20 @@ resource "aws_iam_policy" "app_db_iam_auth" {
       Action = "rds-db:connect"
       # 유저명까지 리소스에 박는다 — 이 역할로는 다른 DB 유저가 될 수 없고,
       # 유저명을 바꾸면 그 즉시 권한이 끊긴다.
+      Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_app_iam"
+    }]
+  })
+}
+
+resource "aws_iam_policy" "web_db_iam_auth" {
+  name        = "gochuchamchi-web-db-iam-auth"
+  description = "Web 파드가 gochuchamchi_web_iam 유저로만 RDS IAM 토큰 인증을 하도록 허용"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "rds-db:connect"
       Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_web_iam"
     }]
   })
@@ -112,6 +126,11 @@ resource "aws_iam_role_policy_attachment" "app_db_iam_auth" {
   policy_arn = aws_iam_policy.app_db_iam_auth.arn
 }
 
+resource "aws_iam_role_policy_attachment" "web_db_iam_auth" {
+  role       = aws_iam_role.gochuchamchi_web_role.name
+  policy_arn = aws_iam_policy.web_db_iam_auth.arn
+}
+
 # 배스천에도 같은 권한을 준다 — 아래 프로비저닝의 마지막 단계에서 실제로 토큰을
 # 발급받아 접속되는지 검증하기 위해서다. 배스천은 이미 마스터 비밀번호를 읽을 수
 # 있으므로(iamRole.tf 의 bastion_secrets_read) 권한 확대가 아니라 같은 수준의 다른 경로다.
@@ -135,7 +154,7 @@ resource "aws_iam_role_policy" "bastion_db_iam_auth" {
 resource "null_resource" "provision_app_db_iam_user" {
   triggers = {
     rds_id     = data.aws_db_instance.this.db_instance_identifier
-    policy_arn = aws_iam_policy.app_db_iam_auth.arn
+    policy_arn = aws_iam_policy.web_db_iam_auth.arn
     # 계정은 K8s 리소스가 아니지만, 네임스페이스 재생성 = 전체 재구축 신호라 함께 재실행
     namespace_uid = kubernetes_namespace_v1.gochuchamchi.metadata[0].uid
     # 아래 스크립트를 고치면 이 값을 올려서 재실행
@@ -149,6 +168,8 @@ resource "null_resource" "provision_app_db_iam_user" {
     module.bastion_host,
     # 검증 단계에서 배스천이 토큰을 발급하므로 권한이 먼저 붙어 있어야 한다
     aws_iam_role_policy.bastion_db_iam_auth,
+    aws_iam_role_policy_attachment.web_db_iam_auth,
+    aws_iam_role_policy_attachment.admin_db_iam_auth,
   ]
 
   provisioner "local-exec" {

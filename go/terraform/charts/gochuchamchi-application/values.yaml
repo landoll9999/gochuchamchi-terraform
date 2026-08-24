@@ -1,4 +1,5 @@
 repoURL: ""
 gitBranch: main
+autoSync: true
 destinationNamespace: gochuchamchi
 appImage: ""

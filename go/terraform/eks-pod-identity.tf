@@ -228,7 +228,7 @@ module "efs_csi_pod_identity" {
 #   기존 EC2 시절 web_role과 동일한 최소권한 철학을 그대로 K8s ServiceAccount에 이식
 # ---------------------------------------------------------------------------
 resource "aws_iam_policy" "gochuchamchi_app_policy" {
-  name = "gochuchamchi-web-policy"
+  name = "gochuchamchi-app-policy"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -250,7 +250,7 @@ resource "aws_iam_policy" "gochuchamchi_app_policy" {
 }
 
 resource "aws_iam_role" "gochuchamchi_app_role" {
-  name = "gochuchamchi-web-role"
+  name = "gochuchamchi-app-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -272,8 +272,50 @@ resource "aws_iam_role_policy_attachment" "gochuchamchi_app_attach" {
 resource "aws_eks_pod_identity_association" "gochuchamchi_app" {
   cluster_name    = module.eks.cluster_name
   namespace       = "gochuchamchi"
-  service_account = "gochuchamchi-web"
+  service_account = "gochuchamchi-app"
   role_arn        = aws_iam_role.gochuchamchi_app_role.arn
+}
+
+# 신규 Web 경로는 기존 App 경로를 이름 변경하지 않고 병행 생성한다. 첫 apply에서
+# 구 Pod Identity를 제거하면 신규 Deployment가 Ready 되기 전에 현재 서비스의 DB/S3
+# 연결이 끊길 수 있기 때문이다. 레거시 리소스는 전환 검증 후 별도 정리한다.
+resource "aws_iam_policy" "gochuchamchi_web_policy" {
+  name = "gochuchamchi-web-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "S3ProductImageUploadOnly"
+      Effect   = "Allow"
+      Action   = ["s3:PutObject"]
+      Resource = ["${aws_s3_bucket.images.arn}/products/*"]
+    }]
+  })
+}
+
+resource "aws_iam_role" "gochuchamchi_web_role" {
+  name = "gochuchamchi-web-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+      Principal = { Service = "pods.eks.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "gochuchamchi_web_attach" {
+  role       = aws_iam_role.gochuchamchi_web_role.name
+  policy_arn = aws_iam_policy.gochuchamchi_web_policy.arn
+}
+
+resource "aws_eks_pod_identity_association" "gochuchamchi_web" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = "gochuchamchi"
+  service_account = "gochuchamchi-web"
+  role_arn        = aws_iam_role.gochuchamchi_web_role.arn
 }
 
 # Admin은 S3 업로드 등 일반 웹 기능의 AWS 권한을 상속하지 않는다. DB 연결 권한은

@@ -109,9 +109,15 @@ resource "kubernetes_namespace_v1" "gochuchamchi" {
 
 resource "kubernetes_service_account_v1" "gochuchamchi_app" {
   metadata {
-    # eks-pod-identity.tf의 aws_eks_pod_identity_association이
-    # namespace=gochuchamchi, service_account=gochuchamchi-web 으로 지정한 것과
-    # 이름이 정확히 일치해야 IAM 권한이 이 Pod에 자동으로 붙는다.
+    # 전환 중 기존 Deployment가 계속 사용하는 레거시 ServiceAccount.
+    # Web/Admin 검증 후 별도 정리 커밋에서 제거한다.
+    name      = "gochuchamchi-app"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+}
+
+resource "kubernetes_service_account_v1" "gochuchamchi_web" {
+  metadata {
     name      = "gochuchamchi-web"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
   }
@@ -130,6 +136,31 @@ resource "kubernetes_service_account_v1" "gochuchamchi_admin" {
 #  gitops 저장소가 아니라 여기서 직접 관리)
 # ---------------------------------------------------------------------------
 resource "kubernetes_config_map_v1" "gochuchamchi_config" {
+  metadata {
+    # 구 Pod가 신규 Web Deployment의 Ready 전까지 계속 참조한다.
+    name      = "gochuchamchi-config"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+
+  data = {
+    DB_HOST                                    = data.aws_db_instance.this.address
+    DB_PORT                                    = "3306"
+    DB_USER                                    = "gochuchamchi_app_iam"
+    SPRING_DATASOURCE_URL                      = "jdbc:mariadb://${data.aws_db_instance.this.address}:3306/gochuchamchi?credentialType=AWS-IAM&region=${var.region}&sslMode=verify-full&serverSslCert=/app/rds-ca.pem"
+    SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "5"
+    SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "2"
+    CLOUD_AWS_S3_BUCKET                        = aws_s3_bucket.images.bucket
+    CLOUD_AWS_S3_PUBLIC_BASE_URL               = "https://${aws_cloudfront_distribution.images.domain_name}"
+    CLOUD_AWS_REGION_STATIC                    = var.region
+    SPRING_SESSION_STORE_TYPE                  = "redis"
+    SPRING_DATA_REDIS_HOST                     = aws_elasticache_replication_group.this.primary_endpoint_address
+    SPRING_DATA_REDIS_PORT                     = "6379"
+    SPRING_DATA_REDIS_SSL_ENABLED              = "true"
+    APP_SUPERADMIN_USERNAME                    = var.superadmin_username
+  }
+}
+
+resource "kubernetes_config_map_v1" "gochuchamchi_web_config" {
   metadata {
     name      = "gochuchamchi-web-config"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
@@ -239,6 +270,18 @@ resource "kubernetes_config_map_v1" "gochuchamchi_admin_config" {
 # 값이므로 여기서 K8s Secret으로 만들어도 "추가" 노출은 없음. ESO 도입 시 최우선 이관 대상.
 # 키 이름을 Spring 환경변수명 그대로 두면 gitops에서 envFrom secretRef 한 줄로 끝남.
 resource "kubernetes_secret_v1" "gochuchamchi_redis_secret" {
+  metadata {
+    # 구 Pod가 신규 Web Deployment의 Ready 전까지 계속 참조한다.
+    name      = "gochuchamchi-redis-secret"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+
+  data = {
+    SPRING_DATA_REDIS_PASSWORD = random_password.redis_auth.result
+  }
+}
+
+resource "kubernetes_secret_v1" "gochuchamchi_web_redis_secret" {
   metadata {
     name      = "gochuchamchi-web-redis-secret"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name

@@ -7,4 +7,4 @@ description: >
   hashicorp/helm 프로바이더는 이 프로젝트에서 이미 같은 패턴(ALB Controller/ExternalDNS)으로
   검증됐으므로 재사용.
 type: application
-version: 0.3.0
+version: 0.4.0
