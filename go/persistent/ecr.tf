@@ -134,9 +134,13 @@ resource "aws_iam_role" "github_actions_ecr_push" {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
-        # main 브랜치 push(=CI 트리거 조건)에서만 assume 가능
+        # main과 명시적으로 승인한 임시 브랜치만 assume 가능하다. repo 전체(*)를
+        # 허용하지 않아 다른 브랜치가 Workload ECR push 권한을 얻지 못하게 한다.
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_owner}/gochuchamchi-spring:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub" = [
+            for ref in var.github_ecr_build_allowed_refs :
+            "repo:${var.github_owner}/gochuchamchi-spring:ref:${ref}"
+          ]
         }
       }
     }]
