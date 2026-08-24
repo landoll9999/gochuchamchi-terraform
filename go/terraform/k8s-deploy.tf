@@ -425,6 +425,10 @@ resource "kubernetes_ingress_v1" "gochuchamchi_admin" {
       "alb.ingress.kubernetes.io/ssl-policy"      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
       "alb.ingress.kubernetes.io/group.name"      = "gochuchamchi-web"
       "alb.ingress.kubernetes.io/group.order"     = "5"
+      # Admin / 는 비인증 사용자를 로그인으로 302 redirect하므로 ALB 기본
+      # health check(/, success=200)로는 정상 Pod도 unhealthy가 된다.
+      "alb.ingress.kubernetes.io/healthcheck-path" = "/internal/health"
+      "alb.ingress.kubernetes.io/success-codes"    = "200"
       "alb.ingress.kubernetes.io/conditions.gochuchamchi-admin-svc" = jsonencode([{
         field          = "source-ip"
         sourceIpConfig = { values = var.admin_allowed_cidrs }
