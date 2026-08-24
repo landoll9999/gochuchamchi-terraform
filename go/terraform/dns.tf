@@ -17,7 +17,7 @@ output "name_servers" {
 # ---------------------------------------------------------------------------
 resource "aws_acm_certificate" "this" {
   domain_name               = var.domain_name
-  subject_alternative_names = ["www.${var.domain_name}", "argocd.${var.domain_name}", "grafana.${var.domain_name}"]
+  subject_alternative_names = ["www.${var.domain_name}", "admin.${var.domain_name}", "argocd.${var.domain_name}", "grafana.${var.domain_name}"]
   validation_method         = "DNS"
 
   lifecycle {

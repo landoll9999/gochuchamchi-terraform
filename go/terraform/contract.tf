@@ -35,6 +35,10 @@ locals {
     cluster_name    = module.eks.cluster_name
     namespace       = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
     service_account = kubernetes_service_account_v1.gochuchamchi_app.metadata[0].name
+    service_accounts = {
+      web   = kubernetes_service_account_v1.gochuchamchi_app.metadata[0].name
+      admin = kubernetes_service_account_v1.gochuchamchi_admin.metadata[0].name
+    }
 
     # ---- terraform이 만들어 주는 것 (gitops는 "참조만" 한다) --------------------
     config_maps = [
@@ -42,7 +46,12 @@ locals {
         name  = kubernetes_config_map_v1.gochuchamchi_config.metadata[0].name
         keys  = sort(keys(kubernetes_config_map_v1.gochuchamchi_config.data))
         owner = "terraform (k8s-deploy.tf)"
-      }
+      },
+      {
+        name  = kubernetes_config_map_v1.gochuchamchi_admin_config.metadata[0].name
+        keys  = sort(keys(kubernetes_config_map_v1.gochuchamchi_admin_config.data))
+        owner = "terraform (k8s-deploy.tf)"
+      },
     ]
 
     secrets = [
@@ -51,6 +60,11 @@ locals {
       # 아래 forbidden_refs 로 옮겼다 — gitops 가 계속 참조하면 검증에서 잡힌다.
       {
         name  = kubernetes_secret_v1.gochuchamchi_redis_secret.metadata[0].name
+        keys  = ["SPRING_DATA_REDIS_PASSWORD"]
+        owner = "terraform (k8s-deploy.tf)"
+      },
+      {
+        name  = kubernetes_secret_v1.gochuchamchi_admin_redis_secret.metadata[0].name
         keys  = ["SPRING_DATA_REDIS_PASSWORD"]
         owner = "terraform (k8s-deploy.tf)"
       },
@@ -63,11 +77,19 @@ locals {
       name = "gochuchamchi-web-svc"
       port = 80
     }
+    services = {
+      web   = { name = "gochuchamchi-web-svc", port = 80 }
+      admin = { name = "gochuchamchi-admin-svc", port = 80 }
+    }
 
     # NetworkPolicy(k8s-network-policies.tf)의 pod_selector와 반드시 일치해야 한다.
     # 라벨이 어긋나면 정책이 아무 파드에도 안 걸리고(무해해 보이지만) default-deny만
     # 남아 앱이 전부 죽는다.
-    pod_labels     = { app = "gochuchamchi-web" }
+    pod_labels = { app = "gochuchamchi-web" }
+    pod_labels_all = {
+      web   = { app = "gochuchamchi-web" }
+      admin = { app = "gochuchamchi-admin" }
+    }
     container_port = 8080
 
     # ---- 참조해서는 안 되는 이름 (과거 계약의 잔재) ----------------------------
@@ -80,15 +102,18 @@ locals {
       # 존재하지 않아 파드가 CreateContainerConfigError 로 못 뜬다 — 8/4 장애와
       # 정확히 같은 실패 방식이다. 그래서 gitops 수정이 이 커밋보다 먼저다.
       "gochuchamchi-db-app",
+      "gochuchamchi-config",
+      "gochuchamchi-redis-secret",
     ]
 
     # ---- 재구축마다 바뀌는 값 (gitops에 하드코딩하면 안 되는 것들) --------------
     # ConfigMap을 통해 주입되므로 gitops는 이 값을 몰라야 정상이다.
     # 스모크 테스트가 DNS/TCP 도달성을 확인할 때 사용한다.
     endpoints = {
-      db_host    = data.aws_db_instance.this.address
-      redis_host = aws_elasticache_replication_group.this.primary_endpoint_address
-      hosts      = [var.domain_name, "www.${var.domain_name}"]
+      db_host          = data.aws_db_instance.this.address
+      redis_host       = aws_elasticache_replication_group.this.primary_endpoint_address
+      admin_redis_host = aws_elasticache_replication_group.admin.primary_endpoint_address
+      hosts            = [var.domain_name, "www.${var.domain_name}", "admin.${var.domain_name}"]
     }
   }
 }

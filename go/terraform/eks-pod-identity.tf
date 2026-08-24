@@ -228,7 +228,7 @@ module "efs_csi_pod_identity" {
 #   기존 EC2 시절 web_role과 동일한 최소권한 철학을 그대로 K8s ServiceAccount에 이식
 # ---------------------------------------------------------------------------
 resource "aws_iam_policy" "gochuchamchi_app_policy" {
-  name = "gochuchamchi-app-policy"
+  name = "gochuchamchi-web-policy"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -250,7 +250,7 @@ resource "aws_iam_policy" "gochuchamchi_app_policy" {
 }
 
 resource "aws_iam_role" "gochuchamchi_app_role" {
-  name = "gochuchamchi-app-role"
+  name = "gochuchamchi-web-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -272,6 +272,46 @@ resource "aws_iam_role_policy_attachment" "gochuchamchi_app_attach" {
 resource "aws_eks_pod_identity_association" "gochuchamchi_app" {
   cluster_name    = module.eks.cluster_name
   namespace       = "gochuchamchi"
-  service_account = "gochuchamchi-app"
+  service_account = "gochuchamchi-web"
   role_arn        = aws_iam_role.gochuchamchi_app_role.arn
+}
+
+# Admin은 S3 업로드 등 일반 웹 기능의 AWS 권한을 상속하지 않는다. DB 연결 권한은
+# db-zero-trust.tf에서 admin DB 사용자 ARN 하나에만 별도로 붙인다.
+resource "aws_iam_role" "gochuchamchi_admin_role" {
+  name = "gochuchamchi-admin-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+      Principal = { Service = "pods.eks.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_policy" "gochuchamchi_admin_product_image_policy" {
+  name = "gochuchamchi-admin-product-image-policy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "AdminProductImageUploadOnly"
+      Effect   = "Allow"
+      Action   = ["s3:PutObject"]
+      Resource = ["${aws_s3_bucket.images.arn}/products/*"]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "gochuchamchi_admin_product_image" {
+  role       = aws_iam_role.gochuchamchi_admin_role.name
+  policy_arn = aws_iam_policy.gochuchamchi_admin_product_image_policy.arn
+}
+
+resource "aws_eks_pod_identity_association" "gochuchamchi_admin" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = "gochuchamchi"
+  service_account = "gochuchamchi-admin"
+  role_arn        = aws_iam_role.gochuchamchi_admin_role.arn
 }

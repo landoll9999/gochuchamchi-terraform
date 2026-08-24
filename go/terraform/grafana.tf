@@ -24,6 +24,11 @@ module "grafana" {
   # DNS 검증까지 완료된 ACM 인증서
   certificate_arn = aws_acm_certificate_validation.this.certificate_arn
 
+  # (2026-08-19) Log 계정 조회 역할.
+  # 계정이 분리되어 있고 한 방향 참조 원칙(terraform/ -> 상시 계층)을 지켜야 하므로
+  # remote state 참조가 아니라 변수로 넘긴다.
+  athena_reader_role_arn = var.grafana_athena_reader_role_arn
+
   tags = {
     Project     = "gochuchamchi"
     Environment = "project"

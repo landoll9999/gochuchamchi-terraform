@@ -128,5 +128,83 @@ resource "kubernetes_network_policy_v1" "gochuchamchi_web_allow" {
         protocol = "TCP"
       }
     }
+
+    # 관리자 상품 등록 시 이미지 업로드(S3/VPC endpoint 또는 NAT)와 AWS API에 사용.
+    egress {
+      to {
+        ip_block { cidr = "0.0.0.0/0" }
+      }
+      ports {
+        port     = 443
+        protocol = "TCP"
+      }
+    }
+  }
+}
+
+# Admin Pod는 S3 업로드나 임의 인터넷 통신이 필요 없다. DB, 전용 Redis, DNS,
+# Pod Identity Agent만 허용해 Web보다 더 좁은 egress 경계를 적용한다.
+resource "kubernetes_network_policy_v1" "gochuchamchi_admin_allow" {
+  metadata {
+    name      = "admin-allow"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+
+  spec {
+    pod_selector {
+      match_labels = { app = "gochuchamchi-admin" }
+    }
+    policy_types = ["Ingress", "Egress"]
+
+    ingress {
+      from {
+        ip_block { cidr = module.vpc.vpc_cidr_block }
+      }
+      ports {
+        port     = 8080
+        protocol = "TCP"
+      }
+    }
+
+    egress {
+      to {
+        ip_block { cidr = module.eks.cluster_service_cidr }
+      }
+      to {
+        ip_block { cidr = module.vpc.vpc_cidr_block }
+      }
+      ports {
+        port     = 53
+        protocol = "UDP"
+      }
+      ports {
+        port     = 53
+        protocol = "TCP"
+      }
+    }
+
+    egress {
+      to {
+        ip_block { cidr = module.vpc.vpc_cidr_block }
+      }
+      ports {
+        port     = 3306
+        protocol = "TCP"
+      }
+      ports {
+        port     = 6379
+        protocol = "TCP"
+      }
+    }
+
+    egress {
+      to {
+        ip_block { cidr = "169.254.170.23/32" }
+      }
+      ports {
+        port     = 80
+        protocol = "TCP"
+      }
+    }
   }
 }

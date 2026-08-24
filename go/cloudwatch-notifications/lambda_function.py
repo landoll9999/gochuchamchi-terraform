@@ -275,6 +275,23 @@ def classify_alarm(alarm_name: str) -> dict[str, str]:
     """
     name = alarm_name.lower()
 
+    # DB 감사 가드레일 — 제로트러스트 위반 (terraform/db-audit-monitoring.tf).
+    # 앱 전용 계정의 DDL/DCL은 DML만 가능해야 하므로 절대 안 떠야 하는 최상위 신호 → P1.
+    if "app-account-ddl-dcl" in name:
+        return {
+            "domain": "SEC",
+            "tier": "P1",
+            "first_check": "CloudWatch Logs Insights → /aws/rds/instance/gochuchamchi-db/audit, dbuser=gochuchamchi_app_iam의 DDL/DCL",
+            "recommended_action": "앱 전용 계정은 DML만 가능해야 한다(제로트러스트). DDL/DCL 시도는 권한 우회·침해 신호 — srchost·시각·SQL을 즉시 확인하고 앱 파드 침해 여부를 조사하세요.",
+        }
+    if "db-failed-connect" in name:
+        return {
+            "domain": "SEC",
+            "tier": "P2",
+            "first_check": "CloudWatch Logs Insights → RDS audit, FAILED_CONNECT의 srchost·dbuser",
+            "recommended_action": "IAM 토큰 문제인지 무차별 대입·무단 접속 시도인지 확인하세요. srchost가 파드 대역(172.30.40/60.x) 밖이면 특히 위험합니다.",
+        }
+
     if "high-security-event" in name:
         return {
             "domain": "SEC",

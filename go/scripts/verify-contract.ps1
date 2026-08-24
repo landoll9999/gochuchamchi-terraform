@@ -143,6 +143,18 @@ else {
       Add-Result '정적' "Service 이름: $($contract.service.name)" 'FAIL' 'gitops에 이 이름의 Service가 없습니다 → ALB 타겟 미등록(503)'
     }
 
+    if ($contract.services) {
+      foreach ($entry in $contract.services.PSObject.Properties) {
+        $serviceName = $entry.Value.name
+        if ($allText -match ("(?m)^\s*name\s*:\s*" + [regex]::Escape($serviceName) + "\s*$")) {
+          Add-Result '정적' "Service[$($entry.Name)]: $serviceName" 'PASS' 'Ingress 배포 계약과 일치'
+        }
+        else {
+          Add-Result '정적' "Service[$($entry.Name)]: $serviceName" 'FAIL' 'gitops에 이 이름의 Service가 없습니다.'
+        }
+      }
+    }
+
     $labelKey = ($contract.pod_labels.PSObject.Properties | Select-Object -First 1)
     if ($allText -match ("(?m)^\s*" + [regex]::Escape($labelKey.Name) + "\s*:\s*" + [regex]::Escape($labelKey.Value) + "\s*$")) {
       Add-Result '정적' "파드 라벨: $($labelKey.Name)=$($labelKey.Value)" 'PASS' 'NetworkPolicy pod_selector와 일치'
@@ -151,12 +163,29 @@ else {
       Add-Result '정적' "파드 라벨: $($labelKey.Name)=$($labelKey.Value)" 'FAIL' 'NetworkPolicy가 어떤 파드에도 안 걸립니다 → default-deny만 남아 앱 전체 차단'
     }
 
+
+    if ($contract.pod_labels_all) {
+      foreach ($workload in $contract.pod_labels_all.PSObject.Properties) {
+        $workloadLabel = ($workload.Value.PSObject.Properties | Select-Object -First 1)
+        if ($allText -match ("(?m)^\s*" + [regex]::Escape($workloadLabel.Name) + "\s*:\s*" + [regex]::Escape($workloadLabel.Value) + "\s*$")) {
+          Add-Result '정적' "파드 라벨[$($workload.Name)]: $($workloadLabel.Name)=$($workloadLabel.Value)" 'PASS' 'Deployment와 NetworkPolicy 계약 일치'
+        }
+        else {
+          Add-Result '정적' "파드 라벨[$($workload.Name)]: $($workloadLabel.Name)=$($workloadLabel.Value)" 'FAIL' 'gitops에 이 파드 라벨이 없습니다.'
+        }
+      }
+    }
+
     # kustomization 잔재 파일 (8/4 §4.5 재발 방지)
     $kust = $yamlFiles | Where-Object { $_.Name -match '^kustomization\.ya?ml$' } | Select-Object -First 1
     if ($kust) {
       $kustText = Get-Content -Raw -LiteralPath $kust.FullName
       $orphans = $yamlFiles |
-        Where-Object { $_.DirectoryName -eq $kust.DirectoryName -and $_.Name -ne $kust.Name } |
+        Where-Object {
+          $_.DirectoryName -eq $kust.DirectoryName -and
+          $_.Name -ne $kust.Name -and
+          $_.Name -notmatch '^\.argocd-source-.*\.ya?ml$'
+        } |
         Where-Object { $kustText -notmatch [regex]::Escape($_.Name) }
       if ($orphans) {
         Add-Result '정적' 'kustomize 미등재 매니페스트' 'FAIL' (($orphans | ForEach-Object { $_.Name }) -join ', ')

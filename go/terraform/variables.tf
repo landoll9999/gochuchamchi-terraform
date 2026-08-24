@@ -138,6 +138,25 @@ variable "endpoint_public_access_cidrs" {
   ]
 }
 
+variable "admin_allowed_cidrs" {
+  description = "admin 서브도메인 접근을 허용할 고정 CIDR. 사무실/VPN egress만 유지할 것"
+  type        = list(string)
+  default = [
+    "116.122.154.177/32",
+    "112.221.246.164/32",
+  ]
+
+  validation {
+    condition     = length(var.admin_allowed_cidrs) > 0 && alltrue([for cidr in var.admin_allowed_cidrs : can(cidrhost(cidr, 0))])
+    error_message = "admin_allowed_cidrs에는 최소 하나의 유효한 CIDR이 필요합니다. 0.0.0.0/0은 사용하지 마세요."
+  }
+
+  validation {
+    condition     = !contains(var.admin_allowed_cidrs, "0.0.0.0/0")
+    error_message = "관리자 도메인은 0.0.0.0/0에 공개할 수 없습니다. VPN 또는 관리망 CIDR을 지정하세요."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # CloudWatch Container Insights
 # ---------------------------------------------------------------------------
@@ -328,4 +347,10 @@ variable "log_archive_account_id" {
     condition     = can(regex("^(\\d{12})?$", var.log_archive_account_id))
     error_message = "log_archive_account_id는 12자리 AWS 계정 ID여야 합니다."
   }
+}
+
+variable "grafana_athena_reader_role_arn" {
+  description = "Log 계정 Grafana 조회 역할 ARN (log-archive output). 비우면 Athena 데이터소스 미등록"
+  type        = string
+  default     = ""
 }

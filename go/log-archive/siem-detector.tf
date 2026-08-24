@@ -334,6 +334,9 @@ data "aws_iam_policy_document" "siem_detector" {
   }
 
   # --- S3: 원본 로그 읽기 (쓰기 권한은 주지 않는다) -------------------------
+  # CloudWatch 중앙 아카이브와 ALB 전용 액세스 로그는 서로 다른 버킷이다.
+  # Athena가 auth-failure-burst/cross-layer-ip의 ALB 파티션을 열 때도
+  # ListBucket/GetObject가 필요하므로 두 원본 버킷만 명시적으로 허용한다.
   statement {
     sid    = "ReadCentralLogs"
     effect = "Allow"
@@ -347,6 +350,8 @@ data "aws_iam_policy_document" "siem_detector" {
     resources = [
       aws_s3_bucket.cloudwatch_log_archive.arn,
       "${aws_s3_bucket.cloudwatch_log_archive.arn}/*",
+      aws_s3_bucket.alb_access_logs.arn,
+      "${aws_s3_bucket.alb_access_logs.arn}/*",
     ]
   }
 

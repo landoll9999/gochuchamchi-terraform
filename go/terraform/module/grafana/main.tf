@@ -210,6 +210,32 @@ data "aws_iam_policy_document" "grafana_cloudwatch" {
 
     resources = ["*"]
   }
+
+  # ---------------------------------------------------------------------------
+  # (2026-08-19) Log 계정 조회 역할 전환
+  #
+  # Grafana 파드는 워크로드 계정에 있고 통합 로그 뷰(security_events)는 Log
+  # 계정에 있다. 파드가 그 뷰를 보려면 Log 계정 역할로 전환해야 한다.
+  #
+  # 대상을 특정 ARN 하나로 못박는다. Resource = "*"로 두면 신뢰 관계만 맞으면
+  # 어떤 역할로도 전환할 수 있게 되는데, 그건 대시보드 도구에 줄 권한이 아니다.
+  # ---------------------------------------------------------------------------
+  dynamic "statement" {
+    for_each = trimspace(var.athena_reader_role_arn) != "" ? [1] : []
+
+    content {
+      sid    = "AssumeLogAccountReaderRole"
+      effect = "Allow"
+
+      # Athena 데이터소스 플러그인은 AssumeRole에 세션 태그를 붙이므로
+      # TagSession도 함께 허용해야 한다 (없으면 AssumeRole은 통과해도
+      # sts:TagSession에서 403 AccessDenied — 2026-08-19 실측).
+      # 대칭으로 Log 계정 reader 역할의 신뢰 정책에도 sts:TagSession이 있어야 한다.
+      actions = ["sts:AssumeRole", "sts:TagSession"]
+
+      resources = [var.athena_reader_role_arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "grafana_cloudwatch" {
@@ -328,32 +354,71 @@ resource "helm_release" "grafana" {
         }
       }
 
+      # Athena 데이터소스는 기본 번들에 없으므로 시작 시 설치한다.
+      # 서명된 공식 플러그인이라 allow_loading_unsigned_plugins 설정은 필요 없다.
+      plugins = [
+        "grafana-athena-datasource"
+      ]
+
       env = {
         AWS_REGION         = var.region
         AWS_DEFAULT_REGION = var.region
       }
+
 
       # CloudWatch 데이터 소스를 Grafana 시작 시 자동 등록
       datasources = {
         "datasources.yaml" = {
           apiVersion = 1
 
-          datasources = [
-            {
-              name      = "CloudWatch"
-              uid       = "cloudwatch"
-              type      = "cloudwatch"
-              access    = "proxy"
-              isDefault = true
-              editable  = false
+          datasources = concat(
+            [
+              {
+                name      = "CloudWatch"
+                uid       = "cloudwatch"
+                type      = "cloudwatch"
+                access    = "proxy"
+                isDefault = true
+                editable  = false
 
-              jsonData = {
-                authType                = "default"
-                defaultRegion           = var.region
-                customMetricsNamespaces = "ContainerInsights"
+                jsonData = {
+                  authType                = "default"
+                  defaultRegion           = var.region
+                  customMetricsNamespaces = "ContainerInsights"
+                }
               }
-            }
-          ]
+            ],
+
+            # Log 계정 역할 ARN이 주어졌을 때만 Athena를 등록한다.
+            # 값이 없는데 등록하면 파드는 뜨지만 모든 패널이 인증 오류를 뱉어서
+            # "대시보드가 깨졌다"로 보인다 — 아예 없는 편이 진단하기 쉽다.
+            trimspace(var.athena_reader_role_arn) != "" ? [
+              {
+                name      = "Athena (Security Logs)"
+                uid       = "athena"
+                type      = "grafana-athena-datasource"
+                access    = "proxy"
+                isDefault = false
+                editable  = false
+
+                jsonData = {
+                  authType      = "default"
+                  defaultRegion = var.region
+
+                  # 파드 자격증명 -> Log 계정 조회 역할로 전환
+                  assumeRoleArn = var.athena_reader_role_arn
+
+                  catalog   = var.athena_catalog
+                  database  = var.athena_database
+                  workgroup = "gochuchamchi-security-logs"
+
+                  # 워크그룹에 enforce_workgroup_configuration = true가 걸려 있어
+                  # 실제 출력 위치는 워크그룹 설정이 이긴다. 여기 값은 UI 표시용.
+                  outputLocation = ""
+                }
+              }
+            ] : []
+          )
         }
       }
       # Grafana 대시보드 프로비저닝 설정
@@ -391,6 +456,15 @@ resource "helm_release" "grafana" {
 
           "03-application-logs" = {
             json = local.eks_logs_dashboard
+          }
+
+          # (2026-08-19) SIEM 화면 — siem_dashboards.tf / siem_realtime_dashboard.tf
+          "04-siem-search" = {
+            json = local.siem_search_dashboard
+          }
+
+          "05-siem-realtime" = {
+            json = local.siem_realtime_dashboard
           }
         }
       }

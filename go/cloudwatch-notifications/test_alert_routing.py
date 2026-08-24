@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 HERE = Path(__file__).resolve().parent
@@ -122,6 +123,30 @@ class AlarmClassificationTests(unittest.TestCase):
 
 
 class SiemEmbedTests(unittest.TestCase):
+    def test_post_sends_explicit_user_agent(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.status = 204
+
+        with (
+            mock.patch.object(
+                siem_discord,
+                "webhook_url",
+                return_value="https://example.invalid/webhook",
+            ),
+            mock.patch.object(
+                siem_discord.urllib.request,
+                "urlopen",
+                return_value=response,
+            ) as urlopen,
+        ):
+            self.assertEqual(siem_discord.post({"title": "test"}), 204)
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.get_header("User-agent"),
+            "gochuchamchi-siem-discord-lambda",
+        )
+
     def test_rule_hit_uses_sec_tag_and_athena_first_check(self):
         embed = siem_discord.embed_rule_hit(
             {

@@ -1,4 +1,16 @@
 # =============================================================================
+
+variable "retire_legacy_app_db_user" {
+  description = "Web/Admin 전환 검증 후 기존 gochuchamchi_app_iam DB 사용자를 삭제할지 여부"
+  type        = bool
+  default     = false
+}
+
+locals {
+  # 첫 apply에서는 구 Deployment가 살아 있을 수 있으므로 계정 삭제를 미룬다. 다만
+  # 기존 Pod Identity 정책은 새 Web 사용자 ARN으로 바뀌어 이 계정의 토큰은 발급할 수 없다.
+  legacy_app_db_cleanup_sql = var.retire_legacy_app_db_user ? "DROP USER IF EXISTS ''gochuchamchi_app_iam''@''%%'';\\n" : ""
+}
 # 제로트러스트 DB 계정 분리 + 자격증명 무(無)state 주입  (2026-08-04)
 #
 # 무엇이 문제였나
@@ -61,8 +73,8 @@
 # =============================================================================
 
 resource "aws_iam_policy" "app_db_iam_auth" {
-  name        = "gochuchamchi-app-db-iam-auth"
-  description = "앱 파드가 gochuchamchi_app_iam 유저로만 RDS IAM 토큰 인증을 하도록 허용"
+  name        = "gochuchamchi-web-db-iam-auth"
+  description = "Web 파드가 gochuchamchi_web_iam 유저로만 RDS IAM 토큰 인증을 하도록 허용"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -71,9 +83,28 @@ resource "aws_iam_policy" "app_db_iam_auth" {
       Action = "rds-db:connect"
       # 유저명까지 리소스에 박는다 — 이 역할로는 다른 DB 유저가 될 수 없고,
       # 유저명을 바꾸면 그 즉시 권한이 끊긴다.
-      Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_app_iam"
+      Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_web_iam"
     }]
   })
+}
+
+resource "aws_iam_policy" "admin_db_iam_auth" {
+  name        = "gochuchamchi-admin-db-iam-auth"
+  description = "Admin 파드가 gochuchamchi_admin_iam 유저로만 RDS IAM 토큰 인증을 하도록 허용"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "rds-db:connect"
+      Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_admin_iam"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "admin_db_iam_auth" {
+  role       = aws_iam_role.gochuchamchi_admin_role.name
+  policy_arn = aws_iam_policy.admin_db_iam_auth.arn
 }
 
 resource "aws_iam_role_policy_attachment" "app_db_iam_auth" {
@@ -91,9 +122,12 @@ resource "aws_iam_role_policy" "bastion_db_iam_auth" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = "rds-db:connect"
-      Resource = "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_app_iam"
+      Effect = "Allow"
+      Action = "rds-db:connect"
+      Resource = [
+        "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_web_iam",
+        "arn:aws:rds-db:${var.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.rds.db_instance_resource_id}/gochuchamchi_admin_iam"
+      ]
     }]
   })
 }
@@ -105,7 +139,8 @@ resource "null_resource" "provision_app_db_iam_user" {
     # 계정은 K8s 리소스가 아니지만, 네임스페이스 재생성 = 전체 재구축 신호라 함께 재실행
     namespace_uid = kubernetes_namespace_v1.gochuchamchi.metadata[0].uid
     # 아래 스크립트를 고치면 이 값을 올려서 재실행
-    script_version = "v1"
+    script_version = "v2-web-admin-split"
+    retire_legacy  = tostring(var.retire_legacy_app_db_user)
   }
 
   depends_on = [
@@ -127,13 +162,17 @@ resource "null_resource" "provision_app_db_iam_user" {
         'DB_PASS=$(echo "$SECRET_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)[''password''])")',
         # AWSAuthenticationPlugin = 비밀번호가 아니라 IAM 토큰으로만 인증. 저장되는
         # 비밀값이 없으니 재실행해도 로테이션 개념 자체가 없다(완전 멱등).
-        # 권한은 gochuchamchi_app 과 동일하게 gochuchamchi.* DML 만 — DDL/DCL 불가.
-        'printf "CREATE USER IF NOT EXISTS ''gochuchamchi_app_iam''@''%%'' IDENTIFIED WITH AWSAuthenticationPlugin AS ''RDS'' REQUIRE SSL;\nGRANT SELECT, INSERT, UPDATE, DELETE ON gochuchamchi.* TO ''gochuchamchi_app_iam''@''%%'';\nFLUSH PRIVILEGES;\n" > /home/ec2-user/app-iam-user.sql',
+        # Web은 관리자 행을 포함한 users 원본 테이블을 직접 볼 수 없다. SQL SECURITY
+        # DEFINER + CHECK OPTION 뷰를 통해 user/seller 행만 노출하고 컬럼 권한도 축소한다.
+        'printf "CREATE OR REPLACE SQL SECURITY DEFINER VIEW gochuchamchi.web_users AS SELECT * FROM gochuchamchi.users WHERE role IN (''user'',''seller'') WITH CASCADED CHECK OPTION;\nCREATE USER IF NOT EXISTS ''gochuchamchi_web_iam''@''%%'' IDENTIFIED WITH AWSAuthenticationPlugin AS ''RDS'' REQUIRE SSL;\nCREATE USER IF NOT EXISTS ''gochuchamchi_admin_iam''@''%%'' IDENTIFIED WITH AWSAuthenticationPlugin AS ''RDS'' REQUIRE SSL;\nREVOKE ALL PRIVILEGES, GRANT OPTION FROM ''gochuchamchi_web_iam''@''%%'';\nREVOKE ALL PRIVILEGES, GRANT OPTION FROM ''gochuchamchi_admin_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.web_users TO ''gochuchamchi_web_iam''@''%%'';\nGRANT INSERT (username,name,email,password,phone,birthdate,gender,nationality,address,role,created_at) ON gochuchamchi.web_users TO ''gochuchamchi_web_iam''@''%%'';\nGRANT UPDATE (name,email,password,phone,birthdate,gender,nationality,address) ON gochuchamchi.web_users TO ''gochuchamchi_web_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.products TO ''gochuchamchi_web_iam''@''%%'';\nGRANT INSERT (seller_id,brand,name,category,price,stock,image,description,new_item,created_at) ON gochuchamchi.products TO ''gochuchamchi_web_iam''@''%%'';\nGRANT UPDATE (view_count) ON gochuchamchi.products TO ''gochuchamchi_web_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.product_sizes TO ''gochuchamchi_web_iam''@''%%'';\nGRANT INSERT (product_id,size_name,stock,sort_order,sold_out) ON gochuchamchi.product_sizes TO ''gochuchamchi_web_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.notices TO ''gochuchamchi_web_iam''@''%%'';\nGRANT UPDATE (views) ON gochuchamchi.notices TO ''gochuchamchi_web_iam''@''%%'';\nGRANT INSERT ON gochuchamchi.audit_logs TO ''gochuchamchi_web_iam''@''%%'';\nGRANT INSERT ON gochuchamchi.user_behavior_logs TO ''gochuchamchi_web_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.users TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT UPDATE (role,suspended_until,suspended_permanent,suspended_at,suspended_by) ON gochuchamchi.users TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT SELECT, INSERT, UPDATE, DELETE ON gochuchamchi.notices TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.products TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT UPDATE (active) ON gochuchamchi.products TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT SELECT ON gochuchamchi.product_sizes TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT INSERT ON gochuchamchi.audit_logs TO ''gochuchamchi_admin_iam''@''%%'';\n${local.legacy_app_db_cleanup_sql}FLUSH PRIVILEGES;\n" > /home/ec2-user/app-iam-user.sql',
+        'printf "GRANT INSERT (seller_id,brand,name,category,price,stock,image,description,new_item,created_at) ON gochuchamchi.products TO ''gochuchamchi_admin_iam''@''%%'';\nGRANT INSERT (product_id,size_name,stock,sort_order,sold_out) ON gochuchamchi.product_sizes TO ''gochuchamchi_admin_iam''@''%%'';\n" >> /home/ec2-user/app-iam-user.sql',
         'MYSQL_PWD="$DB_PASS" mysql --ssl -h ${data.aws_db_instance.this.address} -u admin < /home/ec2-user/app-iam-user.sql',
         # 검증: 실제로 토큰을 발급받아 붙는지 + 권한이 DML 뿐인지 + TLS 로 붙었는지.
         # 토큰도 비밀값이므로 env 로만 넘긴다(argv 는 ps 에 노출된다).
-        'TOKEN=$(aws rds generate-db-auth-token --hostname ${data.aws_db_instance.this.address} --port 3306 --username gochuchamchi_app_iam --region ${var.region})',
-        'MYSQL_PWD="$TOKEN" mysql --ssl -h ${data.aws_db_instance.this.address} -u gochuchamchi_app_iam -e "SELECT CURRENT_USER() AS whoami; SHOW GRANTS FOR CURRENT_USER; SHOW STATUS LIKE ''Ssl_cipher'';"',
+        'TOKEN=$(aws rds generate-db-auth-token --hostname ${data.aws_db_instance.this.address} --port 3306 --username gochuchamchi_web_iam --region ${var.region})',
+        'MYSQL_PWD="$TOKEN" mysql --ssl -h ${data.aws_db_instance.this.address} -u gochuchamchi_web_iam -e "SELECT CURRENT_USER() AS whoami; SHOW GRANTS FOR CURRENT_USER; SELECT COUNT(*) AS visible_admins FROM gochuchamchi.web_users WHERE role IN (''admin'',''superadmin''); SHOW STATUS LIKE ''Ssl_cipher'';"',
+        'TOKEN=$(aws rds generate-db-auth-token --hostname ${data.aws_db_instance.this.address} --port 3306 --username gochuchamchi_admin_iam --region ${var.region})',
+        'MYSQL_PWD="$TOKEN" mysql --ssl -h ${data.aws_db_instance.this.address} -u gochuchamchi_admin_iam -e "SELECT CURRENT_USER() AS whoami; SHOW GRANTS FOR CURRENT_USER; SHOW STATUS LIKE ''Ssl_cipher'';"',
         'rm -f /home/ec2-user/app-iam-user.sql',
         'echo "IAM DB USER PROVISIONED"'
       )

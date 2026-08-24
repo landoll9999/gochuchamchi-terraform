@@ -306,7 +306,13 @@ def post(embed):
     request = urllib.request.Request(
         webhook_url(),
         data=json.dumps({"embeds": [embed]}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # Python urllib's default signature is rejected by Discord's
+            # Cloudflare edge with error 1010.  The existing CloudWatch
+            # notification Lambda also sends an explicit application UA.
+            "User-Agent": "gochuchamchi-siem-discord-lambda",
+        },
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=10) as response:

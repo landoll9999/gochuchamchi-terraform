@@ -59,3 +59,14 @@ variable "rds_identifier" {
   description = "CloudWatch Logs에서 조회할 RDS DB 인스턴스 식별자"
   type        = string
 }
+
+variable "athena_reader_role_arn" {
+  description = <<-EOT
+    Log 계정의 Grafana 조회 전용 역할 ARN.
+    log-archive 스택의 output grafana_reader_role_arn 값을 넣는다.
+    비워 두면 Athena 데이터소스가 등록되지 않고 CloudWatch만 동작한다 —
+    log-archive apply 전에도 이 모듈이 깨지지 않게 하기 위한 기본값이다.
+  EOT
+  type        = string
+  default     = ""
+}

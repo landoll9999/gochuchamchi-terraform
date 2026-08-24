@@ -110,9 +110,16 @@ resource "kubernetes_namespace_v1" "gochuchamchi" {
 resource "kubernetes_service_account_v1" "gochuchamchi_app" {
   metadata {
     # eks-pod-identity.tf의 aws_eks_pod_identity_association이
-    # namespace=gochuchamchi, service_account=gochuchamchi-app 으로 지정한 것과
+    # namespace=gochuchamchi, service_account=gochuchamchi-web 으로 지정한 것과
     # 이름이 정확히 일치해야 IAM 권한이 이 Pod에 자동으로 붙는다.
-    name      = "gochuchamchi-app"
+    name      = "gochuchamchi-web"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+}
+
+resource "kubernetes_service_account_v1" "gochuchamchi_admin" {
+  metadata {
+    name      = "gochuchamchi-admin"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
   }
 }
@@ -124,7 +131,7 @@ resource "kubernetes_service_account_v1" "gochuchamchi_app" {
 # ---------------------------------------------------------------------------
 resource "kubernetes_config_map_v1" "gochuchamchi_config" {
   metadata {
-    name      = "gochuchamchi-config"
+    name      = "gochuchamchi-web-config"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
   }
 
@@ -134,9 +141,9 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
     # (2026-08-04 제로트러스트) 마스터(admin) -> 앱 전용 최소권한 계정.
     # (2026-08-12) 고정 비밀번호 계정 -> IAM 토큰 계정. 이 계정은 AWSAuthenticationPlugin 으로
     # 만들어져서 비밀번호가 아예 없다. 접속마다 15분짜리 토큰을 새로 받아야 하고,
-    # 토큰을 받을 수 있는 것은 rds-db:connect 가 붙은 파드 역할(gochuchamchi-app-role)뿐이다.
+    # 토큰을 받을 수 있는 것은 rds-db:connect 가 붙은 Web 파드 역할뿐이다.
     # 정책 Resource 에 유저명이 박혀 있어(db-zero-trust.tf) 이 이름을 바꾸면 즉시 권한이 끊긴다.
-    DB_USER = "gochuchamchi_app_iam"
+    DB_USER = "gochuchamchi_web_iam"
 
     # (2026-08-04 제로트러스트) JDBC TLS — 환경변수 SPRING_DATASOURCE_URL은 이미지 안
     # application.yml의 spring.datasource.url보다 우선 적용됨(Spring 프로퍼티 우선순위)
@@ -171,12 +178,41 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
     SPRING_DATA_REDIS_HOST = aws_elasticache_replication_group.this.primary_endpoint_address
     SPRING_DATA_REDIS_PORT = "6379"
     # ElastiCache 전송 암호화와 세트 — lettuce가 rediss(TLS)로 접속 (Boot 3.1+ 프로퍼티)
-    SPRING_DATA_REDIS_SSL_ENABLED = "true"
+    SPRING_DATA_REDIS_SSL_ENABLED  = "true"
+    SPRING_PROFILES_ACTIVE         = "web"
+    SPRING_SESSION_REDIS_NAMESPACE = "gochuchamchi:web-session"
+    SESSION_COOKIE_NAME            = "WEBSESSION"
+    SESSION_COOKIE_SECURE          = "true"
+    SESSION_COOKIE_SAME_SITE       = "lax"
+  }
+}
 
-    # (2026-08-03 full-HA에서 복원) 기동 시 이 아이디를 superadmin으로 승격
-    # (SuperAdminBootstrap). 이 환경변수가 app.superadmin.username 프로퍼티를
-    # 직접 덮으므로 설정 파일과 무관하게 동작한다.
-    APP_SUPERADMIN_USERNAME = var.superadmin_username
+resource "kubernetes_config_map_v1" "gochuchamchi_admin_config" {
+  metadata {
+    name      = "gochuchamchi-admin-config"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+
+  data = {
+    DB_HOST                                    = data.aws_db_instance.this.address
+    DB_PORT                                    = "3306"
+    DB_USER                                    = "gochuchamchi_admin_iam"
+    SPRING_DATASOURCE_URL                      = "jdbc:mariadb://${data.aws_db_instance.this.address}:3306/gochuchamchi?credentialType=AWS-IAM&region=${var.region}&sslMode=verify-full&serverSslCert=/app/rds-ca.pem"
+    SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE = "3"
+    SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE      = "1"
+    CLOUD_AWS_REGION_STATIC                    = var.region
+    CLOUD_AWS_S3_BUCKET                        = aws_s3_bucket.images.bucket
+    CLOUD_AWS_S3_PUBLIC_BASE_URL               = "https://${aws_cloudfront_distribution.images.domain_name}"
+    SPRING_SESSION_STORE_TYPE                  = "redis"
+    SPRING_DATA_REDIS_HOST                     = aws_elasticache_replication_group.admin.primary_endpoint_address
+    SPRING_DATA_REDIS_PORT                     = "6379"
+    SPRING_DATA_REDIS_SSL_ENABLED              = "true"
+    SPRING_PROFILES_ACTIVE                     = "admin"
+    SPRING_SESSION_REDIS_NAMESPACE             = "gochuchamchi:admin-session"
+    SESSION_COOKIE_NAME                        = "ADMINSESSION"
+    SESSION_COOKIE_SECURE                      = "true"
+    SESSION_COOKIE_SAME_SITE                   = "strict"
+    APP_SUPERADMIN_USERNAME                    = var.superadmin_username
   }
 }
 
@@ -204,12 +240,23 @@ resource "kubernetes_config_map_v1" "gochuchamchi_config" {
 # 키 이름을 Spring 환경변수명 그대로 두면 gitops에서 envFrom secretRef 한 줄로 끝남.
 resource "kubernetes_secret_v1" "gochuchamchi_redis_secret" {
   metadata {
-    name      = "gochuchamchi-redis-secret"
+    name      = "gochuchamchi-web-redis-secret"
     namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
   }
 
   data = {
     SPRING_DATA_REDIS_PASSWORD = random_password.redis_auth.result
+  }
+}
+
+resource "kubernetes_secret_v1" "gochuchamchi_admin_redis_secret" {
+  metadata {
+    name      = "gochuchamchi-admin-redis-secret"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+  }
+
+  data = {
+    SPRING_DATA_REDIS_PASSWORD = random_password.admin_redis_auth.result
   }
 }
 
@@ -309,6 +356,53 @@ resource "kubernetes_ingress_v1" "gochuchamchi_web" {
               port {
                 number = 80
               }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.aws_load_balancer_controller]
+}
+
+# Admin은 CloudFront/WAF의 공개 웹 경로와 분리한다. 동일 ALB를 사용해 비용을 늘리지
+# 않되, Host와 source-ip 조건을 동시에 만족한 요청만 admin Service로 전달한다.
+resource "kubernetes_ingress_v1" "gochuchamchi_admin" {
+  metadata {
+    name      = "gochuchamchi-admin-ingress"
+    namespace = kubernetes_namespace_v1.gochuchamchi.metadata[0].name
+    annotations = merge({
+      "kubernetes.io/ingress.class"               = "alb"
+      "alb.ingress.kubernetes.io/scheme"          = "internet-facing"
+      "alb.ingress.kubernetes.io/target-type"     = "ip"
+      "alb.ingress.kubernetes.io/listen-ports"    = "[{\"HTTP\": 80}, {\"HTTPS\": 443}]"
+      "alb.ingress.kubernetes.io/ssl-redirect"    = "443"
+      "alb.ingress.kubernetes.io/certificate-arn" = aws_acm_certificate_validation.this.certificate_arn
+      "alb.ingress.kubernetes.io/ssl-policy"      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+      "alb.ingress.kubernetes.io/group.name"      = "gochuchamchi-web"
+      "alb.ingress.kubernetes.io/group.order"     = "5"
+      "alb.ingress.kubernetes.io/conditions.gochuchamchi-admin-svc" = jsonencode([{
+        field          = "source-ip"
+        sourceIpConfig = { values = var.admin_allowed_cidrs }
+      }])
+      }, var.enable_edge ? {
+      "alb.ingress.kubernetes.io/security-groups"                     = aws_security_group.alb_edge[0].id
+      "alb.ingress.kubernetes.io/manage-backend-security-group-rules" = "true"
+    } : {})
+  }
+
+  spec {
+    rule {
+      host = "admin.${var.domain_name}"
+      http {
+        path {
+          path      = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = "gochuchamchi-admin-svc"
+              port { number = 80 }
             }
           }
         }

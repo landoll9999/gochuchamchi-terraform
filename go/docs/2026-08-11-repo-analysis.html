@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gochuchamchi-terraform 저장소 점검 — 2026-08-11</title>
+<style>
+  :root {
+    --ground: #f4f6f8;
+    --surface: #ffffff;
+    --sunk: #eaeef3;
+    --ink: #171e2b;
+    --ink-2: #4d5a6e;
+    --ink-3: #7c8798;
+    --line: #dce1e9;
+    --line-2: #c2cbd8;
+    --accent: #1f4f9e;
+    --accent-soft: #e7eefa;
+    --crit: #a83028;
+    --crit-soft: #fbeae8;
+    --warn: #8a5206;
+    --warn-soft: #fbf1df;
+    --ok: #15653f;
+    --ok-soft: #e4f2ea;
+    --shadow: 0 1px 2px rgba(23, 30, 43, .06), 0 6px 16px -10px rgba(23, 30, 43, .18);
+
+    --sans: 'Pretendard', 'Malgun Gothic', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'Cascadia Mono', Consolas, 'D2Coding', ui-monospace, 'Courier New', monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #10141b;
+      --surface: #171d26;
+      --sunk: #1e252f;
+      --ink: #dfe5ee;
+      --ink-2: #9aa5b6;
+      --ink-3: #6d7889;
+      --line: #2a323f;
+      --line-2: #3b4553;
+      --accent: #7fa9e8;
+      --accent-soft: #1a2536;
+      --crit: #ef8b81;
+      --crit-soft: #2d1a18;
+      --warn: #ddaa57;
+      --warn-soft: #2a2215;
+      --ok: #5fc192;
+      --ok-soft: #13271e;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 16px -10px rgba(0, 0, 0, .7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #10141b;
+    --surface: #171d26;
+    --sunk: #1e252f;
+    --ink: #dfe5ee;
+    --ink-2: #9aa5b6;
+    --ink-3: #6d7889;
+    --line: #2a323f;
+    --line-2: #3b4553;
+    --accent: #7fa9e8;
+    --accent-soft: #1a2536;
+    --crit: #ef8b81;
+    --crit-soft: #2d1a18;
+    --warn: #ddaa57;
+    --warn-soft: #2a2215;
+    --ok: #5fc192;
+    --ok-soft: #13271e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 16px -10px rgba(0, 0, 0, .7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 56px 24px 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 52px;
+  }
+
+  code, .mono { font-family: var(--mono); font-variant-ligatures: none; }
+
+  /* ---------- header ---------- */
+
+  .masthead { display: flex; flex-direction: column; gap: 14px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  .masthead h1 {
+    margin: 0;
+    font-size: clamp(28px, 5vw, 40px);
+    line-height: 1.2;
+    letter-spacing: -.022em;
+    font-weight: 750;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    margin: 0;
+    max-width: 60ch;
+    font-size: 17px;
+    color: var(--ink-2);
+  }
+
+  .runline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .runline b { color: var(--ink-2); font-weight: 600; }
+
+  /* ---------- section scaffolding ---------- */
+
+  section { display: flex; flex-direction: column; gap: 18px; }
+
+  h2 {
+    margin: 0;
+    font-size: 21px;
+    letter-spacing: -.015em;
+    font-weight: 700;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  h2::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+
+  h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -.01em;
+  }
+
+  p { margin: 0; max-width: 68ch; }
+
+  .lede { color: var(--ink-2); }
+
+  /* ---------- scoreboard ---------- */
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  .tally {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--sev, var(--line-2));
+    border-radius: 3px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    box-shadow: var(--shadow);
+  }
+  .tally .n {
+    font-family: var(--mono);
+    font-size: 34px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    color: var(--sev, var(--ink));
+    font-weight: 600;
+  }
+  .tally .lbl { font-size: 14px; font-weight: 650; }
+  .tally .sub { font-size: 13px; color: var(--ink-3); line-height: 1.5; }
+
+  .sev-crit { --sev: var(--crit); }
+  .sev-warn { --sev: var(--warn); }
+  .sev-info { --sev: var(--accent); }
+  .sev-ok   { --sev: var(--ok); }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    background: var(--tone-soft, var(--accent-soft));
+    border-left: 3px solid var(--tone, var(--accent));
+    border-radius: 0 3px 3px 0;
+    padding: 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .callout .tag {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--tone, var(--accent));
+    font-weight: 700;
+  }
+  .callout p { font-size: 15px; max-width: none; }
+  .callout.is-crit { --tone: var(--crit); --tone-soft: var(--crit-soft); }
+  .callout.is-warn { --tone: var(--warn); --tone-soft: var(--warn-soft); }
+  .callout.is-ok   { --tone: var(--ok);   --tone-soft: var(--ok-soft); }
+
+  /* ---------- account topology ---------- */
+
+  .topology {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+  }
+
+  .acct {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: var(--shadow);
+  }
+  .acct header { display: flex; flex-direction: column; gap: 1px; }
+  .acct .role { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+  .acct .id {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+  .acct li {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-2);
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+  .acct li::before {
+    content: "";
+    flex: none;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--line-2);
+    transform: translateY(-2px);
+  }
+  .acct li.daily::before { background: var(--accent); }
+  .acct li.gap::before { background: var(--warn); }
+  .acct li.gap { color: var(--warn); }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .legend span { display: flex; align-items: center; gap: 7px; }
+  .legend i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--dot, var(--line-2));
+    flex: none;
+  }
+
+  /* ---------- findings ledger ---------- */
+
+  .ledger { display: flex; flex-direction: column; gap: 14px; }
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--sev, var(--line-2));
+    border-radius: 0 3px 3px 0;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: var(--shadow);
+  }
+
+  .finding > header { display: flex; flex-direction: column; gap: 6px; }
+
+  .chiprow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 2px;
+    background: var(--sev-soft, var(--sunk));
+    color: var(--sev, var(--ink-2));
+    white-space: nowrap;
+  }
+
+  .anchor {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-3);
+    word-break: break-all;
+  }
+
+  .finding.is-crit { --sev: var(--crit); --sev-soft: var(--crit-soft); }
+  .finding.is-warn { --sev: var(--warn); --sev-soft: var(--warn-soft); }
+  .finding.is-info { --sev: var(--accent); --sev-soft: var(--accent-soft); }
+
+  /* 해결된 항목: 심각도 스트라이프를 초록으로 덮되 본문은 기록으로 남긴다 */
+  .finding.done { --sev: var(--ok); --sev-soft: var(--ok-soft); }
+  .finding.done h3 { color: var(--ink-2); }
+  .chip.fixed { background: var(--ok-soft); color: var(--ok); }
+
+  .why {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+    font-size: 14.5px;
+    align-items: baseline;
+  }
+  .why dt {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 3px;
+  }
+  .why dd { margin: 0; color: var(--ink-2); }
+  .why dd strong { color: var(--ink); font-weight: 650; }
+
+  @media (max-width: 560px) {
+    .why { grid-template-columns: 1fr; gap: 2px 0; }
+    .why dd { margin-bottom: 8px; }
+  }
+
+  /* ---------- tables ---------- */
+
+  .scroller { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  caption {
+    caption-side: top;
+    text-align: left;
+    font-size: 13px;
+    color: var(--ink-3);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    background: var(--sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.m { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .yes { color: var(--ok); font-weight: 650; }
+  td .no  { color: var(--crit); font-weight: 650; }
+  td .na  { color: var(--warn); font-weight: 650; }
+
+  /* ---------- code ---------- */
+
+  pre {
+    margin: 0;
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+  pre .del { color: var(--crit); }
+  pre .add { color: var(--ok); }
+  pre .cmt { color: var(--ink-3); }
+
+  p code, li code, dd code, td code {
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 0 5px;
+    font-size: .88em;
+  }
+
+  /* ---------- ordered fix list ---------- */
+
+  .steps { display: flex; flex-direction: column; gap: 0; counter-reset: step; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 0 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: baseline;
+  }
+  .step:last-child { border-bottom: none; }
+  .step::before {
+    counter-increment: step;
+    content: counter(step, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--step-tone, var(--ink-3));
+    font-variant-numeric: tabular-nums;
+  }
+  .step.now::before { --step-tone: var(--crit); }
+  .step.soon::before { --step-tone: var(--warn); }
+  /* 완료된 단계는 번호 대신 체크로 바꿔, 남은 순번이 흐트러지지 않게 한다 */
+  .step.ok::before { content: "✓"; --step-tone: var(--ok); font-size: 15px; }
+  .step.ok .what { color: var(--ink-2); }
+  .step .what { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+  .step .note { font-size: 14px; color: var(--ink-2); }
+  .step > div { display: flex; flex-direction: column; gap: 2px; }
+
+  ul.plain { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 7px; }
+  ul.plain li { color: var(--ink-2); font-size: 15px; }
+  ul.plain li strong { color: var(--ink); font-weight: 650; }
+
+  footer.closing {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    font-size: 13.5px;
+    color: var(--ink-3);
+    max-width: 68ch;
+  }
+
+  a { color: var(--accent); }
+  a:focus-visible, :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Repository Review</p>
+    <h1>gochuchamchi-terraform 저장소 점검</h1>
+    <p class="standfirst">3계정 분리 구조는 잘 잡혀 있습니다. 문제는 <strong>커밋되지 않은 작업 트리</strong>에 몰려 있었고, 그중 넷은 AWS에 잘못된 정보를 올리거나 비밀키를 커밋할 수 있는 상태였습니다 — <strong>네 건 모두 조치 완료.</strong></p>
+    <div class="runline">
+      <span><b>점검일</b> 2026-08-11</span>
+      <span><b>브랜치</b> main <span style="color:var(--ink-3)">(5140eab)</span></span>
+      <span><b>범위</b> Terraform 루트 8개 · 계정 3개</span>
+      <span><b>조치</b> 4건 완료 · 5건 대기</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>한눈에 보기</h2>
+    <div class="board">
+      <div class="tally sev-ok">
+        <span class="n">4</span>
+        <span class="lbl">즉시 조치 — 완료</span>
+        <span class="sub">권한 설명 · <code>.gitignore</code> · CI 워크플로 복원 + BOM 제거 후 fmt 통과</span>
+      </div>
+      <div class="tally sev-warn">
+        <span class="n">3</span>
+        <span class="lbl">정리 필요</span>
+        <span class="sub">지금 당장 사고는 아니지만 재현성과 위생 문제</span>
+      </div>
+      <div class="tally sev-info">
+        <span class="n">3</span>
+        <span class="lbl">구조적 격차</span>
+        <span class="sub">3계정 구조를 완성하려면 남은 작업</span>
+      </div>
+      <div class="tally sev-ok">
+        <span class="n">1</span>
+        <span class="lbl">CI 워크플로</span>
+        <span class="sub">사라졌던 <code>account-baseline</code> 검사 복원 — 이제 <code>fmt</code>·<code>plan</code>이 다시 돕니다</span>
+      </div>
+    </div>
+
+    <div class="callout is-ok">
+      <span class="tag">핵심 한 줄</span>
+      <p>CI가 사라진 상태에서 PowerShell로 파일을 편집했고, 그 결과 <strong>서식 오류 3건과 잘못된 설명 2건이 아무 검사에도 걸리지 않은 채 남아 있었습니다.</strong> 개별 문제를 고치는 것보다 CI를 되살리는 게 중요했고, <strong>넷 다 처리했습니다.</strong> 남은 것은 사고가 아니라 위생·구조 문제입니다.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>지금 저장소가 어떤 모양인가</h2>
+    <p class="lede">Terraform 루트 8개가 계정 3개로 나뉘어 있습니다. 모든 루트에 <strong>계정 가드</strong>가 들어 있어서, 다른 계정 프로파일로 <code>apply</code>하면 중단됩니다. 잘 만들어진 부분입니다.</p>
+
+    <div class="topology">
+      <div class="acct">
+        <header>
+          <span class="role">Management</span>
+          <span class="id">307223751140</span>
+        </header>
+        <ul>
+          <li>management/organization</li>
+          <li>management/audit</li>
+        </ul>
+      </div>
+      <div class="acct">
+        <header>
+          <span class="role">Security · Log</span>
+          <span class="id">564186750363</span>
+        </header>
+        <ul>
+          <li>log-archive</li>
+          <li class="gap">계정 baseline 없음</li>
+        </ul>
+      </div>
+      <div class="acct">
+        <header>
+          <span class="role">Workload</span>
+          <span class="id">828885965304</span>
+        </header>
+        <ul>
+          <li>persistent</li>
+          <li>account-baseline</li>
+          <li>cloudwatch-notifications</li>
+          <li class="daily">terraform</li>
+          <li class="daily">discord-notifications</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><i style="--dot: var(--accent)"></i> 매일 생성·삭제하는 루트</span>
+      <span><i></i> 상시 유지</span>
+      <span><i style="--dot: var(--warn)"></i> 비어 있는 자리</span>
+    </div>
+
+    <div class="callout is-ok">
+      <span class="tag">잘 돼 있는 것</span>
+      <p>모든 루트가 <code>use_lockfile = true</code>(Terraform 1.10 네이티브 잠금)를 쓰고 있어 DynamoDB 테이블이 필요 없습니다. 계정 가드 패턴도 8개 루트 전체에 일관되게 적용돼 있어, 프로파일을 헷갈려서 남의 계정에 apply하는 사고는 구조적으로 막혀 있습니다.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>즉시 조치</h2>
+    <p class="lede">아직 커밋되지 않은 변경사항입니다. 지금 고치면 이력에 남지 않습니다.</p>
+
+    <div class="ledger">
+
+      <article class="finding done">
+        <header>
+          <div class="chiprow">
+            <span class="chip fixed">조치 완료</span>
+            <span class="anchor">management/organization/identity-center.tf:15, 32</span>
+          </div>
+          <h3>관리자 권한 세트가 "읽기 전용"이라고 설명돼 있습니다</h3>
+        </header>
+
+        <p>세 개의 Permission Set 설명이 전부 같은 문장으로 덮어써졌습니다. 그런데 실제로 붙는 정책은 서로 다릅니다.</p>
+
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Permission Set</th><th>실제 붙는 정책</th><th>현재 설명</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="m">WorkloadAdministrator</td><td class="m">AdministratorAccess</td><td><span class="no">✗</span> "read only access"</td></tr>
+              <tr><td class="m">SecurityLogAdministrator</td><td class="m">AdministratorAccess</td><td><span class="no">✗</span> "read only access"</td></tr>
+              <tr><td class="m">OrganizationReadOnly</td><td class="m">ReadOnlyAccess</td><td><span class="yes">✓</span> 맞음</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd><strong>전권 관리자 권한이 콘솔과 감사 로그에 "읽기 전용"으로 표시됩니다.</strong> 나중에 권한을 검토할 때 이 설명만 보고 안전한 권한이라고 판단할 여지가 생깁니다.</dd>
+          <dt>조치 완료</dt>
+          <dd>원래 한국어 설명으로 복원 — <code>"Workload 계정 전용 관리자"</code> / <code>"Security/Log 계정 전용 관리자"</code> / <code>"조직 전체 조회 전용"</code>. <strong>이 파일은 이제 커밋 상태와 완전히 동일합니다</strong>(diff 없음).</dd>
+        </dl>
+      </article>
+
+      <article class="finding done">
+        <header>
+          <div class="chiprow">
+            <span class="chip fixed">조치 완료</span>
+            <span class="anchor">저장소 루트 / .gitignore</span>
+          </div>
+          <h3><code>*.pem</code>이 더 이상 무시되지 않습니다</h3>
+        </header>
+
+        <p><code>go/.gitignore</code>가 남아 있긴 하지만, gitignore는 <strong>자기가 놓인 폴더 아래에만 적용됩니다.</strong> 즉 <code>go/</code> 밖은 이제 무방비입니다.</p>
+
+        <pre><span class="cmt"># 삭제된 루트 .gitignore가 막고 있던 것</span>
+<span class="del">.terraform/</span>
+<span class="del">*.tfstate</span>
+<span class="del">*.pem</span>        <span class="cmt">← SSH 키 (gochuchamchi-key-v2.pem)</span>
+<span class="del">tfplan*</span></pre>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd>저장소 최상위에서 <code>terraform plan</code>을 한 번 돌리거나 키 파일을 잠깐 복사해두면, <code>git add .</code> 시 <strong>tfstate나 개인키가 그대로 커밋됩니다.</strong> 커밋 후에는 되돌려도 이력에 남습니다.</dd>
+          <dt>조치 완료</dt>
+          <dd><code>git checkout -- .gitignore</code> 로 복원</dd>
+          <dt>덤으로 발견</dt>
+          <dd>복원된 파일에 <strong>오타가 하나 있습니다</strong> — <code>.tfstate.</code> 는 아무것도 매칭하지 않습니다. <code>go/.gitignore</code> 쪽은 <code>*.tfstate.*</code> 로 제대로 돼 있어서, 원래 의도는 <code>terraform.tfstate.backup</code> 같은 파일을 막는 것이었습니다. 별건이라 손대지 않았습니다.</dd>
+        </dl>
+      </article>
+
+      <article class="finding done">
+        <header>
+          <div class="chiprow">
+            <span class="chip fixed">조치 완료</span>
+            <span class="anchor">.github/workflows/terraform-account-baseline.yml</span>
+          </div>
+          <h3>자동 검사가 하나도 남지 않았습니다</h3>
+        </header>
+
+        <p>사라진 <code>terraform-account-baseline.yml</code>은 <code>apply</code> 없이 <strong><code>fmt</code> 검사와 <code>plan</code>만 돌리는</strong> 워크플로였습니다. 왜 apply를 넣지 않았는지 주석으로 근거까지 적혀 있던 파일입니다.</p>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd>이 리뷰에서 나온 <strong>서식 오류 3건이 아무에게도 안 걸린 이유가 바로 이것입니다.</strong> 사람이 매번 <code>terraform fmt</code>를 기억해서 돌려야 하는 상태로 돌아갔습니다.</dd>
+          <dt>확인한 사실</dt>
+          <dd>처음엔 의도적 삭제(<code>git rm</code>)로 보였지만, <code>git status --porcelain</code>으로 확인하니 <strong><code>D</code>가 두 번째 칸에 있는 unstaged 삭제였습니다</strong> — 인덱스에는 파일이 그대로 있고 디스크에서만 사라진 상태. <code>git rm</code>했다면 첫 칸에 <code>D</code>가 찍힙니다. 즉 <strong>의도적 제거가 아니라 실수로 지워진 것</strong>입니다.</dd>
+          <dt>조치 완료</dt>
+          <dd><code>git checkout -- .github/workflows/terraform-account-baseline.yml</code> 로 복원. 되돌리려면 같은 경로를 다시 지우면 됩니다.</dd>
+        </dl>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>정리 필요</h2>
+
+    <div class="ledger">
+
+      <article class="finding done">
+        <header>
+          <div class="chiprow">
+            <span class="chip fixed">조치 완료</span>
+            <span class="anchor">파일 3개</span>
+          </div>
+          <h3>보이지 않는 문자(BOM)가 들어가 서식 검사가 깨졌습니다</h3>
+        </header>
+
+        <p>PowerShell 5.1이 파일을 저장하면서 맨 앞에 <code>U+FEFF</code>를 붙였습니다. 화면에는 아무것도 안 보이지만 <code>git diff</code>에는 줄이 통째로 바뀐 것으로 나옵니다.</p>
+
+        <pre><span class="del">- # IAM Identity Center 인스턴스 자체는…</span>
+<span class="add">+ ﻿# IAM Identity Center 인스턴스 자체는…</span>
+    <span class="cmt">↑ 눈에 안 보이는 BOM 한 글자</span>
+
+<span class="cmt">$ terraform fmt -check -recursive  → 실패</span>
+management/audit/terraform.tfvars
+management/organization/identity-center.tf
+management/organization/terraform.tfvars</pre>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd>diff가 "한 줄만 고쳤는데 파일 전체가 바뀐 것처럼" 보여 리뷰가 어려워집니다. CI를 되살리면 이 상태로는 바로 빨간불입니다. <strong>이 저장소는 8/5에 같은 PowerShell 인코딩 문제를 이미 한 번 겪었습니다.</strong></dd>
+          <dt>조치 완료</dt>
+          <dd><code>UTF8Encoding($false)</code>로 BOM 제거 → <strong>저장소 전체 <code>terraform fmt -check -recursive</code> 통과(exit 0).</strong> 작업 중 <code>terraform.tfvars</code>의 <code>=</code> 정렬 오차와 줄 끝 개행 누락도 함께 잡혔습니다.</dd>
+          <dt>손대지 않은 것</dt>
+          <dd><code>bootstrap-state.ps1</code>의 BOM은 <strong>일부러 남겼습니다.</strong> PowerShell 5.1은 BOM 없는 UTF-8을 CP949로 읽어 한글을 깨뜨립니다 — 이 파일에는 한글 에러 메시지가 들어 있어서, <code>.tf</code>와 달리 BOM이 있는 쪽이 맞습니다. (8/5 기록의 그 함정입니다)</dd>
+        </dl>
+      </article>
+
+      <article class="finding is-warn">
+        <header>
+          <div class="chiprow">
+            <span class="chip">스크립트 위생</span>
+            <span class="anchor">scripts/bootstrap-state.ps1:56, 89</span>
+          </div>
+          <h3>임시 파일이 지워지지 않고, 안 쓰는 변수가 남았습니다</h3>
+        </header>
+
+        <ul class="plain">
+          <li><strong>임시 파일이 남습니다</strong> — <code>$env:TEMP\gcc-enc.json</code>, <code>gcc-pol.json</code>이 실행 후에도 그대로 있습니다. 게다가 파일 이름이 계정별로 구분되지 않아, <strong>세 계정을 동시에 돌리면 서로 덮어씁니다.</strong></li>
+          <li><strong>죽은 코드</strong> — 56~63행 <code>$publicAccessBlock</code>은 계산만 되고 아무데도 안 쓰입니다. 95행에서 인라인 문자열로 바꾸면서 남은 흔적입니다.</li>
+          <li><strong>사소한 오진 경로</strong> — <code>head-bucket</code>이 403(다른 계정 소유)으로 실패해도 버킷 생성을 시도해서 <code>BucketAlreadyExists</code>라는 엉뚱한 에러가 납니다.</li>
+        </ul>
+
+        <dl class="why">
+          <dt>조치</dt>
+          <dd><code>try { … } finally { Remove-Item $encFile, $polFile }</code> 로 감싸고, 파일명에 계정 ID를 붙이기. 종료 코드 보존(<code>$global:LASTEXITCODE</code>) 처리 자체는 <strong>올바르게 고쳤습니다.</strong></dd>
+        </dl>
+      </article>
+
+      <article class="finding is-warn">
+        <header>
+          <div class="chiprow">
+            <span class="chip">버전 고정 누락</span>
+            <span class="anchor">.terraform.lock.hcl</span>
+          </div>
+          <h3>프로바이더 버전 잠금이 루트마다 제각각입니다</h3>
+        </header>
+
+        <div class="scroller">
+          <table>
+            <caption>lock 파일 = "이 프로바이더 버전으로 고정" 이라는 약속</caption>
+            <thead>
+              <tr><th>루트</th><th>lock 파일</th><th>상태</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="m">management/organization</td><td class="m">있음</td><td><span class="na">미추적</span> — 커밋 필요</td></tr>
+              <tr><td class="m">management/audit</td><td class="m">있음</td><td><span class="na">미추적</span> — 커밋 필요</td></tr>
+              <tr><td class="m">cloudwatch-notifications</td><td class="m">있음</td><td><span class="yes">커밋됨</span></td></tr>
+              <tr><td class="m">persistent</td><td class="m">있음</td><td><span class="yes">커밋됨</span></td></tr>
+              <tr><td class="m">terraform</td><td class="m">있음</td><td><span class="yes">커밋됨</span></td></tr>
+              <tr><td class="m">account-baseline</td><td class="m">없음</td><td><span class="no">생성 필요</span></td></tr>
+              <tr><td class="m">log-archive</td><td class="m">없음</td><td><span class="no">생성 필요</span></td></tr>
+              <tr><td class="m">discord-notifications</td><td class="m">없음</td><td><span class="no">생성 필요</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd>lock 파일이 없으면 <code>terraform init</code>을 돌리는 시점마다 프로바이더 버전이 달라질 수 있습니다. <strong>어제는 되던 apply가 오늘 다른 결과를 내는</strong> 재현성 문제로 이어집니다.</dd>
+        </dl>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>구조적 격차</h2>
+    <p class="lede">지금 당장 깨지는 건 아니지만, 3계정 구조를 "완성"이라고 부르려면 남은 것들입니다.</p>
+
+    <div class="ledger">
+
+      <article class="finding is-info">
+        <header>
+          <div class="chiprow">
+            <span class="chip">잠금이 조용히 꺼질 수 있음</span>
+            <span class="anchor">루트 4개</span>
+          </div>
+          <h3><code>required_version</code>이 없는 루트가 절반입니다</h3>
+        </header>
+
+        <p>없는 곳: <code>account-baseline</code>, <code>cloudwatch-notifications</code>, <code>discord-notifications</code>, <code>terraform</code></p>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd>전 루트가 <code>use_lockfile = true</code>에 의존하는데, 이건 <strong>Terraform 1.10 이상 전용 기능</strong>입니다. 1.9 이하 CLI로 init하면 이 설정이 <strong>에러 없이 조용히 무시되고</strong> state 잠금이 사라집니다. 두 사람이 동시에 apply하면 state가 깨집니다.</dd>
+          <dt>조치</dt>
+          <dd>네 곳 모두에 <code>required_version = "&gt;= 1.10"</code> 추가</dd>
+        </dl>
+      </article>
+
+      <article class="finding is-info">
+        <header>
+          <div class="chiprow">
+            <span class="chip">탐지 사각지대</span>
+            <span class="anchor">account-baseline/account-guard.tf:6</span>
+          </div>
+          <h3>보안 탐지가 Workload 계정 한 곳에만 켜져 있습니다</h3>
+        </header>
+
+        <p>GuardDuty · Config · Security Hub · Inspector가 전부 <code>828885965304</code> 하나에만 적용됩니다. 계정 가드가 그 계정으로 고정돼 있기 때문입니다.</p>
+
+        <dl class="why">
+          <dt>왜 문제</dt>
+          <dd><strong>Organization 전체를 쥔 Management 계정과, 모든 로그가 모이는 Security·Log 계정에는 탐지가 없습니다.</strong> 가장 보호가 필요한 두 계정이 사각지대입니다.</dd>
+          <dt>보통의 해법</dt>
+          <dd>Log 계정을 <strong>위임 관리자(delegated administrator)</strong>로 지정하고 Organization 단위로 전 계정에 자동 적용. 현재 <code>2026-08-10-three-account-final.md</code>에 이 격차가 언급돼 있지 않아, 문서에도 남겨두는 게 좋습니다.</dd>
+        </dl>
+      </article>
+
+      <article class="finding is-info">
+        <header>
+          <div class="chiprow">
+            <span class="chip">알아둘 것</span>
+            <span class="anchor">management/organization/scp.tf</span>
+          </div>
+          <h3>SCP는 Management 계정 자신에게는 적용되지 않습니다</h3>
+        </header>
+
+        <p>세 개의 SCP가 모두 OU(Security / Workloads)에 붙어 있습니다. Management 계정은 Organization 루트에 있어서, <strong>AWS 사양상 SCP가 원천적으로 적용되지 않습니다.</strong> 코드 문제가 아니라 알고 있어야 할 제약입니다.</p>
+
+        <dl class="why">
+          <dt>의미</dt>
+          <dd>Organization Trail을 소유한 Management 계정 자체는 SCP로 못 막습니다. 결국 <strong>Identity Center 권한 설계와 MFA가 유일한 통제 수단</strong>입니다 — 첫 번째 발견 항목(권한 세트 설명 오류)이 더 중요해지는 이유입니다.</dd>
+          <dt>덧붙여</dt>
+          <dd><code>management/organization/terraform.tfvars</code>에는 <code>.example</code> 파일이 없습니다. 새 작업자가 이 루트를 재현할 수 없습니다. (<code>audit</code> 쪽에는 있습니다)</dd>
+        </dl>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>조치 순서</h2>
+    <p class="lede">앞의 것을 먼저 해야 뒤의 것이 자동으로 검증됩니다. 체크 표시된 네 건은 완료했고, 남은 번호가 다음 순서입니다.</p>
+
+    <div class="steps">
+      <div class="step ok">
+        <div>
+          <span class="what">Permission Set 설명 2건 복원</span>
+          <span class="note">유일하게 <strong>실제 AWS에 잘못된 정보가 올라가는</strong> 항목이었습니다.</span>
+        </div>
+      </div>
+      <div class="step ok">
+        <div>
+          <span class="what">루트 <code>.gitignore</code> 복원</span>
+          <span class="note">개인키 커밋 경로를 먼저 막았습니다.</span>
+        </div>
+      </div>
+      <div class="step ok">
+        <div>
+          <span class="what">BOM 제거 후 <code>terraform fmt</code></span>
+          <span class="note">저장소 전체 <code>fmt -check -recursive</code> 통과.</span>
+        </div>
+      </div>
+      <div class="step ok">
+        <div>
+          <span class="what"><code>.github/workflows</code> 복원</span>
+          <span class="note">unstaged 삭제 — 실수로 지워진 것으로 확인돼 복원했습니다. 앞으로는 CI가 잡습니다.</span>
+        </div>
+      </div>
+      <div class="step now">
+        <div>
+          <span class="what">lock 파일 정리</span>
+          <span class="note"><code>management/</code> 2개 커밋 + 나머지 3개 루트에서 <code>terraform init</code>으로 생성.</span>
+        </div>
+      </div>
+      <div class="step soon">
+        <div>
+          <span class="what"><code>required_version = "&gt;= 1.10"</code> 4개 루트 추가</span>
+          <span class="note">state 잠금이 조용히 꺼지는 경로를 닫습니다.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <span class="what"><code>bootstrap-state.ps1</code> 임시 파일 정리 + 죽은 변수 제거</span>
+          <span class="note"><code>finally</code> 블록 추가, 파일명에 계정 ID 포함.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <span class="what"><code>management/organization/terraform.tfvars.example</code> 추가</span>
+          <span class="note">새 작업자가 이 루트를 재현할 수 있게.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <span class="what">보안 탐지를 3계정 전체로 확장</span>
+          <span class="note">별도 설계가 필요한 작업 — 위임 관리자 방식 검토 후 진행.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout is-ok">
+      <span class="tag">지금 상태</span>
+      <p>완료한 네 건은 <strong>모두 커밋 전에 처리해서 이력에 흔적이 남지 않았습니다.</strong> 작업 트리에 남은 변경은 이제 <code>bootstrap-state.ps1</code>(원래 작업 중이던 개선)과 이 문서뿐입니다. 남은 다섯 건은 사고가 아니라 위생·구조 항목이라, 커밋 단위를 나눠서 진행해도 됩니다.</p>
+    </div>
+  </section>
+
+  <footer class="closing">
+    점검 범위는 저장소 파일과 git 상태입니다. 실제 AWS 리소스 상태(원격 tfstate, 배포된 SCP, 실제 Permission Set)는 조회하지 않았으므로, 코드와 실물이 어긋난 부분은 이 문서에 반영돼 있지 않습니다.
+  </footer>
+
+</div>
+</body>
+</html>

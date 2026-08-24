@@ -480,7 +480,7 @@ resource "aws_security_group" "alb_edge" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = var.endpoint_public_access_cidrs
+    cidr_blocks = distinct(concat(var.endpoint_public_access_cidrs, var.admin_allowed_cidrs))
   }
 
   egress {

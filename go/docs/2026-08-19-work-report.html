@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gochuchamchi 작업 보고서 · 2026-08-19</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f6f4; --surface:#ffffff; --surface2:#faf9f7; --bd:#e7e4df; --bd2:#efece7;
+    --tx:#1c1a17; --tx2:#57534d; --tx3:#8a857c;
+    --accent:#d1451b; --accent-soft:#fbe9e2;
+    --green:#1a7f4b; --green-soft:#e3f4ea; --amber:#a66300; --amber-soft:#fbefd8;
+    --blue:#2563a8; --blue-soft:#e6f0fa; --red:#c2361a;
+    --code-bg:#f2efea; --code-tx:#8a3d1f;
+    --shadow:0 1px 2px rgba(28,26,23,.05),0 4px 14px rgba(28,26,23,.04);
+  }
+  :root[data-theme="dark"], :root:not([data-theme="light"]){}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#141210; --surface:#1c1a17; --surface2:#211e1a; --bd:#332e28; --bd2:#2a2621;
+      --tx:#ede9e3; --tx2:#b3ada3; --tx3:#847d72;
+      --accent:#ff6a3d; --accent-soft:#3a2117;
+      --green:#5fce93; --green-soft:#183226; --amber:#ffbe5c; --amber-soft:#38290f;
+      --blue:#78b0e8; --blue-soft:#152738; --red:#ff8566;
+      --code-bg:#2a2621; --code-tx:#ffab7d;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+      --bg:#141210; --surface:#1c1a17; --surface2:#211e1a; --bd:#332e28; --bd2:#2a2621;
+      --tx:#ede9e3; --tx2:#b3ada3; --tx3:#847d72;
+      --accent:#ff6a3d; --accent-soft:#3a2117;
+      --green:#5fce93; --green-soft:#183226; --amber:#ffbe5c; --amber-soft:#38290f;
+      --blue:#78b0e8; --blue-soft:#152738; --red:#ff8566;
+      --code-bg:#2a2621; --code-tx:#ffab7d;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:'Inter',system-ui,-apple-system,sans-serif;line-height:1.62;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin:0 auto;padding:0 20px 80px}
+  code,.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.86em}
+  code{background:var(--code-bg);color:var(--code-tx);padding:1px 6px;border-radius:5px}
+  a{color:var(--accent);text-decoration:none}
+  h2,h3{line-height:1.3}
+
+  /* hero */
+  header.hero{padding:52px 0 30px;border-bottom:1px solid var(--bd)}
+  .eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:4px 12px;border-radius:999px;letter-spacing:.01em}
+  h1{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:16px 0 10px}
+  .sub{color:var(--tx2);font-size:15.5px;max-width:70ch}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .chip{font-size:12.5px;color:var(--tx2);background:var(--surface);border:1px solid var(--bd);border-radius:8px;padding:5px 11px}
+  .chip b{color:var(--tx);font-weight:600}
+  .chip .mono{color:var(--accent)}
+
+  /* overview cards */
+  .section{margin-top:44px}
+  .kicker{font-size:12.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
+  .ovgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .ov{background:var(--surface);border:1px solid var(--bd);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+  .ov .n{font-size:11px;font-weight:700;color:var(--tx3)}
+  .ov .t{font-size:13.5px;font-weight:600;margin:5px 0 9px}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px}
+  .b-done{color:var(--green);background:var(--green-soft)}
+  .b-wait{color:var(--amber);background:var(--amber-soft)}
+  .b-info{color:var(--blue);background:var(--blue-soft)}
+
+  /* work item cards */
+  .card{background:var(--surface);border:1px solid var(--bd);border-radius:16px;padding:24px 26px;margin-top:16px;box-shadow:var(--shadow)}
+  .card h2{font-size:20px;font-weight:700;margin:0 0 4px;letter-spacing:-.01em;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .card h2 .num{color:var(--accent);font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
+  .card .lead{color:var(--tx2);margin:8px 0 4px}
+  .steps{margin-top:16px;display:grid;gap:11px}
+  .step{display:grid;grid-template-columns:96px 1fr;gap:14px;align-items:start}
+  .step .lbl{font-size:11.5px;font-weight:700;padding-top:2px;text-transform:uppercase;letter-spacing:.04em}
+  .lbl.goal{color:var(--tx3)} .lbl.prob{color:var(--red)} .lbl.cause{color:var(--amber)} .lbl.fix{color:var(--green)} .lbl.ok{color:var(--blue)}
+  .step .body{color:var(--tx);font-size:14.5px}
+  .step .body p{margin:0}
+  @media(max-width:620px){.step{grid-template-columns:1fr;gap:3px}.step .lbl{padding-top:0}}
+
+  pre{background:var(--code-bg);border:1px solid var(--bd2);border-radius:10px;padding:12px 14px;overflow-x:auto;margin:10px 0 0;font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--tx);line-height:1.5}
+  pre .err{color:var(--red);font-weight:500}
+
+  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px}
+  th{text-align:left;font-weight:600;color:var(--tx3);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;padding:0 12px 8px;border-bottom:1px solid var(--bd)}
+  td{padding:11px 12px;border-bottom:1px solid var(--bd2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.k{font-weight:600;white-space:nowrap}
+
+  .callout{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 10px 10px 0;padding:13px 16px;margin-top:16px;font-size:14px;color:var(--tx)}
+  .callout b{color:var(--accent)}
+
+  footer{margin-top:48px;padding-top:22px;border-top:1px solid var(--bd);color:var(--tx3);font-size:12.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .flow{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--tx2);background:var(--surface2);border:1px solid var(--bd2);border-radius:8px;padding:8px 12px;margin-top:10px;overflow-x:auto;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="eyebrow">🌶️ gochuchamchi · 작업 보고서</span>
+    <h1>Grafana SIEM 배포 · 04/05 버그 수정 · 제로트러스트 DB 가드레일</h1>
+    <p class="sub">main보다 47커밋 뒤처진 SIEM 브랜치를 최신 보안 위로 통합해 배포하고, 크로스계정 Athena 연동과 실시간 대시보드의 쿼리 버그 2건을 잡았다. 이어 DB 감시를 "화면을 지켜보는" 실시간 패널에서 "제로트러스트 선을 넘을 때만 알리는" 이벤트 가드레일로 재설계했다.</p>
+    <div class="meta">
+      <span class="chip"><b>작성일</b> 2026-08-19</span>
+      <span class="chip"><b>브랜치</b> <span class="mono">20260819.01</span></span>
+      <span class="chip"><b>스택</b> terraform · cloudwatch-notifications · log-archive</span>
+      <span class="chip"><b>커밋</b> <span class="mono">46a6f19 → c51e707</span></span>
+    </div>
+  </header>
+
+  <!-- OVERVIEW -->
+  <div class="section">
+    <div class="kicker">한눈에</div>
+    <div class="ovgrid">
+      <div class="ov"><div class="n">§1</div><div class="t">PDF ↔ 코드 검증</div><span class="badge b-info">분석</span></div>
+      <div class="ov"><div class="n">§2</div><div class="t">침해 방어 분석</div><span class="badge b-info">분석</span></div>
+      <div class="ov"><div class="n">§3</div><div class="t">브랜치 통합</div><span class="badge b-done">완료</span></div>
+      <div class="ov"><div class="n">§4</div><div class="t">04·05 배포</div><span class="badge b-done">완료</span></div>
+      <div class="ov"><div class="n">§5</div><div class="t">TagSession 버그</div><span class="badge b-done">Workload</span></div>
+      <div class="ov"><div class="n">§6</div><div class="t">DB 패널 쿼리</div><span class="badge b-done">완료</span></div>
+      <div class="ov"><div class="n">§7</div><div class="t">DB 가드레일</div><span class="badge b-done">완료</span></div>
+      <div class="ov"><div class="n">§8</div><div class="t">알람 분류</div><span class="badge b-done">완료</span></div>
+    </div>
+    <div class="callout"><b>운영 전제</b> — 프로덕션 변경(<code>terraform apply</code>·<code>aws eks update-cluster-config</code>)은 안전장치가 막는다. 이번 세션은 <b>plan을 변수까지 baked-in한 <code>.bin</code>으로 준비 → 사람이 apply → 조회/kubectl로 검증</b>하는 루프로 진행했다.</div>
+  </div>
+
+  <!-- §3 branch -->
+  <div class="section"><div class="kicker">브랜치 · 배포</div>
+
+  <div class="card">
+    <h2><span class="num">03</span> 브랜치 통합 — main → 20260819 → <code>20260819.01</code></h2>
+    <div class="steps">
+      <div class="step"><div class="lbl goal">목적</div><div class="body"><p><code>20260819</code>는 8/13에서 갈라진 뒤 <b>main보다 47커밋 뒤처진</b> 채 grafana SIEM 2커밋만 얹혀 있었다. 최신 보안(이미지 서명 enforce·DB 비번 제거·tfstate KMS 등) 위로 올려야 함.</p></div></div>
+      <div class="step"><div class="lbl cause">충돌</div><div class="body"><p>단 1건 — <code>module/grafana/main.tf</code> 대시보드 맵. main의 번호 재정리(01~03 운영)와 20260819의 SIEM(04·05)이 <b>충돌이 아니라 상호 보완</b>이었다.</p></div></div>
+      <div class="step"><div class="lbl fix">해결</div><div class="body"><p><code>01 의존성 / 02 상태 / 03 앱로그</code>(운영) + <code>04 통합검색 / 05 실시간</code>(보안)으로 번호 통합. 머지 <code>46a6f19</code> → 새 브랜치 <code>20260819.01</code> push.</p></div></div>
+      <div class="step"><div class="lbl ok">검증</div><div class="body"><p>main 완전 병합·마커 0·참조 local 5종 정의 확인. <b>실인프라는 20260819가 아니라 main@<code>82867c6</code></b>(daily-up 화요일부터 중단, 수동 apply)임을 tfstate 실측. 주의: grafana 커밋에 무관한 <code>redis.tf</code>(152줄) 혼입.</p></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">04</span> Grafana SIEM 대시보드 04·05 배포</h2>
+    <div class="steps">
+      <div class="step"><div class="lbl prob">증상</div><div class="body"><p><code>terraform plan</code>이 EKS refresh에서 <code>i/o timeout</code>, helm_release를 "생성 예정"으로 오표시(상태엔 12개 존재).</p></div></div>
+      <div class="step"><div class="lbl cause">원인</div><div class="body"><p>EKS 허용 CIDR에 <b>현재 노트북 IP <code>223.39.83.162</code>가 없었다</b>(유동 IP). 클러스터 미접속이 helm 오표시의 원인.</p></div></div>
+      <div class="step"><div class="lbl fix">해결</div><div class="body"><p>현재 IP를 허용 목록에 추가(2~3분) → <code>enable_edge=true</code>+IP override를 baked-in한 plan을 apply.</p></div></div>
+      <div class="step"><div class="lbl ok">검증</div><div class="body"><p>파드 1/1 Running·재시작 0, configmap에 <code>04 SIEM 통합 검색</code>·<code>05 실시간 사용자 활동</code> 실존. 접속 <code>grafana.kycj.click</code> (user <code>admin</code>, 비번은 <code>grafana</code> 시크릿).</p></div></div>
+    </div>
+  </div>
+  </div>
+
+  <!-- §5 tagsession -->
+  <div class="section"><div class="kicker">크로스계정 버그 (진단이 어려웠던 것)</div>
+
+  <div class="card">
+    <h2><span class="num">05</span> 04 Athena — <code>sts:TagSession</code> 버그 <span class="badge b-wait" style="align-self:center">Log는 팀원 대기</span></h2>
+    <div class="steps">
+      <div class="step"><div class="lbl goal">배경</div><div class="body"><p>04는 Log 계정 <code>security_events</code> 뷰를 보려고 grafana 파드가 Log 계정 reader 역할을 assume한다. 먼저 <code>grafana_athena_reader_role_arn</code>(로컬 tfvars)로 데이터소스 등록 — 빈값이면 모듈이 <b>아예 미등록</b>.</p></div></div>
+      <div class="step"><div class="lbl prob">증상</div><div class="body">
+        <p>데이터소스는 등록됐는데 04 패널들이 빨간 에러. grafana 파드 로그:</p>
+        <pre><span class="err">AccessDenied</span>: ...grafana-cloudwatch/... is not authorized
+to perform: <span class="err">sts:TagSession</span> on resource:
+arn:aws:iam::564186750363:role/gochuchamchi-grafana-athena-reader</pre>
+      </div></div>
+      <div class="step"><div class="lbl cause">원인</div><div class="body"><p>플러그인이 AssumeRole에 <b>세션 태그를 붙인다</b>. 크로스계정 태그 assume는 <b>caller·target 양쪽</b>이 <code>sts:TagSession</code>을 허용해야 하는데 초기 코드는 양쪽 다 <code>sts:AssumeRole</code>만 있었다. <b>AssumeRole은 통과하고 다음 단계 TagSession에서 403</b>이라 "역할 전환 실패"로 오인하기 쉬웠다.</p></div></div>
+      <div class="step"><div class="lbl fix">해결</div><div class="body"><p>양쪽에 <code>sts:TagSession</code> 추가(<code>075353a</code>): Workload caller(<code>module/grafana/main.tf</code>) + Log target trust(<code>log-archive/grafana-athena-access.tf</code>). 세션 태그는 Log 계정 CloudTrail 귀속·ABAC 용도.</p></div></div>
+      <div class="step"><div class="lbl ok">상태</div><div class="body"><p>Workload apply 완료(파드 재시작 없이 즉시). <b>Log 쪽은 Log 계정 프로필 필요 → 팀원이 <code>go/log-archive</code> apply</b>해야 04 데이터가 뜬다. 코드는 push 완료.</p></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">06</span> 05 DB 패널 — CWLI 쿼리 버그</h2>
+    <div class="steps">
+      <div class="step"><div class="lbl prob">증상</div><div class="body"><p><code>DB — 접속 이벤트</code> 패널이 "No data"가 아니라 <b>빨간 에러</b>. grafana 로그에 <code>status=400</code> 반복.</p></div></div>
+      <div class="step"><div class="lbl cause">원인</div><div class="body">
+        <p>쿼리를 <code>start-query</code>로 재현하니:</p>
+        <pre><span class="err">MalformedQueryException</span>: Ephemeral field is already defined: dbuser</pre>
+        <p style="margin-top:8px"><code>parse ... as ..., dbuser, ...</code>로 만든 필드를 <code>| fields ..., dbuser, ...</code>로 <b>재나열</b>해 중복 정의. 데이터는 24h 2,100여 건 있었고 <b>문법만</b> 틀렸다.</p>
+      </div></div>
+      <div class="step"><div class="lbl fix">해결</div><div class="body"><p><code>fields</code> → <code>display</code>(재정의 없이 투영), sort/limit 뒤로. 재현으로 100행 반환 확인 후 반영(<code>562dc0e</code>).</p></div></div>
+    </div>
+  </div>
+  </div>
+
+  <!-- §7 guardrail -->
+  <div class="section"><div class="kicker">제로트러스트 DB 가드레일</div>
+
+  <div class="card">
+    <h2><span class="num">07</span> DB 감시를 "패널"에서 "알림"으로</h2>
+    <p class="lead">감사 로그는 rdsadmin 헬스체크·앱 INSERT로 24h 2,100여 건 — 실시간 패널로는 소음만 크다. 앱 계정은 <b>파드 대역에서 DML만</b> 하는 것이 정상이라, 그 밖은 정상 운영에서 절대 안 나온다 = 뜨면 곧 사건. 그래서 "선을 넘을 때만" Discord로 알리는 이벤트 가드레일로 재설계.</p>
+    <div class="flow">RDS 감사 로그 → 메트릭 필터 → 알람(gochuchamchi-) → EventBridge → SNS → Lambda → Discord</div>
+    <table>
+      <thead><tr><th>가드레일</th><th>등급</th><th>조건 · 의미</th></tr></thead>
+      <tbody>
+        <tr><td class="k">앱 계정 DDL/DCL 시도</td><td><span class="badge b-info" style="color:var(--red);background:var(--accent-soft)">SEC P1</span></td><td><code>gochuchamchi_app_iam</code> × {DROP·ALTER·CREATE·GRANT·REVOKE·TRUNCATE}. DML 전용이라 <b>절대 불가</b> → 임계 1</td></tr>
+        <tr><td class="k">FAILED_CONNECT</td><td><span class="badge b-info">SEC P2</span></td><td>무차별 대입·IAM 토큰 우회·프로빙 → 임계 5/5분(변수화)</td></tr>
+      </tbody>
+    </table>
+    <div class="steps" style="margin-top:18px">
+      <div class="step"><div class="lbl cause">함정</div><div class="body"><p>앱 로그는 JSON 패턴이지만 <b>RDS 감사 로그는 CSV</b>라 그 문법을 못 쓴다. 텍스트 매칭(공백=AND, <code>"..."</code>=정확)으로 전환하고 <b><code>test-metric-filter</code>로 오탐 검증</b>: <code>"gochuchamchi_app_iam" DROP</code>은 DROP행만 잡고 정상 INSERT는 제외됨을 실증.</p></div></div>
+      <div class="step"><div class="lbl ok">검증</div><div class="body"><p>알람 2개 <code>State=OK</code>(위반 없음), 필터 7개 생성. <b>파이프라인 실증</b>: 알람 생성 시 <code>INSUFFICIENT_DATA → OK</code>가 Discord까지 도달.</p></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">08</span> 알람 이름 정리 + <code>classify_alarm</code> 등록</h2>
+    <div class="steps">
+      <div class="step"><div class="lbl fix">이름</div><div class="body"><p>알람 key에 <code>db-</code>가 겹쳐 <code>gochuchamchi-db-db-*</code>로 중복 → key에서 제거(<code>1616fe1</code>). 실측 <code>gochuchamchi-db-app-account-ddl-dcl</code>·<code>...failed-connect</code>.</p></div></div>
+      <div class="step"><div class="lbl fix">분류</div><div class="body"><p>Discord가 <code>[UNCLASSIFIED][P3]</code>로 뜬 이유 = 알림 Lambda <code>classify_alarm()</code>에 DB 알람이 없어 기본값. 등록(<code>c51e707</code>): DDL/DCL→<b>SEC/P1</b>, FAILED_CONNECT→<b>SEC/P2</b>. <b>배포된 Lambda 코드 다운로드로 반영 확인.</b></p></div></div>
+    </div>
+  </div>
+  </div>
+
+  <!-- §9 gotchas -->
+  <div class="section"><div class="kicker">발견한 함정 10종</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>함정</th><th>증상 → 대응</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><code>endpoint_public_access_cidrs</code> 이중 용도</td><td>EKS API 허용 + <b>grafana ALB 관리자 접근</b>을 동시 통제. apply용 IP 추가하면 grafana 접근도 열림</td></tr>
+        <tr><td class="k"><code>grafana_athena_reader_role_arn</code> 필수</td><td>빈값이면 Athena 데이터소스 <b>아예 미등록</b> → 로컬 tfvars(gitignore)에 Log reader ARN</td></tr>
+        <tr><td class="k">크로스계정 <code>sts:TagSession</code></td><td>플러그인이 세션 태그 부착 → caller·target 양쪽 허용</td></tr>
+        <tr><td class="k">CWLI <code>fields</code>로 parse 필드 재나열</td><td><code>Ephemeral field is already defined</code> 400 → <code>display</code></td></tr>
+        <tr><td class="k">감사 로그 CSV 메트릭 필터</td><td>JSON 패턴 안 통함 → 텍스트 매칭 + <code>test-metric-filter</code> 오탐 검증</td></tr>
+        <tr><td class="k"><code>TF_VAR_alert_emails</code> 미주입</td><td>기본 <code>[]</code>라 <b>이메일 구독이 삭제</b>(for_each key 소멸) → 주입 필수</td></tr>
+        <tr><td class="k">git-bash MSYS 경로 변환</td><td><code>/aws/rds/...</code>가 Windows 경로로 변환돼 <code>InvalidParameterException</code> → <code>MSYS_NO_PATHCONV=1</code></td></tr>
+        <tr><td class="k"><code>enable_edge=true</code> 필수</td><td>안 넣으면 CloudFront/WAF/ACM 파괴 = 사이트 다운</td></tr>
+        <tr><td class="k">lock 파일 stale</td><td>커밋된 lock aws 6.57.1 vs 코드 ≥6.59.0 → <code>init -upgrade</code></td></tr>
+        <tr><td class="k">Saved plan is stale</td><td>상태 변경 뒤 저장 plan 거부 → 재plan</td></tr>
+      </tbody>
+    </table>
+  </div>
+  </div>
+
+  <!-- §10 status -->
+  <div class="section"><div class="kicker">현황 · 남은 일</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>작업</th><th>계정</th><th>상태</th></tr></thead>
+      <tbody>
+        <tr><td class="k">브랜치 <code>20260819.01</code> push</td><td>git</td><td><span class="badge b-done">완료</span></td></tr>
+        <tr><td class="k">04·05 배포 / 05 DB 패널 수정</td><td>Workload</td><td><span class="badge b-done">apply·검증</span></td></tr>
+        <tr><td class="k">DB 가드레일 + classify_alarm</td><td>Workload</td><td><span class="badge b-done">apply·검증</span></td></tr>
+        <tr><td class="k">알람 이름 정리 · Workload TagSession</td><td>Workload</td><td><span class="badge b-done">완료</span></td></tr>
+        <tr><td class="k"><b>04 Athena 데이터</b> — Log 신뢰정책 apply</td><td>Log</td><td><span class="badge b-wait">팀원 대기</span></td></tr>
+      </tbody>
+    </table>
+    <div class="callout" style="border-color:var(--amber);background:var(--amber-soft)"><b style="color:var(--amber)">남은 일 하나</b> — 팀원이 <code>20260819.01</code> pull 후 <b><code>go/log-archive</code>를 Log 계정 프로필로 apply</b>하면(reader 역할 신뢰정책에 <code>sts:TagSession</code>) 04 대시보드에 데이터가 뜬다. Workload 쪽은 전부 완료.</div>
+  </div>
+  </div>
+
+  <footer>
+    <span>gochuchamchi-eks · 2026-08-19 작업 보고서</span>
+    <span>상세: <code>docs/2026-08-19.md</code> · 커밋 <span class="mono">46a6f19 → c51e707</span></span>
+  </footer>
+
+</div>
+</body>
+</html>
