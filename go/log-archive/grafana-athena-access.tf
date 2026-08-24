@@ -121,9 +121,9 @@ resource "aws_iam_role" "grafana_reader" {
 data "aws_iam_policy_document" "grafana_reader" {
 
   # ---------------------------------------------------------------------------
-  # Athena 쿼리 실행. 워크그룹을 이 하나로 묶는 것이 비용 통제의 핵심이다 —
-  # bytes_scanned_cutoff_per_query(1 GiB)가 여기 걸려 있어서, Grafana가 실수로
-  # 넓은 쿼리를 던져도 상한에서 끊긴다. 다른 워크그룹은 열지 않는다.
+  # Athena 쿼리 실행. Grafana는 수동 조사 전용 Workgroup에만 접근한다.
+  # 매시간 탐지용 1 GiB 상한은 그대로 유지하고, VPC Flow를 포함한 통합 검색은
+  # 별도의 제한된 상한에서 실행해 서로의 안정성과 비용 경계를 분리한다.
   # ---------------------------------------------------------------------------
   statement {
     sid    = "RunAthenaQueriesInSecurityWorkgroup"
@@ -142,7 +142,7 @@ data "aws_iam_policy_document" "grafana_reader" {
       "athena:BatchGetNamedQuery"
     ]
 
-    resources = [aws_athena_workgroup.security_logs.arn]
+    resources = [aws_athena_workgroup.security_investigation.arn]
   }
 
   # 데이터소스/카탈로그 목록 조회 — Grafana 데이터소스 설정 화면에서 쓴다.
@@ -283,11 +283,11 @@ output "grafana_athena_datasource_settings" {
   description = "Grafana Athena 데이터소스 설정에 필요한 값 묶음"
 
   value = {
-    catalog       = "AwsDataCatalog"
-    database      = aws_glue_catalog_database.security_logs.name
-    workgroup     = aws_athena_workgroup.security_logs.name
-    region        = var.region
-    assumeRoleArn = try(aws_iam_role.grafana_reader[0].arn, null)
+    catalog        = "AwsDataCatalog"
+    database       = aws_glue_catalog_database.security_logs.name
+    workgroup      = aws_athena_workgroup.security_investigation.name
+    region         = var.region
+    assumeRoleArn  = try(aws_iam_role.grafana_reader[0].arn, null)
     outputLocation = "s3://${aws_s3_bucket.athena_results.id}/results/"
   }
 }

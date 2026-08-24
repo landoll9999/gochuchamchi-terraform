@@ -12,9 +12,10 @@
 # =============================================================================
 
 locals {
-  athena_security_database_name = "gochuchamchi_security_logs"
-  athena_cloudtrail_table_name  = "cloudtrail_logs"
-  athena_workgroup_name         = "gochuchamchi-security-logs"
+  athena_security_database_name       = "gochuchamchi_security_logs"
+  athena_cloudtrail_table_name        = "cloudtrail_logs"
+  athena_workgroup_name               = "gochuchamchi-security-logs"
+  athena_investigation_workgroup_name = "gochuchamchi-security-investigation"
 
   cloudtrail_s3_base_prefix = "${local.cloudtrail_s3_key_prefix}/AWSLogs/${local.org_id}/${local.workload_account_id}/CloudTrail"
 
@@ -274,6 +275,47 @@ resource "aws_athena_workgroup" "security_logs" {
   ]
 }
 
+# Grafana의 사람이 수행하는 통합 검색은 VPC Flow를 포함한 7개 소스를 조회하므로
+# 매시간 실행되는 탐지 쿼리보다 스캔량이 크다. 탐지용 1 GiB 비용 상한을 완화하지
+# 않고 수동 조사만 별도의 제한된 Workgroup에서 실행한다.
+resource "aws_athena_workgroup" "security_investigation" {
+  name        = local.athena_investigation_workgroup_name
+  description = "Grafana SIEM manual investigation queries"
+  state       = "ENABLED"
+
+  force_destroy = true
+
+  configuration {
+    enforce_workgroup_configuration    = true
+    publish_cloudwatch_metrics_enabled = true
+
+    bytes_scanned_cutoff_per_query = var.athena_investigation_bytes_scanned_cutoff
+
+    engine_version {
+      selected_engine_version = "AUTO"
+    }
+
+    result_configuration {
+      output_location       = "s3://${aws_s3_bucket.athena_results.id}/results/"
+      expected_bucket_owner = data.aws_caller_identity.current.account_id
+
+      encryption_configuration {
+        encryption_option = "SSE_S3"
+      }
+    }
+  }
+
+  tags = merge(local.athena_tags, {
+    Purpose = "manual-investigation"
+  })
+
+  depends_on = [
+    aws_s3_bucket_policy.athena_results,
+    aws_s3_bucket_server_side_encryption_configuration.athena_results,
+    aws_s3_bucket_lifecycle_configuration.athena_results
+  ]
+}
+
 
 # =============================================================================
 # Athena 콘솔에서 바로 실행할 수 있는 저장 쿼리
@@ -366,6 +408,11 @@ output "athena_cloudtrail_table_name" {
 output "athena_security_workgroup_name" {
   description = "CloudTrail 조회용 Athena Workgroup"
   value       = aws_athena_workgroup.security_logs.name
+}
+
+output "athena_investigation_workgroup_name" {
+  description = "Grafana SIEM 수동 조사용 Athena Workgroup"
+  value       = aws_athena_workgroup.security_investigation.name
 }
 
 output "athena_query_results_bucket_name" {

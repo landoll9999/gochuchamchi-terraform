@@ -410,7 +410,7 @@ resource "helm_release" "grafana" {
 
                   catalog   = var.athena_catalog
                   database  = var.athena_database
-                  workgroup = "gochuchamchi-security-logs"
+                  workgroup = var.athena_workgroup
 
                   # 워크그룹에 enforce_workgroup_configuration = true가 걸려 있어
                   # 실제 출력 위치는 워크그룹 설정이 이긴다. 여기 값은 UI 표시용.

@@ -38,8 +38,8 @@
    └─ Athena 데이터소스
         │ sts:AssumeRole
         ▼
-      gochuchamchi-grafana-athena-reader ──→ Athena 워크그룹
-                                              gochuchamchi-security-logs
+      gochuchamchi-grafana-athena-reader ──→ 수동 조사 Athena 워크그룹
+                                              gochuchamchi-security-investigation (5 GiB)
                                                   │
                                                   ▼
                                               security_events (7소스 정규화 뷰)
@@ -99,9 +99,10 @@ ElastiCache Redis는 **접속·명령 감사 로그를 제공하지 않는다.**
 
 ### 3-4. 04는 자동 새로고침을 켜지 않는다
 
-워크그룹에 쿼리당 1 GiB 스캔 상한이 걸려 있다(`athena.tf`). refresh를 켜면
-**대시보드를 열어둔 것만으로 스캔이 반복된다.** 대신 Athena result reuse(5분)를
-켜서 같은 쿼리 재실행은 과금 없이 캐시에서 온다. 05는 CloudWatch라 무관하다.
+04는 VPC Flow를 포함한 7개 소스를 보므로 수동 조사 전용 Workgroup의 쿼리당
+5 GiB 상한을 사용한다(`athena.tf`). 매시간 탐지는 별도 Workgroup의 1 GiB 상한을
+그대로 유지한다. refresh를 켜면 **대시보드를 열어둔 것만으로 스캔이 반복**되므로
+자동 새로고침은 끄고 Athena result reuse(5분)를 사용한다. 05는 CloudWatch라 무관하다.
 
 ---
 ## 4. apply 순서 — 반드시 Log 계정 먼저
@@ -122,7 +123,9 @@ terraform output grafana_athena_datasource_settings
 
 ### 2-2. 워크로드 계정
 
-`terraform.tfvars`에 앞 단계 output을 넣습니다.
+프로젝트 기본값이 다음 역할 ARN으로 고정되어 있으므로 새 clone에서도 별도
+`terraform.tfvars` 없이 Athena 데이터소스가 등록됩니다. Log 계정 역할 이름을
+변경한 환경에서만 명시적으로 덮어씁니다.
 
 ```hcl
 grafana_athena_reader_role_arn = "arn:aws:iam::564186750363:role/gochuchamchi-grafana-athena-reader"
@@ -175,7 +178,7 @@ Grafana > Connections > Data sources > **Athena (Security Logs)** > Save & test.
 |---|---|
 | `AccessDenied` on `athena:StartQueryExecution` | 3-1 실패. 역할 전환 문제 |
 | `Table not found: security_events` | 뷰 미생성. 저장 쿼리 `00-create-security-events-view` 실행 또는 siem-detector Lambda 1회 수동 실행 |
-| `bytes scanned limit exceeded` | 조회 기간을 줄일 것. 워크그룹 상한 1 GiB |
+| `bytes scanned limit exceeded` | 조회 기간·소스 필터를 줄일 것. 수동 조사 Workgroup 상한 5 GiB(탐지용 1 GiB와 분리) |
 
 ### 3-4. 대시보드
 
@@ -414,7 +417,7 @@ variable "athena_reader_role_arn" {
 
                   catalog   = var.athena_catalog
                   database  = var.athena_database
-                  workgroup = "gochuchamchi-security-logs"
+                  workgroup = var.athena_workgroup
 
                   # 워크그룹에 enforce_workgroup_configuration = true가 걸려 있어
                   # 실제 출력 위치는 워크그룹 설정이 이긴다. 여기 값은 UI 표시용.

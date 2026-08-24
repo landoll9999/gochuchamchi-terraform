@@ -75,6 +75,20 @@ variable "athena_cloudtrail_projection_start_date" {
   }
 }
 
+variable "athena_investigation_bytes_scanned_cutoff" {
+  description = "Grafana 수동 조사 Workgroup의 쿼리당 스캔 상한(bytes). 탐지용 1 GiB 상한과 분리한다"
+  type        = number
+  default     = 5368709120 # 5 GiB
+
+  validation {
+    condition = (
+      var.athena_investigation_bytes_scanned_cutoff >= 1073741824 &&
+      var.athena_investigation_bytes_scanned_cutoff <= 10737418240
+    )
+    error_message = "수동 조사 Workgroup의 스캔 상한은 1~10 GiB 범위여야 합니다."
+  }
+}
+
 variable "athena_alb_projection_start_date" {
   description = "ALB 액세스 로그 Athena 파티션 프로젝션 시작일(yyyy/MM/dd)"
   type        = string

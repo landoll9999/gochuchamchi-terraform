@@ -28,6 +28,7 @@ module "grafana" {
   # 계정이 분리되어 있고 한 방향 참조 원칙(terraform/ -> 상시 계층)을 지켜야 하므로
   # remote state 참조가 아니라 변수로 넘긴다.
   athena_reader_role_arn = var.grafana_athena_reader_role_arn
+  athena_workgroup       = var.grafana_athena_workgroup
 
   tags = {
     Project     = "gochuchamchi"

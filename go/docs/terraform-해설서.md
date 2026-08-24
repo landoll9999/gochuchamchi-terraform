@@ -823,7 +823,7 @@ Athena 분석 계층의 뼈대다 — 쿼리 결과 전용 S3 버킷, Glue 데�
 
 ### L14–62 · locals — 이름·경로·CloudTrail 스키마 원장
 
-- `athena_security_database_name = "gochuchamchi_security_logs"` / `athena_cloudtrail_table_name = "cloudtrail_logs"` / `athena_workgroup_name = "gochuchamchi-security-logs"` (L15–17) — 분석 계층 전체가 공유하는 이름 3종. Glue 데이터베이스 이름에 하이픈이 아닌 언더스코어를 쓰는 것은 Athena(HiveQL) 식별자 규칙 때문이다.
+- `athena_security_database_name = "gochuchamchi_security_logs"` / `athena_cloudtrail_table_name = "cloudtrail_logs"` / `athena_workgroup_name = "gochuchamchi-security-logs"` / `athena_investigation_workgroup_name = "gochuchamchi-security-investigation"` — 데이터베이스·테이블과 탐지/수동 조사 Workgroup 이름이다. Glue 데이터베이스 이름에 하이픈이 아닌 언더스코어를 쓰는 것은 Athena(HiveQL) 식별자 규칙 때문이다.
 - `cloudtrail_s3_base_prefix` (L19) — `cloudtrail/AWSLogs/<org-ID>/<워크로드계정ID>/CloudTrail`을 조립한다. `log-archive.tf`의 `cloudtrail_s3_key_prefix`("cloudtrail")와 providers.tf의 org ID data 소스가 여기서 합류한다. 버킷 정책 문 3(AWSCloudTrailWrite)이 허용한 멤버 계정 쓰기 경로와 정확히 같은 문자열이다 — 쓰는 쪽 정책과 읽는 쪽 테이블이 같은 경로 규약을 공유한다.
 - `cloudtrail_athena_columns` (L21–54) — **CloudTrail 이벤트 스키마 30컬럼의 원장.** AWS 공식 Athena용 CloudTrail DDL을 `{ name, type }` 객체 리스트로 옮긴 것으로, 아래 테이블의 `dynamic "columns"`가 이 리스트를 순회해 컬럼 블록을 찍어낸다. 주목할 타입들:
   - `useridentity` (L23–26) — 이 테이블에서 가장 깊은 중첩 struct다. `type`(IAMUser/AssumedRole/…), `principalid`, `arn`, `accountid`, `accesskeyid`, `username`에 더해 `sessioncontext.sessionissuer`(assume-role 세션이라면 **원래 역할**의 type/arn/username)와 `sessioncontext.attributes.mfaauthenticated`(MFA 여부), `webidfederationdata`(OIDC 연합)까지 내려간다. "누가 했나"를 묻는 모든 조사 쿼리가 이 struct를 파고들며, 저장 쿼리들의 `COALESCE(useridentity.arn, useridentity.username, useridentity.principalid) AS actor`가 대표 사용례다.
@@ -890,9 +890,9 @@ CloudTrail JSON을 읽는 외부 테이블. `table_type = "EXTERNAL_TABLE"` — 
 - `dynamic "columns"` (L215–222) — locals의 30컬럼 리스트를 순회하며 `columns { name, type }` 블록을 생성한다. **리스트 한 줄 추가 = 컬럼 하나 추가**로 스키마 변경이 데이터화되어 있다.
 - `ser_de_info` (L224–231) — `serialization_library = "org.apache.hive.hcatalog.data.JsonSerDe"`. InputFormat이 잘라준 이벤트 JSON 하나를 컬럼으로 매핑하는 SerDe다. CloudTrail 공식 DDL이 지정하는 hcatalog JsonSerDe를 그대로 쓴다(앱·WAF 테이블의 OpenX JsonSerDe와 다른 계열이라는 점은 해당 파일에서 다룬다).
 
-### L240–275 · resource "aws_athena_workgroup" "security_logs"
+### resource "aws_athena_workgroup" "security_logs" / "security_investigation"
 
-쿼리 실행 환경을 강제하는 Workgroup. 개인 설정에 의존하지 않고 팀 전체의 결과 위치·암호화·비용 상한을 서버 측에서 고정하는 장치다.
+쿼리 실행 환경을 강제하는 Workgroup. 탐지용 `security_logs`는 1 GiB 상한을 유지하고, 사람이 VPC Flow를 포함한 7개 소스를 조회하는 Grafana 수동 조사에는 `security_investigation`과 5 GiB 상한을 사용한다. 두 경로를 분리해 수동 검색 때문에 탐지 제한을 완화하거나 탐지가 실패하는 일을 막는다.
 
 - `enforce_workgroup_configuration = true` — **핵심 스위치.** 클라이언트가 자기 결과 위치·암호화 설정을 가져와도 Workgroup 설정이 이긴다. false면 아래 설정 전부가 "기본값 제안"으로 격하된다.
 - `publish_cloudwatch_metrics_enabled = true` — 쿼리 스캔량·실행 시간 메트릭 발행. 비용 추적 근거가 된다.
@@ -918,7 +918,7 @@ CloudTrail JSON을 읽는 외부 테이블. `table_type = "EXTERNAL_TABLE"` — 
 
 ### L356–374 · output 4종
 
-`athena_security_database_name` / `athena_cloudtrail_table_name` / `athena_security_workgroup_name` / `athena_query_results_bucket_name` — 데이터베이스·테이블·Workgroup·결과 버킷 이름. 검증 스크립트와 runbook이 콘솔 진입점을 확인하는 용도다.
+`athena_security_database_name` / `athena_cloudtrail_table_name` / `athena_security_workgroup_name` / `athena_investigation_workgroup_name` / `athena_query_results_bucket_name` — 데이터베이스·테이블·탐지/수동 조사 Workgroup·결과 버킷 이름. 검증 스크립트와 runbook이 콘솔 진입점을 확인하는 용도다.
 
 ---
 
@@ -5566,4 +5566,3 @@ Helm 릴리스 이름("grafana"). helm 명령으로 릴리스를 다룰 때의 �
 
 
 ---
-

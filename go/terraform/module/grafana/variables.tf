@@ -70,3 +70,14 @@ variable "athena_reader_role_arn" {
   type        = string
   default     = ""
 }
+
+variable "athena_workgroup" {
+  description = "Grafana SIEM 수동 검색에 사용할 Log 계정 Athena Workgroup"
+  type        = string
+  default     = "gochuchamchi-security-investigation"
+
+  validation {
+    condition     = trimspace(var.athena_workgroup) != ""
+    error_message = "athena_workgroup은 비워 둘 수 없습니다."
+  }
+}

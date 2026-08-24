@@ -367,7 +367,26 @@ variable "log_archive_account_id" {
 }
 
 variable "grafana_athena_reader_role_arn" {
-  description = "Log 계정 Grafana 조회 역할 ARN (log-archive output). 비우면 Athena 데이터소스 미등록"
+  description = "Log 계정 Grafana Athena 조회 역할 ARN. SIEM 통합 검색에 필수"
   type        = string
-  default     = ""
+  default     = "arn:aws:iam::564186750363:role/gochuchamchi-grafana-athena-reader"
+
+  validation {
+    condition = can(regex(
+      "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$",
+      var.grafana_athena_reader_role_arn
+    ))
+    error_message = "grafana_athena_reader_role_arn에는 유효한 IAM Role ARN이 필요합니다. 빈 값이면 SIEM Athena 데이터소스가 누락됩니다."
+  }
+}
+
+variable "grafana_athena_workgroup" {
+  description = "Grafana SIEM 수동 검색용 Log 계정 Athena Workgroup"
+  type        = string
+  default     = "gochuchamchi-security-investigation"
+
+  validation {
+    condition     = trimspace(var.grafana_athena_workgroup) != ""
+    error_message = "grafana_athena_workgroup은 비워 둘 수 없습니다."
+  }
 }
