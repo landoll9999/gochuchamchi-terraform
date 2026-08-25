@@ -33,7 +33,7 @@ param(
   [string] $TerraformDir = (Join-Path $PSScriptRoot '..\terraform'),
   [string] $GitopsPath,
   [string] $Region = 'ap-northeast-2',
-  [string] $AwsProfile = 'admin',
+  [string] $AwsProfile = 'workload-admin',
   [switch] $Enforce,
   [switch] $SkipHttp,
   # #13에서 자격증명 누락 파드를 찾으면 rollout restart까지 실행한다.
@@ -161,8 +161,16 @@ if ($hasKubectl) {
       foreach ($p in $items) {
         $waiting = @($p.status.containerStatuses | ForEach-Object { $_.state.waiting.reason } | Where-Object { $_ })
         $restarts = (@($p.status.containerStatuses | ForEach-Object { $_.restartCount }) | Measure-Object -Sum).Sum
-        if ($p.status.phase -ne 'Running' -or $waiting.Count -gt 0) {
-          $bad += "$($p.metadata.name): $($p.status.phase) $($waiting -join ',')"
+        $isReady = @($p.status.conditions | Where-Object {
+            $_.type -eq 'Ready' -and $_.status -eq 'True'
+          }).Count -gt 0
+        if ($p.status.phase -ne 'Running' -or $waiting.Count -gt 0 -or -not $isReady) {
+          $state = if (-not $isReady -and $p.status.phase -eq 'Running' -and $waiting.Count -eq 0) {
+            'Running but NotReady — readiness/startup probe 확인'
+          } else {
+            "$($p.status.phase) $($waiting -join ',')"
+          }
+          $bad += "$($p.metadata.name): $state"
         }
         elseif ($restarts -ge 5) {
           # $restarts회 로 쓰면 "회"까지 변수명으로 먹혀 값이 사라진다 — $() 로 끊을 것
