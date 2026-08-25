@@ -110,7 +110,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "`n══ [3/4] 스모크 테스트 — apply 성공 ≠ 서비스 정상 ══" -ForegroundColor Cyan
-& (Join-Path $PSScriptRoot "smoke-test.ps1")
+& (Join-Path $PSScriptRoot "smoke-test.ps1") -AwsProfile $env:AWS_PROFILE -Enforce
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n⚠️ 스모크 테스트 실패 항목 있음 — 위 안내대로 조치 후 재실행하세요." -ForegroundColor Yellow
     Write-Host "   (재구축 직후 PAT 미주입 등 정상 범위의 실패인지 항목별로 확인)"
