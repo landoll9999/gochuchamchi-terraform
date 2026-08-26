@@ -4736,13 +4736,13 @@ depends_on: kyverno 본체(CRD), pod identity(ECR 읽기), 네임스페이스.
 
 ---
 
-## terraform/image-signing-variables.tf (21줄)
+## terraform/image-signing-variables.tf
 
-### L1–10 · variable "image_signing_github_environment"
+### variable "image_signing_github_environment" — 삭제됨 (2026-08-26)
 
-서명 역할 assume이 허용되는 보호된 GitHub Environment 이름(기본 "production-signing"). validation은 공백 불가(trimspace 후 길이 검사). 실체(신뢰 정책의 sub 조건)는 persistent 쪽에 있고, 여기서는 참조용.
+서명 역할 assume이 허용되는 보호된 GitHub Environment 이름이었다. 실체(신뢰 정책의 sub 조건)가 persistent 쪽으로 이관된 뒤 이 루트에서는 아무도 참조하지 않는 사본만 남아 있었고, ci-gate-pr의 tflint(terraform_unused_declarations)가 이를 검출해 삭제했다. 실제 값은 persistent/variables.tf의 동명 변수를 본다.
 
-### L12–21 · variable "image_signature_validation_action"
+### variable "image_signature_validation_action"
 
 Kyverno 서명 정책 모드. `contains(["Audit", "Deny"], ...)` validation으로 두 값만 허용. 기본 Audit. 이 변수 하나가 image-signing.tf의 failurePolicy/mutateDigest/verifyDigest와 kyverno.tf의 replicas/PDB까지 총 5곳의 동작을 일괄 전환한다 — "Deny 승격"이 원자적 한 번의 변수 변경이 되도록 설계된 것.
 

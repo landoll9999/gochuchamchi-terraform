@@ -1,0 +1,29 @@
+# =============================================================================
+# ci-gate-pr 의 secret-scan(gitleaks) 저장소 설정 (2026-08-26)
+#
+# 기본 룰셋은 그대로 쓰고(useDefault) 이 저장소에서 확인된 오탐만 좁게 허용한다.
+# 첫 실행에서 걸린 것: go/docs/2026-08-12-troubleshooting.html 의 Bedrock 에러
+# 메시지 속 모델 ID(anthropic.claude-opus-5)를 generic-api-key 로 오인.
+# 모델 ID 는 공개 식별자라 비밀이 아니다 — 문서 전체를 허용하는 게 아니라
+# "비밀이 모델 ID 형태일 때"만 허용한다. 문서에 진짜 토큰이 들어오면 여전히 잡힌다.
+# =============================================================================
+
+[extend]
+useDefault = true
+
+# Bedrock/Anthropic 모델 ID — 검출된 secret 자체가 이 형태면 오탐으로 본다.
+#   예: anthropic.claude-opus-5 / us.anthropic.claude-sonnet-4-5-... /
+#       claude-3-5-sonnet-20240620
+[[allowlists]]
+description = "Bedrock/Anthropic model IDs in docs are public identifiers, not secrets"
+regexTarget = "secret"
+regexes = [
+  '''^(?:[a-z]{2}\.)?anthropic\.claude[A-Za-z0-9.:_-]*$''',
+  '''^claude-[a-z0-9-]+-20[0-9]{6}(?::[0-9]+k?)?$''',
+]
+
+# 로컬에서 같은 명령을 돌릴 때 벤더 모듈(.terraform/)의 예제 키가 잡히는 것 방지.
+# CI 체크아웃에는 .terraform/ 이 없어서 CI 결과에는 영향이 없다.
+[[allowlists]]
+description = "vendored terraform modules (not committed; local runs only)"
+paths = ['''(^|/)\.terraform/''']
