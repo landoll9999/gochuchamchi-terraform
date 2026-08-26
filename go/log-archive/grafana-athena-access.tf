@@ -61,6 +61,12 @@ locals {
 
 # =============================================================================
 # 신뢰 정책 — 워크로드 계정의 Grafana 역할만
+#
+# 특정 역할 ARN을 Principal에 직접 넣으면 IAM이 저장 시 고유 Principal ID로
+# 변환한다. daily-down/up이 워크로드 역할을 삭제 후 같은 이름으로 재생성하면 그
+# ID가 바뀌어 신뢰 관계가 끊어진다. 계정 root를 Principal로 두되
+# aws:PrincipalArn을 정확한 Grafana 역할 ARN으로 제한하면 권한 범위는 유지하면서
+# 역할 재생성 후에도 Log 계정 재-apply 없이 신뢰 관계가 이어진다.
 # =============================================================================
 
 data "aws_iam_policy_document" "grafana_reader_assume_role" {
@@ -70,13 +76,22 @@ data "aws_iam_policy_document" "grafana_reader_assume_role" {
 
     principals {
       type        = "AWS"
-      identifiers = [local.grafana_workload_role_arn]
+      identifiers = ["arn:aws:iam::${var.workload_account_id}:root"]
     }
 
     # grafana-athena-datasource 플러그인이 AssumeRole에 세션 태그를 붙이므로
     # sts:TagSession도 신뢰해야 한다 (없으면 caller 정책이 맞아도 403 AccessDenied
     # on sts:TagSession — 2026-08-19 실측). 워크로드 grafana 정책도 대칭으로 둘 다 허용.
     actions = ["sts:AssumeRole", "sts:TagSession"]
+
+    # Principal을 계정 root로 열었지만 실제 호출자는 이 역할 ARN 하나로 제한한다.
+    # aws:PrincipalArn 조건값은 IAM 고유 Principal ID로 변환되지 않으므로 역할을
+    # 삭제 후 같은 이름으로 재생성해도 계속 일치한다.
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:PrincipalArn"
+      values   = [local.grafana_workload_role_arn]
+    }
 
     # 조직 밖에서 이 역할 ARN을 흉내 낼 수 없게 한 겹 더 건다.
     # (역할 ARN 신뢰만으로도 충분하지만, 계정 삭제 후 ID 재사용 같은 경계 사례를 막는다)
