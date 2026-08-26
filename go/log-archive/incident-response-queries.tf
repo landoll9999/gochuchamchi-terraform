@@ -11,7 +11,7 @@ locals {
   incident_response_queries = {
     "IR-01 IAM activity by IP" = {
       description = "CloudTrail: 특정 날짜·IP의 IAM/API 행위 조사. date_key와 source_ip만 교체"
-      query = <<-SQL
+      query       = <<-SQL
         WITH params AS (
           SELECT 'YYYY/MM/DD' AS date_key, 'REPLACE_WITH_SOURCE_IP' AS source_ip
         )
@@ -35,7 +35,7 @@ locals {
 
     "IR-02 IAM activity by actor" = {
       description = "CloudTrail: 특정 날짜·행위자 문자열의 권한 변경 조사. date_key와 actor_fragment만 교체"
-      query = <<-SQL
+      query       = <<-SQL
         WITH params AS (
           SELECT 'YYYY/MM/DD' AS date_key, 'REPLACE_WITH_ACTOR_FRAGMENT' AS actor_fragment
         )
@@ -60,7 +60,7 @@ locals {
 
     "IR-03 WAF blocked requests by IP" = {
       description = "WAF: 특정 날짜·IP가 차단된 규칙·URI·User-Agent 확인. date_key와 source_ip만 교체"
-      query = <<-SQL
+      query       = <<-SQL
         WITH params AS (
           SELECT 'YYYY/MM/DD' AS date_key, 'REPLACE_WITH_SOURCE_IP' AS source_ip
         )
@@ -86,7 +86,7 @@ locals {
 
     "IR-04 VPC flow investigation by IP" = {
       description = "VPC Flow Logs: 특정 날짜·IP의 ACCEPT/REJECT·대상 포트·전송량 조사. date_key와 source_ip만 교체"
-      query = <<-SQL
+      query       = <<-SQL
         WITH params AS (
           SELECT 'YYYY/MM/DD' AS date_key, 'REPLACE_WITH_SOURCE_IP' AS source_ip
         )
@@ -112,7 +112,7 @@ locals {
 
     "IR-05 ALB requests by IP" = {
       description = "ALB: 특정 날짜·IP의 요청 URI·응답 코드·응답시간 조사. date_key와 source_ip만 교체"
-      query = <<-SQL
+      query       = <<-SQL
         WITH params AS (
           SELECT 'YYYY/MM/DD' AS date_key, 'REPLACE_WITH_SOURCE_IP' AS source_ip
         )
@@ -137,7 +137,7 @@ locals {
 
     "IR-06 RDS audit by date" = {
       description = "RDS Audit: 특정 날짜의 인증 실패·권한 변경·DDL 조사. date_key만 교체"
-      query = <<-SQL
+      query       = <<-SQL
         WITH params AS (SELECT 'YYYY/MM/DD' AS date_key)
         SELECT year, month, day, hour, message
         FROM "${aws_glue_catalog_database.security_logs.name}"."${local.athena_rds_audit_table_name}" r

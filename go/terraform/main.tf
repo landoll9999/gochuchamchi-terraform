@@ -1,4 +1,6 @@
 terraform {
+  required_version = ">= 1.10"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -24,6 +26,11 @@ terraform {
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
+    }
+    # db-zero-trust.tf 의 null_resource 가 쓰는데 선언이 빠져 있었다 (tflint terraform_required_providers)
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
     }
   }
 }

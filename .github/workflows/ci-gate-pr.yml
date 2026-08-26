@@ -1,0 +1,169 @@
+# =============================================================================
+# ci-gate-pr — 모든 PR이 통과해야 하는 검증 관문 (2026-08-26)
+#
+# 왜 만들었나:
+#   기존 워크플로 2개는 pull_request 에 path 필터가 걸려 있어서, 그 경로를
+#   건드리지 않는 PR에는 검사가 하나도 붙지 않았다. 실제로 머지된 PR 10개 중
+#   #1 #5 #7 #9 #10 — 절반이 체크 0건으로 통과했다. 관문이 있는데 대부분의 PR이
+#   관문 옆으로 지나간 셈이다. 이 워크플로에는 path 필터가 없다. 의도적이다.
+#
+# 왜 자격증명이 없나:
+#   4개 잡 전부 AWS 접속 없이 돈다. validate 는 -backend=false 라 tfstate 를
+#   읽지 않고, tflint/gitleaks 는 정적 분석이다. 그래서 permissions 가 읽기뿐이고
+#   포크에서 온 PR 에서도 안전하게 돈다. plan/apply 는 여기 없다 —
+#   그 이유는 terraform-account-baseline.yml 헤더 주석 참고.
+#
+# 왜 레이어 목록을 하드코딩하지 않나:
+#   backend.tf 가 있는 디렉터리를 루트 모듈로 보고 자동 발견한다. 목록을 적어두면
+#   새 레이어가 생겼을 때 조용히 검사에서 빠진다 — 지금 path 필터가 낸 사고와
+#   같은 종류다. 발견된 목록은 로그 첫 줄에 찍어서 무엇이 검사됐는지 보이게 한다.
+# =============================================================================
+name: ci-gate-pr
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-gate-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # backend.tf 의 use_lockfile 이 1.10+ 를 요구한다. 9개 루트 전부 required_version 은 ">= 1.10".
+  TF_VERSION: '1.10.5'
+  TFLINT_VERSION: 'v0.64.0'
+  GITLEAKS_VERSION: '8.30.1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) 포맷 — 리뷰에서 사람이 볼 필요가 없는 차이를 CI가 없앤다
+  # ---------------------------------------------------------------------------
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false # 래퍼가 종료코드를 감싸면 루프에서 실패를 놓친다
+
+      - name: terraform fmt -check
+        run: |
+          layers=$(git ls-files | grep -E '(^|/)backend\.tf$' | sed 's#/backend\.tf$##' | sort)
+          echo "검사 대상 루트 모듈 $(echo "$layers" | wc -l)개:"; echo "$layers" | sed 's/^/  - /'
+          fail=0
+          for d in $layers; do
+            echo "::group::$d"
+            if terraform fmt -check -recursive -diff "$d"; then
+              echo "OK  $d"
+            else
+              echo "::error file=$d::terraform fmt 위반. 로컬에서 'terraform fmt -recursive $d' 실행 후 다시 푸시하세요."
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+  # ---------------------------------------------------------------------------
+  # 2) 문법·참조 검증 — -backend=false 라 S3 tfstate 도 AWS 자격증명도 필요 없다
+  # ---------------------------------------------------------------------------
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init -backend=false && validate
+        run: |
+          layers=$(git ls-files | grep -E '(^|/)backend\.tf$' | sed 's#/backend\.tf$##' | sort)
+          echo "검사 대상 루트 모듈 $(echo "$layers" | wc -l)개:"; echo "$layers" | sed 's/^/  - /'
+          fail=0
+          for d in $layers; do
+            echo "::group::$d"
+            if terraform -chdir="$d" init -backend=false -input=false -no-color \
+               && terraform -chdir="$d" validate -no-color; then
+              echo "OK  $d"
+            else
+              echo "::error file=$d::terraform validate 실패."
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+  # ---------------------------------------------------------------------------
+  # 3) 린트 — validate 가 못 잡는 것(미사용 선언, 버전 미고정, deprecated 문법,
+  #    잘못된 인스턴스 타입 문자열 등)을 AWS 룰셋까지 붙여서 잡는다
+  # ---------------------------------------------------------------------------
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: tflint --init (AWS 룰셋 플러그인)
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # 플러그인 다운로드 rate limit 회피
+        run: tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+      - name: tflint
+        run: |
+          layers=$(git ls-files | grep -E '(^|/)backend\.tf$' | sed 's#/backend\.tf$##' | sort)
+          echo "검사 대상 루트 모듈 $(echo "$layers" | wc -l)개:"; echo "$layers" | sed 's/^/  - /'
+          fail=0
+          for d in $layers; do
+            echo "::group::$d"
+            if (cd "$d" && tflint --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact); then
+              echo "OK  $d"
+            else
+              echo "::error file=$d::tflint 지적사항이 있습니다."
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+  # ---------------------------------------------------------------------------
+  # 4) 자격증명 유출 — 이 저장소는 과거 tfstate 에 GitHub PAT 가 평문으로
+  #    들어간 적이 있다(go/docs/SECURITY_AUDIT_REPORT.md). .gitignore 에 기대는
+  #    대신 머지될 트리를 기계로 확인한다.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gitleaks 설치
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: 머지될 트리에 자격증명이 있는지
+        run: gitleaks dir . --no-banner --redact --exit-code 1
+
+      - name: state/plan 파일이 커밋되어 있는지
+        run: |
+          hits=$(git ls-files | grep -iE '\.tfstate|\.tfplan|(^|/)tfplan' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits" | sed 's/^/  /'
+            echo "::error::state/plan 파일이 커밋되어 있습니다. tfstate 에는 RDS 비밀번호·토큰이 평문으로 들어갑니다 — .gitignore 확인 후 git rm --cached 하세요."
+            exit 1
+          fi
+          echo "OK  추적 중인 state/plan 파일 0건"
